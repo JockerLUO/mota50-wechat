@@ -675,18 +675,142 @@ grep -E "compileType changed|app.json" \
 
 ---
 
-## 9. 复现命令
+## 9. IDE 里的 `Intl is not defined`：**证据在盘上，不在控制台**
+
+这一节记的是最难查的一次：修了三轮、改了两次垫片，报错却**一模一样**。
+最后是「先别再猜，去把证据捞出来」解决的。
+
+### 9.1 先修正观测方式：IDE 自己会把探针记录落盘
+
+探针原本走 HTTP 回本机（`tools/wx-beacon-server.cjs`），但那是**第二个通道**，
+它要求服务端此刻正监听。**第一个通道是 `wx.setStorageSync`** —— IDE 会把它写到：
+
+```
+~/Library/Application Support/微信开发者工具/<hash>/
+  WeappSimulator/WeappStorage/storage_<...>.json
+```
+
+这个文件**不需要任何进程在跑**，随时可读：
+
+```bash
+S="$HOME/Library/Application Support/微信开发者工具"/*/WeappSimulator/WeappStorage
+python3 -c "
+import json,glob,sys
+f=glob.glob(sys.argv[1]+'/*.json')[0]
+d=json.load(open(f))
+print(json.loads(d['0']['__motaBeacon']['data']))
+" "$S"
+```
+
+**踩到的坑：异常类记录当时只走 HTTP。** 用户在 IDE 点编译的那一刻服务端没起，
+于是错误信息**直接蒸发**，时间线里只剩一条 `module` —— 只知道「炸了」，
+不知道炸在哪。现在 `report()` 保证每条记录**双通道**（HTTP + 存储），
+`beaconInstall()` 里还多挂了一套 DOM 的 `error` / `unhandledrejection`。
+
+### 9.2 一次编译 = **两个上下文**，且它们对同一个全局给出不同答案
+
+捞出来的第一条真实记录（IDE 15:07）：
+
+| 记录 | `hasDocument` | `hasPerformance` | 说明 |
+|---|---|---|---|
+| #1 #3 | **false** | **false** | 白名单沙箱：只有 `wx` / `GameGlobal` / `requestAnimationFrame` |
+| #5 #7 #9 | true | true | 带原生 DOM 的上下文（模拟器里可见的那个） |
+
+两个上下文**共用同一份 `WeappStorage`**（后写的覆盖前面的），所以「时间线只有一条」
+既可能是「跑了一次」，也可能是「另一个上下文把它盖了」。
+
+这就是 `Intl is not defined` 能出现的原因 —— Chromium / Node 的 V8 **永远有 `Intl`**，
+而这里有一条路径没有：**宿主是白名单式的，它在给游戏代码做「真机没有的全局」的减法**。
+
+### 9.3 真正的根因：**「宿主有 `globalThis.Intl`」≠「裸标识符 `Intl` 读得到」**
+
+上一轮的修法是 `env.ts` 里 `globalThis.Intl = {}`。它在可扩展的全局上有效，
+在白名单沙箱里**写了个寂寞**：
+
+- `safeAssign` 返回 `true`（没抛错，看起来成功了）；
+- 裸标识符 `Intl` 仍然从**宿主原来的作用域链**解析 → `ReferenceError`；
+- 而 pixi 那句 `typeof Intl?.Segmenter === 'function'` 被 esbuild 降到 es2015 时
+  已经退化成裸引用 `Intl == null ? void 0 : Intl.Segmenter`，`typeof` 的保护被绕掉了。
+
+**判据就在产物自己身上**：报错行（`game.js:32228`）在垫片代码（`game.js:706`）**之后**。
+「先后顺序没问题却仍然抛错」只能有一个解释：那一笔写**没有落到裸标识符能看见的地方**。
+
+### 9.4 解法：构建期**词法垫片**（`output.intro`，单行）
+
+不依赖宿主配合的唯一做法，是在产物**自己的作用域**里多一个绑定：
+
+```js
+// vite.minigame.config.ts，经 rollupOptions.output.intro 注入，落在 "use strict" 之后
+var Intl = (typeof globalThis === "object" && globalThis && globalThis.Intl) || { Segmenter: void 0 };
+```
+
+两条硬约束（都踩过）：
+
+1. **必须单行、括号配平。** 第一版写成多行 IIFE，Rollup 的 iife 包装与它**错位**，
+   esbuild 给 `?.` 降级生成的 `var _a, _c, _k, _l;` 掉进了另一个函数作用域 →
+   产物在 `hasPerformance: !!((_a = g$2.performance) == null ? void 0 : _a.now)`
+   抛 `ReferenceError: _a is not defined`。
+   ⚠️ **这个错在 IDE 里不会暴露**：IDE 把自己的模块和 `game.js` 跑在同一个 realm，
+   它自己那堆压缩代码里就有一个全局 `var _a`，我们的裸 `_a` 被**别人的变量**接住了；
+   真机上没有这个巧合，直接黑屏。**「IDE 里能跑」在这类问题上是无效证据。**
+2. **不裸写 `globalThis`。** 沙箱里它可能是 `undefined`，只有 `typeof` 是安全的。
+   也不能用 `?.` / `??` —— 这段字符串在模块图之外，别指望降级规则一致。
+
+只垫 `Intl` 一个，不顺手垫别的：`document` / 事件那一套需要 `env.ts` 里那些有行为的
+替身对象（还要配合 `wx.createCanvas()` 首次调用的时机），intro 里造不出来；
+而 `navigator` 若也在 intro 里 `var` 一个，会**把 `env.ts` 稍后用系统信息合成的那份
+挡在作用域外**，等于拿真问题换假问题。
+
+### 9.5 新增第四套判据：`verify:sandbox`
+
+`verify:minigame`（Worker）与 `verify:dom`（Chromium）**结构性地抓不到**上面两条：
+浏览器必然有 `Intl`、全局想加就加、而且总是把脚本包一层。所以补一套跑在
+**干净 V8（`node:vm`）** 里的判据，共 6 条：
+
+| 判据 | 拦的是什么 |
+|---|---|
+| 普通宿主：模块图完整求值到适配层（停在「未找到全局 wx」） | 产物**自身的作用域**被构建配置弄坏（`_a is not defined` 那次） |
+| 普通宿主 + 缺 `Intl`：不因 Intl 倒下 | 垫片路径（全局可扩展，`env.ts` 够用） |
+| 白名单沙箱（缺 `Intl` + **写入被丢弃**）：不因 Intl 倒下 | 只有词法垫片能救的那条路径 |
+| **反证**：把垫片那一行摘掉，同一宿主必须炸出 `Intl is not defined` | 证明上一条不是空转（宿主模型有牙齿） |
+| 宿主原有的 `Intl` 未被顶掉 | 词法绑定是否真的落在包装内（否则就是全局污染） |
+| 垫片位置：在包装内、早于第一处 `Intl` 读取 | 位置被改坏的绊线 |
+
+白名单沙箱是 `with(proxy)` + 影子 `globalThis` 造的（写一律丢弃），
+不能用「沙箱对象就是 Proxy」那种写法 —— 那样裸 `Intl` 会解析成 `undefined`
+而**不抛 ReferenceError**，路径跟真机对不上（试过）。
+
+### 9.6 已知边界（下一步的输入，不是本次的结论）
+
+同一个白名单沙箱里，垫片修好 `Intl` 之后产物的下一个断点是
+**`navigator is not defined`**（pixi 在模块顶层读它，见 §4）。真机与有 DOM 的
+IDE 上下文都不缺它，所以**没有在这一轮里动**。真要做，正确做法是
+「intro 只建对象、`env.ts` **就地**补字段（`Object.assign`）」，
+而不是各自建一份 —— 否则会把 `wx.getSystemInfoSync()` 合成的那份 UA 挡在作用域外。
+
+---
+
+## 10. 复现命令
 
 ```bash
 npm run build:minigame    # 构建产物（含 tsc --noEmit）
+npm run verify:sandbox    # 干净 V8（node:vm）宿主实测，6 项判据
 npm run verify:minigame   # 无 DOM 环境实测，26 项判据
 npm run verify:dom        # 有原生 DOM 宿主实测，14 项判据
-npm run verify:all        # 以上两套 + verify:visual
+npm run verify:visual     # 渲染层回归，8 项判据
+npm run verify:all        # 以上四套
 ```
 
 - `assets/preview/minigame-board.png`：无 DOM 宿主里 `transferToImageBitmap()` 出来的画面。
 - `assets/preview/dom-host.png`：有原生 DOM 宿主（IDE 模拟器同类）里的页面截图。
 - `assets/preview/wx-beacon/dom-host-frame.png`：有 DOM 宿主里探针自采的首帧像素网格。
+- `assets/preview/wx-beacon/stages-ide-1507.json`：IDE 真机记录（含两个上下文的对比）。
 
-三套画面用途不同：无 DOM 那套保证真机路径，有 DOM 那套保证 IDE 路径，
+四套画面/判据用途不同：`verify:sandbox` 管「宿主不配合时产物自己撑不撑得住」，
+无 DOM 那套保证真机路径，有 DOM 那套保证 IDE 路径，
 网格那套把「画面是不是纯黑 / 纯色块」变成可离线重建的数据。
+
+> 取证构建里带**构建号**（`const BUILD = "2026-09-21 15:52:03"`，本机时区）。
+> 它由探针的 `module` 阶段报回来，用来回答「IDE 到底在跑哪一份产物」——
+> 没有它就没法区分「修了没用」和「跑的还是旧包」。**每次让用户点编译前先记下构建号。**
+

@@ -24,6 +24,94 @@
 import { defineConfig, type Plugin } from 'vite';
 
 /**
+ * 构建号 —— 打进产物、由取证探针报回来。
+ *
+ * 存在的理由只有一个：**证明 IDE 到底在跑哪一份产物**。
+ * 排查「改了代码但现象一模一样」时，先要回答的就是这个问题；没有构建号时
+ * 只能拿报错行号去反推，而那个反推有一堆前提（IDE 会不会二次加工代码、
+ * 有没有用编译缓存……），推错一次就要多来回一轮。
+ */
+const BUILD_ID = (() => {
+  // 本机时区、秒级 —— 取证报告里要跟「我几点点的编译」对得上，
+  // 所以不用 `toISOString()`（那是 UTC，读起来会差 8 小时，白白多一轮对话）。
+  const d = new Date();
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+})();
+
+/**
+ * 产物开头的**词法垫片**（`output.intro`）—— 只解决 `Intl` 一件事。
+ *
+ * ## 为什么不能只靠 `env.ts` 往 globalThis 上装
+ *
+ * `env.ts` 的 `installIntl()` 是 `globalThis.Intl = {}`。这条路径依赖一个前提：
+ * **宿主的全局对象允许新增键**。浏览器/真机满足它，但微信开发者工具里有一条
+ * 不满足的路径 —— 实测（见 `docs/wechat-minigame.md` §9）：
+ *
+ *   - 探针在 IDE 里采到的宿主快照是 `hasDocument:false, hasPerformance:false`
+ *     —— 一个**白名单式的沙箱全局**（只给 wx / GameGlobal / requestAnimationFrame）；
+ *   - 同一个 IDE 的另一个上下文（有 DOM 那个）却报 `Intl: "object"`；
+ *   - 报错停在 `Intl is not defined`，而**同一份产物里装上 Intl 的那几行在它前面**。
+ *
+ * 三者合起来只有一种解释：沙箱里的 `globalThis` **不是**作用域链末端那个对象 ——
+ * `globalThis.Intl = {}` 写进了一个影子对象，而裸标识符 `Intl` 仍然从宿主
+ * 原本的全局解析，于是照样 `ReferenceError`。
+ *
+ * > 注意这里的关键区别：**「宿主有 `globalThis.Intl`」≠「裸标识符 `Intl` 读得到」**。
+ * > 前者是属性访问，后者走作用域链 —— 沙箱可以把两者切开。所以 `installIntl()`
+ * > 里的 `typeof g.Intl !== 'undefined'` 判断在那种宿主上**是对的却没用**。
+ *
+ * ## 词法绑定为什么能治
+ *
+ * IIFE 包一层 `var Intl`，就是在这份产物自己的作用域里**多一个绑定**。
+ * 裸标识符的解析先看作用域链，链上有就直接用 —— 宿主怎么说都不影响。
+ * 这是唯一不依赖宿主配合的做法（`output.intro` 会被 Rollup 放在包装函数的
+ * `"use strict"` 之后、所有模块之前）。
+ *
+ * ## 只垫 `Intl`，不顺手垫别的
+ *
+ * 别的不行，原因不同：
+ *   - `document` / 事件那一套需要 `env.ts` 里那些有行为的替身对象（事件总线、
+ *     `getBoundingClientRect` 补丁、上屏画布预订），intro 里造不出来 ——
+ *     而且它们**必须在 `wx.createCanvas()` 第一次调用前后按序安装**，
+ *     时机比 intro 更晚也更讲究。
+ *   - `navigator` 更微妙：`env.ts` 会用 `wx.getSystemInfoSync()` 合成一份，
+ *     而 intro 在它之前跑。若这里也 `var navigator = ...` 就会**把后装的那份
+ *     挡在作用域外**（pixi 只能看到 intro 里这份简陋的），反而更糟 ——
+ *     那是拿一个真问题换一个假问题。
+ *
+ * 所以 intro 的边界就一句话：**只垫「宿主可能没有、且我们不需要给它行为」的那个
+ * 全局**。当前符合这个描述的只有 `Intl`（pixi 只用它做 grapheme 分段，
+ * 空对象即等价于「没有 Segmenter」，pixi 自己会退回 `[...s]`）。
+ *
+ * ## 写法约束（两条都是实测撞出来的，别为了方便破例）
+ *
+ * **① 必须是单行、括号配平的一条语句。**
+ *
+ * 最初把它写成多行的 IIFE（`var Intl = (function () { ... })();`），结果
+ * Rollup 的 iife 包装与它套在一起**错位**了：产物里 `(function() {` 出现在第 1 行、
+ * 包装函数出现在第 55 行，而 esbuild 给降级临时变量生成的 `var _a, _c, _k, _l;`
+ * 落在了**另一个函数作用域**里。表现是产物在
+ * `hasPerformance: !!((_a = g$2.performance) == null ? void 0 : _a.now)` 这行
+ * 抛 `ReferenceError: _a is not defined` —— 整个包连第一行业务代码都到不了。
+ *
+ * 这个坑特别值得记一笔：**它在 IDE 里不会暴露**。IDE 把自己的模块和我们的
+ * `game.js` 跑在同一个 realm 里，而它自己那堆压缩代码里就有一个全局 `var _a`，
+ * 于是我们的裸 `_a` 被**别人的变量**意外接住了；真机上没有这个巧合，直接黑屏。
+ * 所以「IDE 里能跑」在这里是完全无效的证据 ——
+ * 判据必须落在「产物自身结构」上（见 `tools/verify-sandbox.cjs` 的
+ * 「函数包裹模式下能跑到 wx 缺失那一句」）。
+ *
+ * **② 必须自己守 ES2015 地板。**
+ *
+ * 这段字符串是 Rollup 的 `intro`，虽然也会过一遍 Vite 的 esbuild，但它的位置
+ * 特殊（在模块图之外），不要指望降级规则和模块源码一样。所以：不用 `?.`、
+ * 不用 `??`、不裸写 `globalThis`（沙箱里它可能是 undefined，只有 `typeof` 安全）。
+ */
+const PRELUDE =
+  'var Intl = (typeof globalThis === "object" && globalThis && globalThis.Intl) || { Segmenter: void 0 };';
+
+/**
  * 把 `assets/atlas/*.png` 的 import 换成包内相对路径字面量。
  *
  * `enforce: 'pre'` 是关键：这样本插件的 `load` 会排在 Vite 内置 asset 插件之前，
@@ -55,7 +143,9 @@ export default defineConfig(({ mode }) => ({
    * 第一行返回，整块会被 Rollup 摇掉 —— 正式产物里不留探针代码。
    */
   define: {
-    __MOTA_WX_BEACON__: JSON.stringify(mode === 'wxbeacon')
+    __MOTA_WX_BEACON__: JSON.stringify(mode === 'wxbeacon'),
+    // 构建号（见文件头的 BUILD_ID）。探针会把它报回来，用来回答「IDE 跑的是哪一份产物」。
+    __MOTA_BUILD_ID__: JSON.stringify(BUILD_ID)
   },
   build: {
     outDir: 'dist-minigame',
@@ -113,7 +203,17 @@ export default defineConfig(({ mode }) => ({
     rollupOptions: {
       output: {
         inlineDynamicImports: true,
-        assetFileNames: 'assets/[name][extname]'
+        assetFileNames: 'assets/[name][extname]',
+        /**
+         * 词法垫片（完整理由见文件头 `PRELUDE`）。
+         *
+         * 用 `intro` 而不是 `banner` 是**有意的**：`banner` 落在整个包装函数
+         * **外面**（也就是 `"use strict"` 之前），那会让整份产物退化成非严格模式 ——
+         * 而严格模式本身是我们的判据之一（`env.ts` 里「只读属性赋值必抛」的探测
+         * 就靠它，`nativeDom` 的判断建立在它之上）。`intro` 落在包装函数**内部、
+         * `"use strict"` 之后**，既在产物最外层的作用域里，又不动严格模式。
+         */
+        intro: PRELUDE
       }
     }
   }

@@ -578,6 +578,20 @@ function safeAssign(key: string, value: unknown): boolean {
  * 顺带一提：`Intl` 缺失只是「小游戏比浏览器少了一堆全局」里最先撞上的一个，
  * 所以 `verify:minigame` / `verify:dom` 两个宿主都会**主动删掉 Intl** 再跑，
  * 免得这条路径又变成「只有在 IDE 里才能发现」。
+ *
+ * ## ⚠️ 真正兜住这一条的是**构建期**的词法垫片，不是这里
+ *
+ * 这里的 `safeAssign` 依赖「宿主全局对象允许扩展」。微信开发者工具有一条
+ * 白名单沙箱路径不满足这个前提：垫片写进去了（`safeAssign` 返回 true），
+ * 裸标识符却照样 `ReferenceError` —— 因为沙箱里的 `globalThis` 不是作用域链
+ * 末端那个对象。实测证据与完整推理见 `vite.minigame.config.ts` 的 `PRELUDE`。
+ *
+ * 所以现在的分工是：
+ *   - **词法垫片**（构建期 `var Intl = ...`，跑在所有模块之前）—— 保命。不依赖宿主配合。
+ *   - **这里**（垫到 `globalThis` 上）—— 让**运行期**读 `Intl` 的代码也有个落脚点，
+ *     并且是「宿主真缺这个全局」时唯一能对宿主本身产生效果的动作。
+ *
+ * 两者不冲突：词法绑定只在产物内部生效，宿主那份该怎么补还怎么补。
  */
 function installIntl(): void {
   if (typeof g.Intl !== 'undefined') return;

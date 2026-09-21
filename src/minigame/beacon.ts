@@ -42,9 +42,14 @@
  */
 
 declare const __MOTA_WX_BEACON__: boolean;
+/** 构建号，由 `vite.minigame.config.ts` 的 `define` 注入。 */
+declare const __MOTA_BUILD_ID__: string;
 
 /** 构建期常量，由 `define` 替换成字面量 true / false。 */
 const ON: boolean = __MOTA_WX_BEACON__;
+
+/** 本次运行的是哪一份产物 —— 见 `vite.minigame.config.ts` 里 BUILD_ID 的说明。 */
+const BUILD: string = __MOTA_BUILD_ID__;
 
 /** 本机取证端点。见 `tools/wx-beacon-server.cjs`。 */
 const PORT = 8899;
@@ -57,6 +62,39 @@ const started = Date.now();
 
 /** 每一步都带相对时间戳，这样即使只收到后半段也能看出「卡在哪一步多久」。 */
 const since = () => Date.now() - started;
+
+/**
+ * 往宿主全局上加一个新键，再读回来 —— 直接回答「这个宿主的全局允许扩展吗」。
+ *
+ * 这个问题不是学术性的：`env.ts` 里**全部**垫片都是「往 `globalThis` 上装」，
+ * 而微信开发者工具的沙箱是白名单式的（探针实测快照 `hasDocument:false,
+ * hasPerformance:false`，只给 wx / GameGlobal / requestAnimationFrame）。
+ * 白名单沙箱有两种实现，后果完全不同：
+ *
+ *   - 全局对象**可扩展**（我们装得上去）    → 垫片有效，现在的写法就能跑；
+ *   - 全局对象**不可**扩展 / 写入被丢弃     → 垫片全部静默失效，
+ *     而裸标识符该 `ReferenceError` 还是 `ReferenceError`。
+ *     `Intl` 就是这么倒下的 —— 注意它的垫片代码在产物里**确实在报错行之前**，
+ *     所以那句 `ReferenceError` 本身就是「写了但没写进去」的证据。
+ *
+ * 这件事光靠 `typeof g.document` 之类**读**不出来（读到的可能是宿主原生的），
+ * 必须**写一次**试。键名带前缀、用完即删，不留痕迹。
+ */
+function writeSticks(): boolean {
+  try {
+    const key = '__motaWriteProbe';
+    g[key] = 1;
+    const ok = g[key] === 1;
+    try {
+      delete g[key];
+    } catch {
+      /* 删不掉也没关系，这个键名不会撞上任何东西 */
+    }
+    return ok;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * 把「任何东西」变成能读的字符串。
@@ -155,22 +193,37 @@ function alsoStore(rec: Any): void {
 /** 报一个阶段。`data` 里放该阶段能拿到的一切事实，别放结论。 */
 export function beaconStage(stage: string, data?: Any): void {
   if (!ON) return;
-  const rec = { stage, t: since(), data: data ?? null };
-  post('/beacon', JSON.stringify(rec));
-  alsoStore(rec);
+  report({ stage, t: since(), data: data ?? null });
 }
 
 /** 报一个异常。`where` 写清是**哪一步**炸的，比 stack 更有用。 */
 export function beaconError(where: string, err: unknown): void {
   if (!ON) return;
   const e = err as Any;
-  const rec = {
+  report({
     stage: 'error',
     where,
     t: since(),
     message: describe(err),
     stack: typeof e?.stack === 'string' ? String(e.stack).slice(0, 1500) : null
-  };
+  });
+}
+
+/**
+ * 一条记录同时走 HTTP 与本地存储。
+ *
+ * ⚠️ **异常类记录曾经只走 HTTP，那是一个真实的取证事故**，别改回去。
+ *
+ * `tools/wx-beacon-server.cjs` 是个本机进程，人在 IDE 里点「编译」的那一刻它
+ * 可能在、也可能不在。异常记录只 `post` 的时候，服务端没起 = **错误信息直接蒸发**，
+ * 而 IDE 的控制台不落盘 —— 于是只采到时间线里一条 `module`，
+ * 完全不知道炸在哪（2026-09-21 就踩了这一次，白丢一轮）。
+ *
+ * 存储通道没有这个时序依赖：`wx.setStorageSync` 会被 IDE 写到
+ * `WeappSimulator/WeappStorage/storage_*.json`，随时能从盘上读 ——
+ * 这条路径**不需要任何进程在监听**，是唯一可靠的那条。
+ */
+function report(rec: Any): void {
   post('/beacon', JSON.stringify(rec));
   alsoStore(rec);
 }
@@ -181,43 +234,87 @@ export function beaconError(where: string, err: unknown): void {
  * 覆盖不到的一种情况值得单独说明：**模块求值期就抛**（比如 pixi 在顶层读
  * `navigator.userAgent`）。小游戏里 `wx.onError` 对「首个脚本的顶层异常」是否上报
  * 因基础库版本而异，所以入口在关键步骤外面另加了 try/catch，双保险。
+ *
+ * ## 为什么还要再挂一套 DOM 的 `error` / `unhandledrejection`
+ *
+ * 微信开发者工具里同一份产物会跑在**两个上下文**里（探针实测，见 §9）：
+ * 一个是白名单沙箱（`hasDocument:false`），另一个是**带原生 DOM 的上下文**
+ * （`hasWindow` / `hasDocument` / `hasPerformance` 全为真 —— 模拟器里可见的那个）。
+ * 后者抛未捕获异常走的是浏览器那条路：`addEventListener('error')`，
+ * **`wx.onError` 收不到**。
+ *
+ * 2026-09-21 的排查里，带 DOM 那个上下文只留了一条 `module` 就死了，
+ * 而当时两套钩子都没抓到它 —— 时间线只到 module，等于「不知道炸在哪一段 import」。
+ * 所以这里按 `typeof` 探测在不在，在就挂上：两个上下文各走自己的通道，
+ * 谁的错谁报，不用猜。
  */
 export function beaconInstall(): void {
-  if (!ON || !wx) return;
+  if (!ON) return;
   try {
-    wx.onError?.((a: unknown, b?: unknown) => {
-      post(
-        '/beacon',
-        JSON.stringify({
-          stage: 'wxError',
-          t: since(),
-          message: describe(a),
-          arg2: b === undefined ? null : describe(b),
-          // 形状与 key 列表是**有用的事实**：下次遇到另一版基础库可以直接照它加分支
-          shape: a && typeof a === 'object' ? Object.prototype.toString.call(a) : typeof a,
-          keys: a && typeof a === 'object' ? safeKeys(a) : null,
-          stack: stackOf(a) ?? (typeof b === 'string' ? b.slice(0, 1500) : null)
-        })
-      );
+    wx?.onError?.((a: unknown, b?: unknown) => {
+      report({
+        stage: 'wxError',
+        t: since(),
+        message: describe(a),
+        arg2: b === undefined ? null : describe(b),
+        // 形状与 key 列表是**有用的事实**：下次遇到另一版基础库可以直接照它加分支
+        shape: a && typeof a === 'object' ? Object.prototype.toString.call(a) : typeof a,
+        keys: a && typeof a === 'object' ? safeKeys(a) : null,
+        stack: stackOf(a) ?? (typeof b === 'string' ? b.slice(0, 1500) : null)
+      });
     });
   } catch {
     /* 忽略 */
   }
   try {
-    wx.onUnhandledRejection?.((res: Any) => {
+    wx?.onUnhandledRejection?.((res: Any) => {
       const r = res?.reason ?? res;
-      post(
-        '/beacon',
-        JSON.stringify({
-          stage: 'unhandledRejection',
+      report({
+        stage: 'unhandledRejection',
+        t: since(),
+        message: describe(r),
+        shape: r && typeof r === 'object' ? Object.prototype.toString.call(r) : typeof r,
+        keys: r && typeof r === 'object' ? safeKeys(r) : null,
+        stack: stackOf(r)
+      });
+    });
+  } catch {
+    /* 忽略 */
+  }
+
+  // ── 带原生 DOM 的上下文：走浏览器那套事件 ─────────────────────────
+  //
+  // 这里只在 `globalThis` 上找 `addEventListener`，**不做任何垫片** —— 本模块排在
+  // `env.ts` 之前求值，那一刻垫片还没装，所以只能用宿主真正提供的东西。
+  // 也故意**不**调 `preventDefault()`：IDE 自己的报错面板该显示还得显示，
+  // 我们只是把同一份事实额外存一份到盘上。
+  try {
+    const add = g.addEventListener;
+    if (typeof add === 'function') {
+      add.call(g, 'error', (ev: Any) => {
+        const err = ev?.error ?? ev;
+        report({
+          stage: 'domError',
+          t: since(),
+          message: describe(ev?.message ?? err),
+          // 浏览器给的这三个字段比 stack 更早可用，一起带上
+          filename: ev?.filename ?? null,
+          lineno: ev?.lineno ?? null,
+          colno: ev?.colno ?? null,
+          stack: stackOf(err) ?? (typeof ev?.message === 'string' ? ev.message : null)
+        });
+      });
+      add.call(g, 'unhandledrejection', (ev: Any) => {
+        const r = ev?.reason ?? ev;
+        report({
+          stage: 'domRejection',
           t: since(),
           message: describe(r),
-          shape: r && typeof r === 'object' ? Object.prototype.toString.call(r) : typeof r,
           keys: r && typeof r === 'object' ? safeKeys(r) : null,
           stack: stackOf(r)
-        })
-      );
-    });
+        });
+      });
+    }
   } catch {
     /* 忽略 */
   }
@@ -303,15 +400,7 @@ function capture(game: Any): void {
     nonBlackRatio: +(nonBlack / total).toFixed(3),
     px: px.join('')
   };
-  post('/beacon', JSON.stringify(rec));
-  // ⚠️ 这一条**必须**同时落存储，不能只走 HTTP。
-  //
-  // HTTP 通道要求取证服务端此刻正在监听；而 IDE 只在**点「编译」**时才重新加载游戏，
-  // 那一刻服务端在不在，取决于人和机器的时序 —— 靠不住。
-  // 存储通道没有这个问题：`wx.setStorageSync` 会被 IDE 落到
-  // `WeappSimulator/WeappStorage/storage_*.json`，随时可以从盘上读。
-  // 约 140KB，低于单键 1MB 的上限。
-  alsoStore(rec);
+  report(rec);
 
   // 真截图是加分项，不是必需项：`wx.canvasToTempFilePath` 对 WebGL 主画布的支持
   // 在不同基础库上不一致，失败就走上面那条粗网格，不影响取证成立。
@@ -382,6 +471,11 @@ export function beaconShotAfter(get: () => Any, frames = 90): void {
 if (ON) {
   beaconInstall();
   beaconStage('module', {
+    // 先报构建号：后面所有结论都要挂在「这是哪一份产物」上
+    // （没有它就没法区分「修了没用」和「跑的还是旧包」）。
+    build: BUILD,
+    // 宿主全局能不能装新键 —— 直接决定 `env.ts` 那套垫片在这个宿主上有没有用。
+    writeSticks: writeSticks(),
     // 这些事实决定了「垫片该怎么补」，先记下来
     //
     // ⚠️ 一律用 `typeof x`（对**未声明的标识符**也安全），不要写 `!!x` ——
