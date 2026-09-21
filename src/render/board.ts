@@ -19,7 +19,7 @@
  * 玩法信息也不会少。
  */
 
-import { Container, Graphics, Rectangle, Sprite, TilingSprite } from 'pixi.js';
+import { Container, Graphics, Rectangle, Sprite, Texture, TilingSprite } from 'pixi.js';
 import type { GameData } from '../data';
 import { tileAt, type GameState } from '../game/state';
 import { atlas, fitSize, isWallChar, terrainKeyFor, variantIndex } from './atlas';
@@ -33,7 +33,8 @@ import {
   itemColorOf,
   shade
 } from './icons';
-import { GRADE_STYLE, T, monsterPalette, npcRole } from './theme';
+import { GRADE_STYLE, STONE, T, UI, monsterPalette, npcRole } from './theme';
+import { LAYOUT } from './hud';
 
 /**
  * NPC 落屏造型 —— 分两层，缺一不可：
@@ -87,6 +88,8 @@ export class Board extends Container {
 
   private hooks: BoardHooks;
   private parapetLayer = new Container();
+  /** 塔壁用的砖纹贴图（与地图内墙同一张，供 `__wallSources()` 断言同源） */
+  private parapetTex: Texture | null = null;
   private terrainLayer = new Container();
   private entityLayer = new Container();
   private overlay = new Graphics();
@@ -123,9 +126,10 @@ export class Board extends Container {
 
     this.buildParapet();
 
+    // 地砖的兜底底衬：服务圆角门/楼梯那类瓦片的透明角落。
+    // 用石材的暗面而不是面板白 —— 塔壁围着的地面底下不该露出卡片色
     const bg = new Graphics();
-    bg.roundRect(-6, -6, this.span + 12, this.span + 12, 14).fill(T.panel);
-    bg.roundRect(-6, -6, this.span + 12, this.span + 12, 14).stroke({ width: 1, color: T.panelBorder });
+    bg.roundRect(-2, -2, this.span + 4, this.span + 4, 6).fill(STONE.faceDark);
 
     this.addChild(this.parapetLayer, bg, this.terrainLayer, this.entityLayer, this.heroLayer, this.overlay);
     this.buildTerrain();
@@ -157,53 +161,112 @@ export class Board extends Container {
   }
 
   /**
-   * 棋盘外沿的高塔外檐：城垛 + 墙柱 + 石基。
+   * 棋盘外沿的塔壁：砖纹墙身 + 城垛 + 内缘阴影。
    *
-   * 它只作为场景装饰存在，不参与玩法：
-   * - 不占用 11×11 棋盘格子；
-   * - 不接收点击（Board 的 hitArea 仍是 0,0,span,span）；
-   * - 不遮挡任何实体或地形，放在最底层。
+   * 它只作为场景装饰存在，不参与玩法：不占 11×11 格子、不接收点击
+   * （Board 的 hitArea 仍是 0,0,span,span）、放在最底层不遮挡任何东西。
    *
-   * 用程序化图形而不是贴图：外檐是「框架」不是「格子」，贴图旋转拼接容易
-   * 在四角留下缝隙；graphics 可以保证与当前主题色完全咬合。
+   * ## 为什么这一版把旧的「外檐」整个换掉了
+   *
+   * 旧版是**冷灰蓝**（T.wall / T.wallDark）的纯色几何体：墙身一块灰、城垛
+   * 深浅交替、左右两列砖块。而地图内部是暖砂石地砖 + 暖褐砖墙（素材
+   * `terrain.png` 的 floor_1 / wall_mid）—— 一边冷一边暖，看着就像围着地图
+   * 后期贴了一圈框，「周边的墙」和「地图的风格」是两套东西。
+   *
+   * 现在改成**直接用地图那面墙的贴图平铺**（`atlas.terrain('1')`，
+   * 与地图内墙同贴图、同像素倍数），再叠明暗与城垛。于是「风格一致」
+   * 不再是调一个相近的颜色，而是字面意义上的同一张图。
+   *
+   * ## 尺寸必须来自 LAYOUT.parapet
+   *
+   * 壁厚与城垛高是**版面的一部分**（塔壁画在格子区之外，向上还要多占一个
+   * 城垛的高度）。旧版这里写死 `o = 14 / topH = 10` 而 LAYOUT 只记了格子区，
+   * 于是版面算出的「间隙 20」在屏幕上实际是 −4：城垛压在状态卡上，
+   * 而看单个文件都发现不了。
    */
   private buildParapet(): void {
-    const g = new Graphics();
-    const S = this.cellPx;
     const span = this.span;
-    const o = 14; // 外檐厚度
-    const topH = 10; // 城垛高度
-    const baseH = 8; // 底部石基高度
+    const { t: o, merlon: m } = LAYOUT.parapet;
+    const boxW = span + o * 2;
 
-    // 1) 外墙主体
-    g.rect(-o, -o, span + o * 2, span + o * 2).fill(T.wallDark);
+    // 塔壁的圆角语言与卡片一致（UI.radiusInner）—— 一块方角的石框摆在
+    // 一堆圆角卡片中间，会显得是两套东西；轻微圆角既保住石墙感，又接上版式。
+    const corner = UI.radiusInner;
 
-    // 2) 顶部城垛：把外沿宽度均分成 11 段，与内部列对齐；偶数段凸起、奇数段凹下
-    const topW = (span + o * 2) / 11;
+    // 以下三层共用同一个圆角轮廓，所以装进一个容器统一做遮罩：
+    // 贴图是平铺的矩形，光靠 roundRect 画不出圆角，只能裁。
+    const wall = new Container();
+
+    // ① 墙身底色（图集缺席时的兜底；图集就位时被 ② 的贴图盖住）
+    const base = new Graphics();
+    base.roundRect(-o, -o, boxW, boxW, corner).fill(STONE.face);
+    wall.addChild(base);
+
+    // ② 墙身贴图：与地图内墙同一张图、同一个像素倍数（16px 贴图 → 32px）
+    const wallTex = atlas.ready ? atlas.terrain('1') : null;
+    if (wallTex) {
+      const ts = new TilingSprite({ texture: wallTex, width: boxW, height: boxW });
+      ts.x = -o;
+      ts.y = -o;
+      ts.tileScale.set(this.cellPx / wallTex.width);
+      this.parapetTex = wallTex;
+      wall.addChild(ts);
+    }
+
+    // ③ 明暗：整体罩一层暖色（把贴图从「地牢暗褐」提到「外墙」），
+    //    再上亮下暗压出体积
+    const shade = new Graphics();
+    shade.rect(-o, -o, boxW, boxW).fill({ color: STONE.face, alpha: 0.24 });
+    for (let i = 0; i < 6; i++) {
+      const t = i / 6;
+      shade
+        .rect(-o, -o + (boxW / 6) * i, boxW, boxW / 6 + 1)
+        .fill({ color: STONE.faceDark, alpha: 0.04 + t * 0.15 });
+    }
+    shade.rect(-o, -o, boxW, 10).fill({ color: STONE.faceLit, alpha: 0.18 });
+    // 座脚：底边一条更暗的影，让塔壁"落"在地上
+    shade.rect(-o, span + o - 9, boxW, 9).fill({ color: STONE.edge, alpha: 0.32 });
+    wall.addChild(shade);
+
+    // ⑤ 内缘阴影：贴着棋盘一圈由深到浅的暗环，让地图"嵌"进塔壁而不是浮在墙上
+    const inner = new Graphics();
+    for (let i = 0; i < 3; i++) {
+      const d = i + 1;
+      inner
+        .rect(-d, -d, span + d * 2, span + d * 2)
+        .stroke({ width: 1, color: STONE.inner, alpha: 0.34 * (1 - i / 3) });
+    }
+    wall.addChild(inner);
+
+    // 遮罩：与墙身同轮廓的圆角矩形。Mask 必须自己也在显示树上
+    // （Pixi 拿它做 stencil），所以挂在 parapetLayer 上而不是 wall 里面 ——
+    // 放进被遮罩的容器里会形成自我引用。
+    const mask = new Graphics();
+    mask.roundRect(-o, -o, boxW, boxW, corner).fill(0xffffff);
+    this.parapetLayer.addChild(mask);
+    wall.mask = mask;
+    this.parapetLayer.addChild(wall);
+
+    // ④ 城垛：宽度均分 11 段与内部列对齐，偶数段凸起。
+    //    奇数段**什么都不画** —— 凹口是要透出背景星空的，画成"矮墙"就没了这层意思。
+    //
+    //    ⚠️ 城垛在遮罩轮廓**之外**（它画在 -o 往上），所以不能放进 `wall`：
+    //    放进去会被圆角矩形裁掉，垛口变成平的。
+    const merlons = new Graphics();
+    const topW = boxW / 11;
     for (let i = 0; i < 11; i++) {
+      if (i % 2 === 1) continue;
       const x = -o + i * topW;
-      const merlon = i % 2 === 0;
-      const h = merlon ? topH : topH * 0.55;
-      // 凸起用墙本色（比主体稍亮），凹口用更深的阴影，形成砖石层次感
-      const color = merlon ? T.wall : shade(T.wallDark, -0.22);
-      g.rect(x, -o - h, topW, h).fill(color);
+      merlons.roundRect(x, -o - m, topW, m + 2, 2).fill(STONE.face);
+      merlons.rect(x + 1, -o - m, topW - 2, 2).fill(STONE.top);
+      merlons.rect(x, -o - 1.5, topW, 1.5).fill({ color: STONE.edge, alpha: 0.4 });
     }
+    this.parapetLayer.addChild(merlons);
 
-    // 3) 左右墙柱砖纹
-    const brickH = S * 0.22;
-    for (let i = 0; i < 11; i++) {
-      const y = i * S + S * 0.12;
-      // 左柱
-      g.rect(-o + 2, y, o - 4, brickH).fill(i % 2 === 0 ? T.wall : T.wallDark);
-      // 右柱
-      g.rect(span + 2, y, o - 4, brickH).fill(i % 2 === 0 ? T.wall : T.wallDark);
-    }
-
-    // 4) 底部石基
-    g.rect(-o, span, span + o * 2, baseH).fill(T.wallDark);
-    g.rect(-o, span, span + o * 2, 2).fill({ color: shade(T.wallDark, -0.3), alpha: 0.6 });
-
-    this.parapetLayer.addChild(g);
+    // ⑥ 外缘描边：塔壁与夜色的交界（画在遮罩之外，才能保住 2px 的完整描边）
+    const edge = new Graphics();
+    edge.roundRect(-o, -o, boxW, boxW, corner).stroke({ width: 2, color: STONE.edge, alpha: 0.85 });
+    this.parapetLayer.addChild(edge);
   }
 
   private buildTerrain(): void {
@@ -278,6 +341,25 @@ export class Board extends Container {
       this.heroNode.addChild(g);
     }
     this.heroLayer.addChild(this.heroNode);
+  }
+
+  /**
+   * 校验用：塔壁砖纹与地图内墙是否**来自同一张素材**。
+   *
+   * 「周边的墙和地图的风格一致」有两种做法：调一个相近的颜色（看着像，
+   * 换个人调色就散了），或者干脆用同一张图（结构上一致，不可能散）。
+   * 这里走的是后者，所以断言也按后者写：比较两张 Texture 的 `source`
+   * （base texture）—— source 相同，就意味着它们真的是同一张图上的像素，
+   * 而不是"两个恰好接近的颜色"。
+   *
+   * 传回 null 表示图集没加载（程序化兜底路径），那时这条断言无从谈起。
+   */
+  __wallSources(): { parapet: number | null; inner: number | null } {
+    const inner = atlas.ready ? atlas.terrainVariant('1', 0) : null;
+    return {
+      parapet: this.parapetTex ? this.parapetTex.source.uid : null,
+      inner: inner ? inner.source.uid : null
+    };
   }
 
   /** 换层：重建地形与实体 */

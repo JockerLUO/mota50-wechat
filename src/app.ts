@@ -8,7 +8,7 @@
  *   render/  PixiJS 绘制
  *   app.ts   输入分发、自动寻路、主循环 —— 只有这一层知道「谁调谁」
  *
- * 画布按设计尺寸 420×780 布局，再整体缩放到窗口：
+ * 画布按设计尺寸 420×940 布局，再整体缩放到窗口：
  * 微信小游戏的标准做法（设计稿尺寸固定，运行时按屏幕等比缩放）。
  */
 
@@ -31,6 +31,7 @@ import {
   type NpcTalk
 } from './game/engine';
 import { Board } from './render/board';
+import { Backdrop } from './render/backdrop';
 import { atlas, loadAtlas } from './render/atlas';
 import {
   DetailPanel,
@@ -39,13 +40,14 @@ import {
   LAYOUT,
   StatusBar,
   Toolbar,
+  boardBox,
   label,
   type BattleLike,
   type DetailTarget
 } from './render/hud';
 import { DialoguePanel } from './render/dialogue-panel';
 import { MerchantPanel, ShopPanel } from './render/trade';
-import { T, UI, npcRole } from './render/theme';
+import { T, UI, npcRole, realm, realmOf, setRealm } from './render/theme';
 
 interface Cell {
   x: number;
@@ -57,6 +59,11 @@ export class Game {
   private state: GameState;
   private app: Application;
   private root = new Container();
+  /**
+   * 场景背景（塔的位面）—— 结构上的第一层，所有面板与棋盘都在它上面。
+   * 它不是装饰层：地平线高度由当前楼层的位面决定，见 `render/backdrop.ts`。
+   */
+  private backdrop: Backdrop;
   private board: Board;
   private status: StatusBar;
   private detail: DetailPanel;
@@ -97,6 +104,7 @@ export class Game {
     this.state = createInitialState(data);
     pushLog(this.state, '踏上魔塔第 1 层。方向键 / WASD 移动，撞向怪物即攻击。', 'floor');
 
+    this.backdrop = new Backdrop();
     this.board = new Board(LAYOUT.board.cell, {
       onHover: (x, y) => this.onHover(x, y),
       onClick: (x, y) => void this.onBoardClick(x, y),
@@ -130,8 +138,10 @@ export class Game {
       () => this.closeModal()
     );
 
-    // 顺序即层序：两个交易浮层与对话框必须排在棋盘与 HUD 之后，遮罩才挡得住下层点击
+    // 顺序即层序：背景在最底，两个交易浮层与对话框必须排在棋盘与 HUD 之后，
+    // 遮罩才挡得住下层点击
     this.root.addChild(
+      this.backdrop,
       this.status,
       this.board,
       this.toolbar,
@@ -161,7 +171,8 @@ export class Game {
     const { w, h } = sh.size();
     const app = new Application();
     await app.init({
-      background: T.canvasBg,
+      // 兜底色：真正的背景由 Backdrop 铺满，这里管的是「画布之外」那圈黑边
+      background: realmOf(1).sky,
       antialias: true,
       resolution: sh.dpr,
       autoDensity: true,
@@ -188,7 +199,7 @@ export class Game {
     this.fit();
   }
 
-  /** 把 420×780 的设计稿等比缩放居中 */
+  /** 把设计稿（LAYOUT.W × LAYOUT.H）等比缩放居中 */
   private fit(): void {
     // ⚠️ PixiJS v8 的 renderer.width 已经是**逻辑像素**（内部已除以 resolution），
     // 再除一次 resolution 会把整体缩放算成 1/dpr，画面只剩左上角一小块。
@@ -251,7 +262,67 @@ export class Game {
       atlasReady: atlas.ready,
       // 图集失败的原因。`ready=false` 本身是**静默回退**（画面只是变朴素），
       // 真机上光看画面分不出「加载失败」与「本来就没素材」—— 把原因带出来。
-      atlasError: atlas.lastError
+      atlasError: atlas.lastError,
+      // 场景背景（塔的位面）。`paintedFloor` 是背景层**真正画出来**的那一层，
+      // 与 state.floor 分开报：换层时两者短暂不一致，正是这类 bug 的现场。
+      realm: {
+        id: realm().id,
+        name: realm().name,
+        horizon: this.backdrop.horizon,
+        paintedFloor: this.backdrop.paintedFloor
+      }
+    };
+  }
+
+  /**
+   * 版面实测快照 —— 「各模块间隙相等，且棋盘没有被挤小」必须能被断言。
+   *
+   * 读的是**渲染树里各面板回填的卡片矩形**（`UI.tag.rect`），不是 LAYOUT 常量：
+   * 常量写的是意图，卡片矩形是真正画出来的那一版。棋盘那一块用 `boardBox()` ——
+   * 它是「格子区 + 塔壁 + 城垛」的整体视觉盒，而间隙必须按它算：
+   * 只按格子区算出来的间隙是假的（旧版就是这么把 20px 算成了 −4）。
+   */
+  __layout(): {
+    W: number;
+    H: number;
+    gap: number;
+    pad: number;
+    modules: Array<{ id: string; x: number; y: number; w: number; h: number }>;
+    gaps: Array<{ after: string; value: number }>;
+    boardCell: number;
+    boardSpan: number;
+    boardBox: { x: number; y: number; w: number; h: number };
+  } {
+    const bb = boardBox();
+    const modules = [
+      { id: 'hud', ...this.status.cardRect },
+      { id: 'board', ...bb },
+      {
+        id: 'toolbar',
+        x: LAYOUT.toolbar.x,
+        y: LAYOUT.toolbar.y,
+        w: LAYOUT.toolbar.w,
+        h: LAYOUT.toolbar.h
+      },
+      { id: 'detail', ...this.detail.cardRect },
+      { id: 'items', ...this.itemBar.cardRect }
+    ];
+    const gaps: Array<{ after: string; value: number }> = [{ after: 'top', value: modules[0].y }];
+    for (let i = 0; i < modules.length - 1; i++) {
+      gaps.push({ after: modules[i].id, value: modules[i + 1].y - (modules[i].y + modules[i].h) });
+    }
+    const last = modules[modules.length - 1];
+    gaps.push({ after: last.id, value: LAYOUT.H - (last.y + last.h) });
+    return {
+      W: LAYOUT.W,
+      H: LAYOUT.H,
+      gap: LAYOUT.gap,
+      pad: LAYOUT.pad,
+      modules,
+      gaps,
+      boardCell: LAYOUT.board.cell,
+      boardSpan: LAYOUT.board.cell * 11,
+      boardBox: bb
     };
   }
 
@@ -773,12 +844,34 @@ export class Game {
   }
 
   private sync(): void {
+    // 位面必须先切：背景层与面板底板都读它，晚一步就会画出上一层的色
+    this.syncRealm(this.displayFloor);
     this.board.refresh(this.state, this.data);
     this.board.update(0, this.state);
     this.status.update(this.state, this.data, this.displayFloor, this.browseFloor !== null);
     this.refreshDetail();
     this.itemBar.update(this.state, this.data);
     if (this.state.dead && this.deathLayer.children.length === 0) this.showDeath();
+  }
+
+  /**
+   * 把「当前位面」推给背景层与面板。
+   *
+   * 只在**跨过位面锚点**时重画卡片底板：相邻两层的底色差得极小（第 20 层到
+   * 第 21 层要跨过石堡→高塔），没必要每层都重画一遍三块面板的底板 ——
+   * 那是每步都可能触发的路径。
+   */
+  private syncRealm(floor: number): void {
+    const before = realm().id;
+    setRealm(floor);
+    if (realm().id !== before) {
+      this.status.repaintCard();
+      this.detail.repaintCard();
+      this.itemBar.repaintCard();
+    }
+    // 屏幕上超出设计稿的那部分（黑边）也染成天顶色，画面因此是"满"的
+    this.app.renderer.background.color = realm().sky;
+    this.backdrop.setFloor(floor);
   }
 
   private showDeath(): void {
@@ -789,7 +882,7 @@ export class Game {
     this.deathLayer.addChild(g);
 
     const px = 60;
-    const py = 296;
+    const py = Math.round((LAYOUT.H - 186) / 2);
     const pw = LAYOUT.W - 120;
     const ph = 186;
     const panel = new Graphics();

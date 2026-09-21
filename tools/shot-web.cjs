@@ -9,7 +9,7 @@
  *   实际游戏里道具是等比缩放的，剑会变形。
  *
  * 设计要点：
- *   1. 视口固定成设计尺寸 420×780 → 根容器缩放系数恰好为 1，
+ *   1. 视口对齐成**页面报出来的**设计尺寸（`__layout()`）→ 根容器缩放系数恰好为 1，
  *      于是「设计坐标 == CSS 坐标」，裁剪区域可以按源码里的 LAYOUT 硬算。
  *   2. `--clip board` 不写死坐标，而是问渲染树要 `board.toGlobal()` —— 
  *      LAYOUT 改了截图跟着改，不会悄悄错位到别的面板上。
@@ -31,9 +31,15 @@ const ROOT = path.resolve(__dirname, '..');
 const DIST = path.join(ROOT, 'dist');
 const PORT = Number(process.env.PORT || 4199);
 
-// 设计稿尺寸。必须与 src/render/hud.ts 的 LAYOUT.W/H 一致 ——
-// 视口等于设计尺寸时缩放系数为 1，截图坐标就等于源码坐标。
-const DESIGN = { W: 420, H: 780 };
+// 设计稿尺寸：**页面加载后从 `__layout()` 读回来**，不在这里硬编码。
+//
+// 视口等于设计尺寸时缩放系数为 1，截图坐标就等于源码坐标 —— 这个前提没变，
+// 变的是「谁说了算」。上一版这里写死 420×780：改版面（780 → 892）时忘了同步，
+// 截图就按旧高度裁，最下面那块面板被悄悄切掉，看图的人还以为面板本来就这么高。
+// 现在 DESIGN 由页面自己报，工具跟着走。
+//
+// 初始视口只要求「够大」，页面就绪后再 setViewportSize 到真实设计尺寸。
+let DESIGN = { W: 420, H: 1024 };
 
 // ── 参数 ────────────────────────────────────────────────────────────
 function parseArgs(argv) {
@@ -90,28 +96,36 @@ const server = http.createServer((req, res) => {
   res.end(fs.readFileSync(resolved));
 });
 
-/** --clip 取值 → 页面内计算裁剪矩形的表达式（CSS 像素） */
-const CLIP_EXPR = {
-  full: null,
-  // 棋盘：直接问渲染树，不写死坐标
-  board: `(() => {
-    const b = window.mota && window.mota.game && window.mota.game.board;
-    if (!b) return null;
-    const p0 = b.toGlobal({ x: 0, y: 0 });
-    const p1 = b.toGlobal({ x: b.span, y: b.span });
-    return { x: p0.x - 8, y: p0.y - 8, width: (p1.x - p0.x) + 16, height: (p1.y - p0.y) + 16 };
-  })()`,
-  // HUD：状态栏那条
-  hud: `(() => {
-    const c = document.querySelector('canvas');
-    if (!c) return null;
-    const r = c.getBoundingClientRect();
-    const s = Math.min(r.width / ${DESIGN.W}, r.height / ${DESIGN.H});
-    const x = r.left + (r.width - ${DESIGN.W} * s) / 2;
-    const y = r.top + (r.height - ${DESIGN.H} * s) / 2;
-    return { x, y, width: ${DESIGN.W} * s, height: 96 * s };
-  })()`
-};
+/**
+ * --clip 取值 → 页面内计算裁剪矩形的表达式（CSS 像素）。
+ *
+ * 是函数而不是常量，因为 DESIGN 要等页面加载完才知道。棋盘那一档干脆
+ * 直接问渲染树（`board.toGlobal`），LAYOUT 改了它跟着改。
+ */
+function clipExpr(kind) {
+  if (kind === 'board') {
+    return `(() => {
+      const b = window.mota && window.mota.game && window.mota.game.board;
+      if (!b) return null;
+      const p0 = b.toGlobal({ x: 0, y: 0 });
+      const p1 = b.toGlobal({ x: b.span, y: b.span });
+      return { x: p0.x - 8, y: p0.y - 8, width: (p1.x - p0.x) + 16, height: (p1.y - p0.y) + 16 };
+    })()`;
+  }
+  if (kind === 'hud' || kind === 'backdrop') {
+    const h = kind === 'hud' ? 96 : DESIGN.H;
+    return `(() => {
+      const c = document.querySelector('canvas');
+      if (!c) return null;
+      const r = c.getBoundingClientRect();
+      const s = Math.min(r.width / ${DESIGN.W}, r.height / ${DESIGN.H});
+      const x = r.left + (r.width - ${DESIGN.W} * s) / 2;
+      const y = r.top + (r.height - ${DESIGN.H} * s) / 2;
+      return { x, y, width: ${DESIGN.W} * s, height: ${h} * s };
+    })()`;
+  }
+  return null;
+}
 
 // ── 主流程 ──────────────────────────────────────────────────────────
 (async () => {
@@ -168,6 +182,20 @@ const CLIP_EXPR = {
     process.exit(1);
   }
 
+  // 设计尺寸从页面读回来（见 DESIGN 的说明），再按它对齐视口
+  const layout = await page.evaluate(() =>
+    window.mota && window.mota.game && window.mota.game.__layout
+      ? window.mota.game.__layout()
+      : null
+  );
+  if (layout && (layout.W !== DESIGN.W || layout.H !== DESIGN.H)) {
+    DESIGN = { W: layout.W, H: layout.H };
+    await page.setViewportSize({ width: DESIGN.W, height: DESIGN.H });
+    // 视口变了会触发 resize → fit() 重算缩放，等它落屏再继续
+    await page.waitForTimeout(250);
+  }
+  if (layout) console.log(`  设计尺寸 ${DESIGN.W}×${DESIGN.H}（读自 __layout()）`);
+
   // 布置场景：开发接口是同步的，但改完要让渲染跑几帧才落屏
   const setup = await page.evaluate(
     ({ floor, gold, grants }) => {
@@ -222,10 +250,9 @@ const CLIP_EXPR = {
     );
   }
 
-  const clip = CLIP_EXPR[args.clip]
-    ? await page.evaluate(CLIP_EXPR[args.clip])
-    : null;
-  if (CLIP_EXPR[args.clip] && !clip) {
+  const expr = clipExpr(args.clip);
+  const clip = expr ? await page.evaluate(expr) : null;
+  if (expr && !clip) {
     console.error(`--clip ${args.clip} 拿不到矩形（渲染树里没找到目标）`);
     await browser.close();
     server.close();

@@ -19,7 +19,9 @@ import { T, UI, npcRole, type PanelRect } from './theme';
 
 // ── 版式常量 ────────────────────────────────────────────────────────
 
-const CARD_X = 22;
+// 与主面板**同一栏**：左右边距都取 LAYOUT.pad。
+// 浮层比主面板窄一圈（22 vs 20）时，弹出的一瞬间能看出"卡片没对齐"。
+const CARD_X = LAYOUT.pad;
 const CARD_W = LAYOUT.W - CARD_X * 2;
 const PAD = UI.pad;
 const INNER_X = CARD_X + PAD;

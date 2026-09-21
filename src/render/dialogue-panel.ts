@@ -38,8 +38,10 @@ export interface DialogueScript {
  * 卡片高度与最多行数要一起算：正文首行在 CARD_Y+56，行距 18，
  * 脚部按钮占最后 50px。7 行 × 18 = 126 → 56+126 = 182 < 236-50 = 186 ✓
  */
-const CARD = { x: 12, w: LAYOUT.W - 24, h: 236 };
-const CARD_Y = LAYOUT.H - 12 - CARD.h;
+// 与主面板同栏（左右边距 LAYOUT.pad），底边留 LAYOUT.pad —— 弹出时正好
+// 压在道具栏上，与它左右对齐，看着是"从底部升起来的一张卡"
+const CARD = { x: LAYOUT.pad, w: LAYOUT.W - LAYOUT.pad * 2, h: 236 };
+const CARD_Y = LAYOUT.H - LAYOUT.pad - CARD.h;
 /** 正文行距与最多行数：再长的台词会被截断，篇幅由数据作者控制 */
 const LINE_H = 18;
 const MAX_LINES = 7;

@@ -22,27 +22,86 @@ import type { GameState } from '../game/state';
 import { npcLine } from '../game/dialogue';
 import { atlas, fitSize } from './atlas';
 import { drawItemGlyph, itemCategoryOf, itemColorOf } from './icons';
-import { ACCENT, GRADE_STYLE, T, UI, npcRole, type PanelRect } from './theme';
+import { ACCENT, GRADE_STYLE, T, UI, npcRole, realm, type PanelRect } from './theme';
 
 // ── 版式 ────────────────────────────────────────────────────────────
 //
-// 420×780 的设计稿，从上到下：状态卡 → 棋盘 → 操作条 → 详情卡 → 道具栏。
-// 底部原本还有一条「消息条」（两行滚动日志），已按玩家要求整条删除 ——
-// 它占 40px 却只重复状态卡与操作说明里已有的信息。腾出来的空间
-// 全部给了信息面板，**没有拿去放大棋盘**：棋盘格宽必须保持 16 的整数倍
-// （地形素材是 16px 像素画，34/16 = 2.125 这种非整数倍会让硬边糊掉）。
+// 420×940 的设计稿，从上到下：状态卡 → 棋盘 → 操作条 → 详情卡 → 道具栏。
 //
-// 五块面板共用一套纵向节奏：边距 12、面与面之间 6、卡片内边距由 UI.pad 决定。
+// ## 三个数决定一切
+//
+//   pad = 20   左右边距（面板 x）= 面板宽 380 的来源
+//   gap = 28   模块之间的**垂直间隙**，含顶部与底部留白 —— 五处完全相同
+//
+// 上一版是 780 高、间隙 20/20/6/6，最下面两块挤在一起；而且棋盘那圈塔壁
+// （城垛 10 + 壁厚 14）是**溢出**格子区画的，实际视觉间隙＝20−24＝−4，
+// 城垛直接压到状态卡上。所以这一版把「棋盘的视觉盒子」也算进版面：
+//
+//   格子区高 352（= 32 × 11，**一格没缩**）
+//   视觉盒高 388 = 城垛 8 + 壁厚 14 + 352 + 壁厚 14
+//
+// ## 为什么画布能长高，而棋盘不会变小
+//
+// 画布是按 `min(w/W, h/H)` 等比缩放居中的：手机竖屏（约 390×844）比
+// 1.857 的设计稿更瘦长，缩放系数一直是**由宽度**定下的 0.93 ——
+// 也就是说原来上下各有 60~120px 的黑边没被用上。把设计稿加高到 940
+// （比例 2.238，接近手机竖屏的 2.16）只是把这些黑边吃回来：
+// 在 390×844 上缩放系数 0.898，画布铺满 377×844，屏上元素的实际尺寸
+// 与原来相差不到 3%。**棋盘与面板一格没缩，多出来的全是间隙。**
+//
+// 五块面板共用一套纵向节奏：边距 20、面与面之间 28（棋盘前后 40），卡片内边距由 UI.pad 决定。
 
 export const LAYOUT = {
   W: 420,
-  H: 780,
-  hud: { x: 12, y: 10, w: 396, h: 88 },
-  board: { x: 34, y: 118, cell: 32 },
-  toolbar: { x: 12, y: 490, w: 396, h: 32 },
-  detail: { x: 12, y: 528, w: 396, h: 126 },
-  items: { x: 12, y: 660, w: 396, h: 114 }
+  H: 940,
+  /** 左右边距；面板宽 = W - 2 * pad */
+  pad: 20,
+  /**
+   * 面板之间的垂直间隙（含顶部与底部留白）—— 处处相等。
+   *
+   * 这个数还有第二个作用：**让背景露出来**。间隙就是玩家能看见
+   * 「上部星空 / 下部绝地」的地方，缝越窄场景越像不存在。
+   * 所以这里的取舍不是"紧凑 vs 松散"，而是"UI 占比 vs 场景可见度"。
+   */
+  gap: 28,
+  /**
+   * 棋盘**上下**的留白 —— 比 `gap` 大一档（40）。
+   *
+   * 两处不同是有意的：
+   *  - 棋盘是画面的视觉中心，"不要挤占游戏地图的空间"指的就是它上下要被让开，
+   *    所以它前后的两条缝最宽；
+   *  - 这两条缝正好是**位面最显眼的两条横带** —— 上面一条是星空（城垛后面的天），
+   *    下面一条是绝地（塔壁脚下的地）。背景只在缝里露出来，把最宽的两条缝
+   *    留在棋盘前后，位面感才立得住。
+   */
+  boardGap: 40,
+  hud: { x: 20, y: 28, w: 380, h: 88 },
+  /** 棋盘**格子区**原点与格宽。塔壁是往外画的，见 parapet */
+  board: { x: 34, y: 178, cell: 32 },
+  /** 塔壁：壁厚 t、城垛高 merlon（都画在格子区之外，必须计入版面） */
+  parapet: { t: 14, merlon: 8 },
+  toolbar: { x: 20, y: 584, w: 380, h: 32 },
+  detail: { x: 20, y: 644, w: 380, h: 126 },
+  items: { x: 20, y: 798, w: 380, h: 114 }
 } as const;
+
+/**
+ * 棋盘**含塔壁**的视觉矩形。
+ *
+ * 版面计算与断言都必须用它，而不是 `LAYOUT.board` —— 后者只是格子区，
+ * 塔壁向外还多占 14（四边）+ 8（顶部城垛）。上一版就是拿格子区当边界算间隙，
+ * 于是「间隙 20」在屏幕上实际是 −4：城垛压在状态卡上而没人发现。
+ */
+export function boardBox(): { x: number; y: number; w: number; h: number } {
+  const { t: thick, merlon } = LAYOUT.parapet;
+  const span = LAYOUT.board.cell * 11;
+  return {
+    x: LAYOUT.board.x - thick,
+    y: LAYOUT.board.y - thick - merlon,
+    w: span + thick * 2,
+    h: span + thick * 2 + merlon
+  };
+}
 
 const FONT = '"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC",sans-serif';
 
@@ -75,13 +134,17 @@ export function panel(
   h: number,
   accent: number | null,
   radius: number = UI.radius,
-  fill: number = T.panel
+  fill?: number
 ): Graphics {
+  // 卡片底色随**位面**微调（地底偏暖白、星界偏冷白）。幅度刻意压得很小：
+  // 它是「场景与 UI 有呼应」的手段，不是换主题 —— 相邻两层的差别几乎看不出来，
+  // 但从第 1 层走到第 50 层能感觉到画面在变冷。
+  const face = fill ?? realm().card;
   for (const s of UI.shadow) {
     g.roundRect(x, y + s.dy, w, h, radius).fill({ color: T.panelShadow, alpha: s.alpha });
   }
-  g.roundRect(x, y, w, h, radius).fill(fill);
-  g.roundRect(x, y, w, h, radius).stroke({ width: UI.border, color: T.panelBorder });
+  g.roundRect(x, y, w, h, radius).fill(face);
+  g.roundRect(x, y, w, h, radius).stroke({ width: UI.border, color: realm().cardEdge });
   if (accent !== null) {
     g.roundRect(x + UI.accent.x, y + UI.accent.y, UI.accent.w, UI.accent.h, UI.accent.w / 2).fill(accent);
   }
@@ -102,10 +165,23 @@ function headerTitle(text: string, fill = T.ink): Text {
  * 或长区名就会和右边挤在一起 —— 而这种碰撞只在特定楼层出现，很容易漏测。
  * 定死三段之后，任何文字长度都不会改变版面。
  */
-const STATUS_TEXT_W = 250; // 左栏（区名 / 标题 / 档位）的右边界
+const STATUS_TEXT_W = 234; // 左栏（区名 / 标题 / 档位）的右边界
+// 234 是怎么来的：面板宽 380 − 右侧三个钥匙胶囊（3×38 + 2×6 + 右距 12 = 138）
+// − 8 的呼吸位。上一版面板宽 396，所以是 250；面板一旦变窄而这里忘了改，
+// 两位数楼层或长档位文字就会压到钥匙上 —— 而这只在特定楼层出现，很容易漏测。
 const KEY_CHIP = { w: 38, h: 30, gap: 6, right: 12, y: 10 };
 
 export class StatusBar extends Container {
+  /**
+   * 卡片矩形（见 theme.ts `UI.tag.rect`）。
+   *
+   * 状态卡不参与 A7（它的标题按 40×40 楼层徽章的实测宽度往后量，
+   * 与「短条 + 标题」不是同一种结构），但**要参与 A8**：
+   * A8 量的是「五块模块之间的间隙」，少了它就只剩四块。
+   */
+  readonly cardRect: PanelRect;
+  /** 底板单独持有：位面变了要重画（见 `repaintCard`） */
+  private cardGfx = new Graphics();
   private floorBadge = new Graphics();
   private floorText = label('1', UI.fs.badge, T.onDark, '800');
   private zoneText = label('', UI.fs.label, T.inkFaint, '600');
@@ -125,10 +201,11 @@ export class StatusBar extends Container {
 
   private readonly badge = { x: 12, y: 10, w: 40, h: 40 };  constructor() {
     super();
+    this.label = UI.tag.panel + 'hud';
     const { x, y, w, h } = LAYOUT.hud;
-    const g = new Graphics();
-    panel(g, x, y, w, h, ACCENT.status);
-    this.addChild(g);
+    this.cardRect = { x, y, w, h };
+    this.repaintCard();
+    this.addChild(this.cardGfx);
 
     // 楼层徽章：内边距与短条对齐（同一套 12px 网格）
     this.addChild(this.floorBadge);
@@ -182,6 +259,16 @@ export class StatusBar extends Container {
       this.addChild(dot, cap, t);
     });
     this.addChild(this.keyLayer);
+  }
+
+  /**
+   * 重画底板。卡片底色随位面微调（地底暖白 / 星界冷白），
+   * 所以换层跨过位面锚点时要重画一次 —— 否则永远停在开局那一刻的色。
+   */
+  repaintCard(): void {
+    const { x, y, w, h } = LAYOUT.hud;
+    this.cardGfx.clear();
+    panel(this.cardGfx, x, y, w, h, ACCENT.status);
   }
 
   /** 徽章底色单独抽出来：update 里「浏览别的楼层」要把它变灰 */
@@ -383,6 +470,8 @@ export interface BattleLike {
 export class DetailPanel extends Container {
   /** 卡片矩形（见 theme.ts `UI.tag.rect`）：版式断言据此换算标题偏移 */
   readonly cardRect: PanelRect;
+  /** 底板单独持有：位面变了要重画 */
+  private cardGfx = new Graphics();
   private title: Text;
   private badge = new Graphics();
   private badgeText: Text;
@@ -396,9 +485,8 @@ export class DetailPanel extends Container {
     this.label = UI.tag.panel + 'detail';
     const { x, y, w, h } = LAYOUT.detail;
     this.cardRect = { x, y, w, h };
-    const g = new Graphics();
-    panel(g, x, y, w, h, ACCENT.detail);
-    this.addChild(g);
+    this.repaintCard();
+    this.addChild(this.cardGfx);
 
     this.title = headerTitle('');
     this.title.label = UI.tag.title;
@@ -409,9 +497,16 @@ export class DetailPanel extends Container {
     this.badgeText.anchor.set(0.5);
     this.addChild(this.badge, this.title, this.badgeText);
 
-    // 五行文字池：136 高的卡片放得下「标题 38 + 5×17」
+    // 五行文字池：126 高的卡片放得下「标题 38 + 5×17」
     this.pool = new TextPool(5, UI.fs.body, x + UI.pad, y + 38, 17);
     this.addChild(this.pool);
+  }
+
+  /** 重画底板（位面色调，见 StatusBar.repaintCard） */
+  repaintCard(): void {
+    const { x, y, w, h } = LAYOUT.detail;
+    this.cardGfx.clear();
+    panel(this.cardGfx, x, y, w, h, ACCENT.detail);
   }
 
   render(
@@ -612,13 +707,15 @@ function keyCn(s: string): string {
 
 // ── 道具栏 ──────────────────────────────────────────────────────────
 
-/** 槽位尺寸：9 列 × 38 + 8 × 3 = 366，刚好落在卡片 368 的内容宽内，两行共 18 格 */
-const SLOT = { size: 38, gap: 3, perRow: 9 };
+/** 槽位尺寸：9 列 × 36 + 8 × 3 = 348，落在卡片 352 的内容宽内，两行共 18 格 */
+const SLOT = { size: 36, gap: 3, perRow: 9 };
 const SLOT_ROWS = 2;
 
 export class ItemBar extends Container {
   /** 卡片矩形（见 theme.ts `UI.tag.rect`）：版式断言据此换算标题偏移 */
   readonly cardRect: PanelRect;
+  /** 底板单独持有：位面变了要重画 */
+  private cardGfx = new Graphics();
   private slotLayer = new Container();
   private title: Text;
   private countText: Text;
@@ -629,9 +726,8 @@ export class ItemBar extends Container {
     this.label = UI.tag.panel + 'items';
     const { x, y, w, h } = LAYOUT.items;
     this.cardRect = { x, y, w, h };
-    const g = new Graphics();
-    panel(g, x, y, w, h, ACCENT.items);
-    this.addChild(g);
+    this.repaintCard();
+    this.addChild(this.cardGfx);
 
     this.title = headerTitle('道具');
     this.title.label = UI.tag.title;
@@ -657,6 +753,13 @@ export class ItemBar extends Container {
         .stroke({ width: 1, color: T.panelBorder, alpha: 0.5 });
     }
     this.addChild(empty, this.slotLayer);
+  }
+
+  /** 重画底板（位面色调，见 StatusBar.repaintCard） */
+  repaintCard(): void {
+    const { x, y, w, h } = LAYOUT.items;
+    this.cardGfx.clear();
+    panel(this.cardGfx, x, y, w, h, ACCENT.items);
   }
 
   update(state: GameState, data: GameData): void {
@@ -824,8 +927,8 @@ export class Toolbar extends Container {
     const { x, y, w } = LAYOUT.toolbar;
     // 三个等宽按钮铺满整行：宽度由版面算出来，不跟着文字长度走 ——
     // 「重开」只有两个字，跟着文字走会变成一个挤在左边的窄块，整行看着就散了
-    const gap = 6;
-    const btnW = Math.floor((w - gap * 2) / 3);
+    const gap = 10;
+    const btnW = Math.floor((w - gap * 2) / 3); // 380 → 三个 120，正好铺满
     const mk = (text: string, i: number, fn: () => void, active = false): Pill => {
       const p = new Pill(text, btnW, fn, active);
       p.x = x + i * (btnW + gap);
@@ -840,6 +943,22 @@ export class Toolbar extends Container {
 }
 
 // ── 楼层面板（传送 / 浏览） ─────────────────────────────────────────
+
+/**
+ * 楼层面板卡片：51 层按 6 列排 9 行，行高 34 + 行距 4 → 8×38 + 34 = 338，
+ * 加上头部 76 与底部留白，卡片高 460。纵向居中于设计稿。
+ *
+ * 写成常量是因为**两处都在用**：构造函数画卡片，rebuild() 摆格子。
+ * 之前两处各写一遍 `22 / 150`，改一处另一处就错位。
+ */
+const FLOOR_CARD = {
+  x: LAYOUT.pad,
+  y: Math.round((LAYOUT.H - 460) / 2),
+  w: LAYOUT.W - LAYOUT.pad * 2,
+  h: 460,
+  /** 头部高度：标题 + 提示行占到这里，格子从这往下排 */
+  head: 76
+};
 
 export class FloorPanel extends Container {
   /** 卡片矩形（见 theme.ts `UI.tag.rect`）：版式断言据此换算标题偏移 */
@@ -865,10 +984,7 @@ export class FloorPanel extends Container {
     dim.eventMode = 'static';
     this.addChild(dim);
 
-    const px = 22;
-    const py = 150;
-    const pw = W - 44;
-    const ph = 460;
+    const { x: px, y: py, w: pw, h: ph } = FLOOR_CARD;
     this.cardRect = { x: px, y: py, w: pw, h: ph };
     const bg = new Graphics();
     // 浮层同样走统一底板 —— 短条颜色由 panel() 一并画出（以前这里自己再画一根，
@@ -910,12 +1026,14 @@ export class FloorPanel extends Container {
 
   private rebuild(state: GameState): void {
     this.grid.removeChildren().forEach((c) => c.destroy({ children: true }));
-    const px = 22 + 22;
-    const py = 150 + 76;
     const cols = 6;
     const cw = 50;
     const ch = 34;
     const gap = 4;
+    // 格子块在卡片里**水平居中**：6 列 × 50 + 5 × 4 = 320，卡片内容宽 352
+    const blockW = cols * cw + (cols - 1) * gap;
+    const px = FLOOR_CARD.x + Math.round((FLOOR_CARD.w - blockW) / 2);
+    const py = FLOOR_CARD.y + FLOOR_CARD.head;
 
     this.title.text = this.mode === 'teleport' ? '楼层传送器' : '楼层浏览';
     // 提示是单行、不换行（面板高度按单行算），所以文案要自己控制长度

@@ -142,7 +142,11 @@ function check(name, ok, detail) {
     headless: true,
     args: ['--use-angle=metal', '--enable-gpu']
   });
-  const page = await browser.newPage({ viewport: { width: 420, height: 780 }, deviceScaleFactor: 2 });
+  // 视口**对齐页面报出来的设计尺寸**（`__layout()`），不在这里硬编码。
+  // 与 tools/shot-web.cjs 同一套做法：版面一改（780 → 916），
+  // 这里若还按旧高度开视口，`root` 的缩放系数就不是 1，
+  // 所有"按源码坐标算出来"的期望值会集体偏移。
+  const page = await browser.newPage({ viewport: { width: 420, height: 1024 }, deviceScaleFactor: 2 });
 
   const consoleErrors = [];
   page.on('pageerror', (e) => consoleErrors.push(`[pageerror] ${e.message}`));
@@ -153,6 +157,13 @@ function check(name, ok, detail) {
   try {
     await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'load', timeout: 30000 });
     await page.waitForFunction(() => !!(window.mota && window.mota.game), null, { timeout: 20000 });
+    {
+      const l0 = await page.evaluate(() => window.mota.game.__layout());
+      await page.setViewportSize({ width: l0.W, height: l0.H });
+      // 视口变了会触发 resize → fit()，等它落屏再往下走
+      await page.waitForTimeout(200);
+      console.log(`设计尺寸 ${l0.W}×${l0.H}（读自 __layout()）`);
+    }
     // 图集是异步解码的；等到有格子真的贴上贴图，再做地形断言
     await page.waitForFunction(
       () => window.mota.game.board.terrainSprites.some((s) => s && s.visible),
@@ -418,6 +429,98 @@ function check(name, ok, detail) {
               .map((p) => `${p.panel}(${p.dx},${p.dy})`)
               .join(' ')
           : `偏移不合令牌的：${JSON.stringify(bad)}`
+    );
+
+    // ── A8 版面：间隙相等、棋盘没被挤小、棋盘盒与面板同上下一栏 ──
+    //
+    // 玩家这一轮的原话是「各模块间隙加大，不要挤占游戏地图的空间」。
+    // 两件事都要能量：间隙读的是**渲染树里各面板回填的卡片矩形**，
+    // 棋盘那一块用 `boardBox()`（格子区 + 塔壁 + 城垛的整体视觉盒）。
+    //
+    // ⚠️ 必须用视觉盒而不是格子区：上一版就是拿格子区当边界算间隙，
+    // 而塔壁向上还多占 24px（城垛 10 + 壁厚 14），于是"间隙 20"在屏幕上
+    // 实际是 −4 —— 城垛压在状态卡上，看单个文件发现不了。
+    //
+    // 棋盘 352 / 格子 32 是**上一版的值**，写死在这里当锚点：
+    // 这一版加间隙的来源是"把设计稿的黑边吃回来"，不是缩棋盘。
+    const layout = await page.evaluate(() => window.mota.game.__layout());
+    const BOARD_SPAN_KEPT = 352;
+    const BOARD_CELL_KEPT = 32;
+    // 期望值在这里**独立写死**（与 hud.ts 的 LAYOUT.gap / LAYOUT.boardGap 一一对应）。
+    // `after` 指的是「这一项之后那段缝」：top = 状态卡之前、hud = 状态卡与棋盘之间…
+    const GAP_EXPECT = { top: 28, hud: 40, board: 40, toolbar: 28, detail: 28, items: 28 };
+    const gapBad = layout.gaps.filter((g) => g.value !== GAP_EXPECT[g.after]);
+    const boardKept = layout.boardSpan === BOARD_SPAN_KEPT && layout.boardCell === BOARD_CELL_KEPT;
+    // 棋盘视觉盒的宽 = 面板宽 → 两者左右两端对齐，是「同一栏」的硬指标
+    const aligned = layout.boardBox.w === layout.modules[0].w;
+    // 棋盘前后那两条缝必须比面板之间更宽 —— 「不挤占地图空间」就是这一条
+    const boardRoomier =
+      layout.gaps.find((g) => g.after === 'hud').value >
+      layout.gaps.find((g) => g.after === 'toolbar').value;
+    check(
+      `A8 版面：间隙 ${GAP_EXPECT.top}px、棋盘前后 ${GAP_EXPECT.hud}px，棋盘 ${layout.boardSpan}px（未缩）、与面板同栏`,
+      gapBad.length === 0 && boardKept && aligned && boardRoomier,
+      gapBad.length > 0
+        ? `间隙不合：${gapBad.map((g) => `${g.after}=${g.value}（应 ${GAP_EXPECT[g.after]}）`).join(' ')}`
+        : !boardKept
+          ? `棋盘被改了：span=${layout.boardSpan}（应 ${BOARD_SPAN_KEPT}）cell=${layout.boardCell}（应 ${BOARD_CELL_KEPT}）`
+          : !aligned
+            ? `棋盘盒宽 ${layout.boardBox.w} ≠ 面板宽 ${layout.modules[0].w}`
+            : !boardRoomier
+              ? '棋盘前后那两条缝没有比面板之间更宽'
+              : layout.gaps.map((g) => `${g.after}=${g.value}`).join(' ')
+    );
+
+    // ── A9 塔壁与地图内墙同源 ──
+    //
+    // 「地图周边的墙和地图的风格一致」：这一版的做法是让塔壁**直接平铺地图
+    // 那面墙的贴图**，而不是调一个相近的颜色。所以断言比的是两张 Texture 的
+    // `source`（base texture）—— 相同就意味着它们字面意义上是同一张图上的像素。
+    // 有人把塔壁换成纯色几何体、或换成另一套素材，这条就会红。
+    const walls = await page.evaluate(() => window.mota.game.board.__wallSources());
+    check(
+      'A9 塔壁与地图内墙同源（同一张素材图）',
+      walls.parapet !== null && walls.parapet === walls.inner,
+      walls.parapet === null
+        ? '图集未加载，塔壁走的是程序化兜底 —— 这条断言无从谈起'
+        : `parapet source=${walls.parapet} / 地图内墙 source=${walls.inner}`
+    );
+
+    // ── A10 位面：越往上星空越多 ──
+    //
+    // 背景的地平线高度由楼层位面决定。三条硬指标：
+    //   ① 同一层重复问，画出来的地平线一致（背景是确定性的，星点也不该跳）；
+    //   ② 从第 1 层到第 50 层，地平线**单调不升**（星空占比只增不减）；
+    //   ③ 背景真的画的是当前显示层（`paintedFloor` 与 displayFloor 一致），
+    //      否则换层后背景会慢一拍 —— 这种 bug 只有把两者分开报才抓得住。
+    const realms = await page.evaluate(() => {
+      const g = window.mota.game;
+      const at = (f) => {
+        g.__goto(f);
+        return g.__probe().realm;
+      };
+      const f1 = at(1);
+      at(2); // 中间穿插一层，确保第二次回到第 1 层是**真的重绘**过
+      const f1again = at(1);
+      const f13 = at(13);
+      const f26 = at(26);
+      const f50 = at(50);
+      const bad = at(3);
+      return { f1, f1again, f13, f26, f50, bad };
+    });
+    const hz = [realms.f1.horizon, realms.f13.horizon, realms.f26.horizon, realms.f50.horizon];
+    const monotone = hz.every((v, i) => i === 0 || v <= hz[i - 1] + 1e-9);
+    // 离开一层再回来，地平线必须回到同一个值 —— 星点用的是固定种子的
+    // mulberry32，整层背景因此是可复现的（否则每次回来星星都换位置）
+    const stable = realms.f1.horizon === realms.f1again.horizon;
+    // 背景画的是不是"当前显示层"：`paintedFloor` 由 Backdrop 自己报，
+    // 与 state.floor 分开报，才有可能发现"背景慢一拍"
+    const followed = realms.bad.paintedFloor === 3;
+    check(
+      `A10 位面：地平线随楼层上移（第 1 层 ${hz[0].toFixed(2)} → 第 50 层 ${hz[3].toFixed(2)}）且可复现`,
+      monotone && stable && followed,
+      `单调=${monotone} 可复现=${stable}（1 层 ${realms.f1.horizon} / 回来 ${realms.f1again.horizon}）` +
+        ` 背景跟随=${followed}（第 3 层时 paintedFloor=${realms.bad.paintedFloor}）`
     );
 
     check('无控制台错误', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | ') || '干净');

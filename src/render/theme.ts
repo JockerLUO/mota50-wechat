@@ -224,3 +224,204 @@ export function npcRole(id: string): { label: string; color: number } {
   }
   return { body: 0x64748b, glyph: T.onDark };
 }
+
+// ── 塔的位面 ────────────────────────────────────────────────────────
+//
+// 「主界面」（棋盘与面板背后那层场景）要表达的是**塔的位面**：抬头是星空，
+// 低头是绝地。而这两样东西必须随楼层变化 —— 否则 50 层塔从地底打到星界，
+// 背景却一动不动，「位面」就只是一张壁纸。
+//
+// 做法：每个位面给一组锚点色 + 一个**地平线高度**（大地占画面的比例），
+// 全塔连续插值。于是第 1 层大地压顶、第 50 层星空为主，中间平滑过渡。
+//
+// 面板的卡片底色也在这里：它随位面**微调**（暖白 → 冷白），幅度刻意压得很小。
+// 短条（ACCENT）**不参与**——它是「职责色」（状态=蓝、道具=金），
+// 让它随楼层变会把上一轮建立的「颜色即职责」那套识别规则毁掉。
+
+export interface Realm {
+  id: string;
+  name: string;
+  /** 楼层区间（闭区间），只用于给玩家一个说法；配色是连续插值的 */
+  from: number;
+  to: number;
+  /** 天顶色 */
+  sky: number;
+  /** 近地平线的天色（比天顶暖一点，模拟大气散射） */
+  skyLow: number;
+  /** 地平线辉光 */
+  haze: number;
+  /** 绝地：最远一层（受天光，最亮） */
+  ground: number;
+  /** 绝地：中间一层 */
+  groundMid: number;
+  /** 绝地：最近一层（最暗，压在下缘） */
+  groundNear: number;
+  /** 地平线占画布高度的比例。**越小＝地平线越高＝星空占比越大** */
+  horizon: number;
+  /** 星点密度 0..1 */
+  stars: number;
+  /** 卡片底色（随位面微调，保持浅色可读） */
+  card: number;
+  /** 卡片描边色 */
+  cardEdge: number;
+}
+
+/**
+ * 五个位面锚点（1–10 / 11–20 / … / 41–50）。
+ *
+ * 锚点之间按**位面中心**（5.5 / 15.5 / 25.5 / 35.5 / 45.5）线性插值，
+ * 所以 50 层每一层的背景都不一样，且跨档不跳变。
+ */
+export const REALMS: Realm[] = [
+  {
+    id: 'depth', name: '地底', from: 1, to: 10,
+    sky: 0x090e20, skyLow: 0x24304f, haze: 0xa9704a,
+    ground: 0x3b2b22, groundMid: 0x2a1e19, groundNear: 0x16100d,
+    horizon: 0.62, stars: 0.30,
+    card: 0xfdf9f3, cardEdge: 0xe4d6c4
+  },
+  {
+    id: 'bastion', name: '石堡', from: 11, to: 20,
+    sky: 0x0a1230, skyLow: 0x27325e, haze: 0x8b7c94,
+    ground: 0x39303a, groundMid: 0x27212b, groundNear: 0x141119,
+    horizon: 0.50, stars: 0.48,
+    card: 0xfbf9f6, cardEdge: 0xdfd7d0
+  },
+  {
+    id: 'spire', name: '高塔', from: 21, to: 30,
+    sky: 0x0a1440, skyLow: 0x2a3a78, haze: 0x94a0e4,
+    ground: 0x2f3448, groundMid: 0x1f2334, groundNear: 0x101322,
+    horizon: 0.38, stars: 0.66,
+    card: 0xf9f9fd, cardEdge: 0xd9dced
+  },
+  {
+    id: 'skyhall', name: '云廊', from: 31, to: 40,
+    sky: 0x0b1850, skyLow: 0x314596, haze: 0xb4c8ff,
+    ground: 0x2b3663, groundMid: 0x1c2448, groundNear: 0x0e1330,
+    horizon: 0.26, stars: 0.84,
+    card: 0xf8faff, cardEdge: 0xd5dcf5
+  },
+  {
+    id: 'astral', name: '星界', from: 41, to: 50,
+    sky: 0x070d3c, skyLow: 0x2a3c96, haze: 0xd0dcff,
+    ground: 0x1d2450, groundMid: 0x131838, groundNear: 0x070a20,
+    horizon: 0.16, stars: 1.0,
+    card: 0xf7f9ff, cardEdge: 0xd2daf7
+  }
+];
+
+/** 位面锚点的楼层中心 —— 插值就发生在相邻两个中心之间 */
+const REALM_CENTERS = REALMS.map((r) => (r.from + r.to) / 2);
+
+/** 某层的位面视图：色与比例都已插值好，直接用 */
+export interface RealmView {
+  /** 最近锚点在 REALMS 里的下标 */
+  index: number;
+  id: string;
+  name: string;
+  /** 全塔进度 0..1（第 1 层 = 0，第 50 层 = 1） */
+  t: number;
+  sky: number;
+  skyLow: number;
+  haze: number;
+  ground: number;
+  groundMid: number;
+  groundNear: number;
+  horizon: number;
+  stars: number;
+  card: number;
+  cardEdge: number;
+}
+
+/** 线性插值两个 0xRRGGBB 颜色（sRGB 分量直插，够用且不会产生色偏） */
+export function lerpColor(a: number, b: number, t: number): number {
+  if (t <= 0) return a;
+  if (t >= 1) return b;
+  const ar = (a >> 16) & 0xff, ag = (a >> 8) & 0xff, ab = a & 0xff;
+  const br = (b >> 16) & 0xff, bg = (b >> 8) & 0xff, bb = b & 0xff;
+  const r = Math.round(ar + (br - ar) * t);
+  const g = Math.round(ag + (bg - ag) * t);
+  const bl = Math.round(ab + (bb - ab) * t);
+  return (r << 16) | (g << 8) | bl;
+}
+
+/**
+ * 楼层 → 位面视图。纯函数，任何一层都可以随时问一次。
+ *
+ * 楼层被夹到 1..50：楼层浏览面板可以点到边界，夹一下比让调用方各自防御更省事。
+ */
+export function realmOf(floor: number): RealmView {
+  const f = Math.min(50, Math.max(1, Math.round(floor)));
+  const t = (f - 1) / 49;
+  // 找到把 f 夹在中间的那对锚点中心；两端直接落在首/末档上
+  let i = 0;
+  while (i < REALMS.length - 2 && f > REALM_CENTERS[i + 1]) i++;
+  const a = REALMS[i];
+  const b = REALMS[i + 1];
+  const kRaw = (f - REALM_CENTERS[i]) / (REALM_CENTERS[i + 1] - REALM_CENTERS[i]);
+  const k = Math.min(1, Math.max(0, kRaw));
+  const mix = (x: number, y: number): number => lerpColor(x, y, k);
+  const num = (x: number, y: number): number => x + (y - x) * k;
+  const nearest = Math.abs(f - REALM_CENTERS[i]) <= Math.abs(f - REALM_CENTERS[i + 1]) ? a : b;
+  return {
+    index: REALMS.indexOf(nearest),
+    id: nearest.id,
+    name: nearest.name,
+    t,
+    sky: mix(a.sky, b.sky),
+    skyLow: mix(a.skyLow, b.skyLow),
+    haze: mix(a.haze, b.haze),
+    ground: mix(a.ground, b.ground),
+    groundMid: mix(a.groundMid, b.groundMid),
+    groundNear: mix(a.groundNear, b.groundNear),
+    horizon: num(a.horizon, b.horizon),
+    stars: num(a.stars, b.stars),
+    card: mix(a.card, b.card),
+    cardEdge: mix(a.cardEdge, b.cardEdge)
+  };
+}
+
+/**
+ * 当前位面 —— 一个**刻意的全局单值**。
+ *
+ * 为什么不做成参数往下传：消费它的是 `panel()` 这个**自由函数**（所有卡片都走它画底板），
+ * 它没有 `this`，而把位面一路穿到每个 `panel()` 调用点，等于把版面函数
+ * 和游戏状态绑死。本作是单机单场景，任何一刻只有一个位面，"当前位面"
+ * 因此是个合法全局；换层时由编排层（`Game.sync`）统一 `setRealm()` 一次。
+ */
+let currentRealm: RealmView = realmOf(1);
+
+export function setRealm(floor: number): RealmView {
+  currentRealm = realmOf(floor);
+  return currentRealm;
+}
+
+export function realm(): RealmView {
+  return currentRealm;
+}
+
+// ── 塔壁石材 ────────────────────────────────────────────────────────
+//
+// 棋盘外围那圈「墙」必须和地图内部是同一套石头，否则一眼就看出是两块东西：
+// 地图里是暖砂石地砖 + 暖褐砖墙（`assets/atlas/terrain.png` 的 floor_1 #be9f74 /
+// wall_mid #433836，暗部 #222222、砖面亮部 #775c55），而这一圈原本用的是
+// 冷灰蓝 #8b98ac —— 冷暖两套色系，撞在一起就是「周边是后期贴上去的」。
+//
+// 下面这组值取自那张墙贴图（亮部 #775c55 往暖里推一档），
+// 由 tools/verify-visual.cjs 的 A9 在**截图上**核对「外檐像素与地图墙同色族」。
+export const STONE = {
+  /** 墙面主体 */
+  face: 0x7a5c4e,
+  /** 受光面（城垛顶、砖面上沿） */
+  faceLit: 0x9a7a68,
+  /** 背光面（砖面下沿、石基） */
+  faceDark: 0x503c34,
+  /** 砖缝 */
+  joint: 0x2a201c,
+  /** 城垛顶面 —— 朝天，最亮 */
+  top: 0xb08e78,
+  /** 贴着棋盘那一圈的内阴影：让地图"嵌"进塔壁里，而不是浮在墙上 */
+  inner: 0x1f1815,
+  /** 塔壁外缘描边（与夜色交界） */
+  edge: 0x120d0b
+} as const;
