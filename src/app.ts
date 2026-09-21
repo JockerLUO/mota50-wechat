@@ -27,7 +27,8 @@ import {
   step,
   tradeAccept,
   travelTo,
-  useItem
+  useItem,
+  type NpcTalk
 } from './game/engine';
 import { Board } from './render/board';
 import { atlas, loadAtlas } from './render/atlas';
@@ -36,15 +37,15 @@ import {
   FloorPanel,
   ItemBar,
   LAYOUT,
-  LogStrip,
   StatusBar,
   Toolbar,
   label,
   type BattleLike,
   type DetailTarget
 } from './render/hud';
+import { DialoguePanel } from './render/dialogue-panel';
 import { MerchantPanel, ShopPanel } from './render/trade';
-import { T } from './render/theme';
+import { T, UI, npcRole } from './render/theme';
 
 interface Cell {
   x: number;
@@ -60,9 +61,9 @@ export class Game {
   private status: StatusBar;
   private detail: DetailPanel;
   private itemBar: ItemBar;
-  private log: LogStrip;
   private toolbar: Toolbar;
   private floorPanel: FloorPanel;
+  private dialogue: DialoguePanel;
   private merchantPanel: MerchantPanel;
   private shopPanel: ShopPanel;
   private deathLayer = new Container();
@@ -82,10 +83,13 @@ export class Game {
   /** 非 null 表示正处于「楼层浏览」状态：只切显示，不驱动勇者 */
   private browseFloor: number | null = null;
   /**
-   * 非 null 表示有交易浮层开着。
+   * 非 null 表示有浮层开着。
    * 它和 browseFloor 是两种不同的「暂停」：浏览只是换显示，浮层则连输入都要断掉。
+   *
+   * `'dialogue'` 是撞到 NPC 时的对话框。它排在交易面板之前 —— 先说话，
+   * 玩家按「交易」才开摊，所以交易面板不会再把台词盖住。
    */
-  private modal: 'merchant' | 'shop' | null = null;
+  private modal: 'merchant' | 'shop' | 'dialogue' | null = null;
 
   private constructor(app: Application, data: GameData) {
     this.app = app;
@@ -104,11 +108,15 @@ export class Game {
     this.status = new StatusBar();
     this.detail = new DetailPanel();
     this.itemBar = new ItemBar((id) => this.onUseItem(id));
-    this.log = new LogStrip();
     this.toolbar = new Toolbar({
       onToggleReveal: () => this.toggleReveal(),
       onBrowse: () => this.openFloorPanel('browse'),
       onRestart: () => this.restart()
+    });
+    // 对话框自己会在关闭时回调 —— 编排层据此清掉 modal 状态，
+    // 否则关掉框之后输入仍然被判定为「有浮层」而整块失效
+    this.dialogue = new DialoguePanel(() => {
+      if (this.modal === 'dialogue') this.modal = null;
     });
     this.floorPanel = new FloorPanel(this.data, (f) => this.onFloorPicked(f), () => this.closeFloorPanel());
     this.merchantPanel = new MerchantPanel(
@@ -117,19 +125,20 @@ export class Game {
       () => this.closeModal()
     );
     this.shopPanel = new ShopPanel(
+      this.data,
       (s) => this.onShopBuy(s),
       () => this.closeModal()
     );
 
-    // 顺序即层序：两个交易浮层必须排在棋盘与 HUD 之后，遮罩才挡得住下层点击
+    // 顺序即层序：两个交易浮层与对话框必须排在棋盘与 HUD 之后，遮罩才挡得住下层点击
     this.root.addChild(
       this.status,
       this.board,
       this.toolbar,
       this.detail,
       this.itemBar,
-      this.log,
       this.floorPanel,
+      this.dialogue,
       this.merchantPanel,
       this.shopPanel,
       this.deathLayer
@@ -207,6 +216,10 @@ export class Game {
       buyTimes: this.state.buyTimes,
       claimed: [...this.state.claimed],
       modal: this.modal,
+      /** 对话框是否开着 —— 自动化截图要单独摆这个状态 */
+      dialogue: this.dialogue.isOpen,
+      /** 每个 NPC 已搭话次数：台词轮换的输入，也是「对话真的在变」的证据 */
+      talked: { ...this.state.talked },
       keys: { ...this.state.keys },
       bag: Object.keys(this.state.bag),
       passives: [...this.state.passives],
@@ -240,6 +253,60 @@ export class Game {
       // 真机上光看画面分不出「加载失败」与「本来就没素材」—— 把原因带出来。
       atlasError: atlas.lastError
     };
+  }
+
+  /**
+   * 面板版式快照 —— 「所有面板共用一套版式」这件事必须能被断言。
+   *
+   * ## 为什么从渲染树读，而不是让每个面板自报数字
+   *
+   * 自报的是「我以为我设了多少」，读树拿到的是「真的设进去多少」。
+   * 这一轮就抓到过两者的差别：交易浮层的标题横向用了 `+UI.pad`(14)，
+   * 而短条占 12..15 —— 标题压在自己的短条上，源码里却看不出任何异常。
+   *
+   * ## 偏移是逐级累加出来的，不是 `getGlobalPosition()`
+   *
+   * 全局坐标会被 `root.scale`（按屏幕/dpr 算出来的那个系数）乘一遍，
+   * 同一个偏移在不同设备像素比下量出来是 23 / 46 / 69。累加**本地** x/y
+   * 得到的是设计坐标，与 dpr 无关 —— 断言才能写成一个确定的数。
+   */
+  __panels(): Array<{ panel: string; title: string; dx: number; dy: number; fontSize: number | null }> {
+    type Rect = { x: number; y: number; w: number; h: number };
+    type Node = {
+      label?: string;
+      x: number;
+      y: number;
+      text?: string;
+      style?: { fontSize?: number };
+      cardRect?: Rect;
+      children?: unknown[];
+    };
+    const out: Array<{ panel: string; title: string; dx: number; dy: number; fontSize: number | null }> = [];
+    const walk = (n: Node, owner: string, dx: number, dy: number, rect: Rect | null): void => {
+      const lb = typeof n.label === 'string' ? n.label : undefined;
+      const isPanel = !!lb && lb.startsWith(UI.tag.panel);
+      const name = isPanel ? lb.slice(UI.tag.panel.length) : owner;
+      // 进到一块面板里，累加器归零：之后量到的都是「相对这块面板左上角」
+      const ax = isPanel ? 0 : dx + n.x;
+      const ay = isPanel ? 0 : dy + n.y;
+      // 卡片矩形沿路径继承：交易浮层把矩形记在 ModalShell 上、标题是它的子节点，
+      // 所以标题要找的是「路径上最近的那一个」，不是自己身上那一个。
+      // 宽高为 0 的是「还没 layout 过」的占位矩形（浮层只在 open() 时才定高），
+      // 不能拿它当基准 —— 否则会量出「面板在 (0,0)」这种假坐标。
+      const card = n.cardRect && n.cardRect.w > 0 ? n.cardRect : rect;
+      if (lb === UI.tag.title && card) {
+        out.push({
+          panel: name,
+          title: n.text ?? '',
+          dx: Math.round(ax - card.x),
+          dy: Math.round(ay - card.y),
+          fontSize: n.style?.fontSize ?? null
+        });
+      }
+      for (const c of n.children ?? []) walk(c as Node, name, ax, ay, card);
+    };
+    walk(this.root as unknown as Node, 'root', 0, 0, null);
+    return out;
   }
 
   /**
@@ -312,6 +379,37 @@ export class Game {
   /** 当前楼层的商店报价 */
   __shop(): unknown {
     return shopOptions(this.state, this.data);
+  }
+
+  /**
+   * 开发用：直接和某个 NPC 说上话（跳过走位）。
+   *
+   * 全塔 12 个商人、4 个商店分散在各层，要验证对话框的三种来源
+   * （本层特供 / 首次见面 / 再次搭话）靠走位过去是不现实的。
+   * 它走的是**和撞上去完全同一条路径**（同一个引擎分支、同一个 `openDialogue`），
+   * 所以截图里看到的就是玩家会看到的那一帧。
+   */
+  __talk(npcId: string): string {
+    const es = (this.data.floors.get(this.state.floor)?.entities ?? []).filter(
+      (e) => e.type === 'npc' && e.id === npcId
+    );
+    if (es.length === 0) return `${npcId} 不在这层`;
+    const e = es[0];
+    const before = this.state.talked[npcId] ?? 0;
+    // 先站到它旁边。相邻四格可能被墙/门占着，能站哪格就站哪格
+    const spots = [
+      { x: e.x - 1, y: e.y },
+      { x: e.x + 1, y: e.y },
+      { x: e.x, y: e.y - 1 },
+      { x: e.x, y: e.y + 1 }
+    ].filter((s) => this.enterable(s.x, s.y, false));
+    if (spots.length === 0) return `${e.id} 四周都站不下人`;
+    this.state.pos = { ...spots[0] };
+    this.board.setHeroPos(this.state.pos.x, this.state.pos.y, false);
+    const d = this.dirToward(this.state.pos, { x: e.x, y: e.y });
+    if (!d) return '站不到身侧';
+    this.doStep(d);
+    return `搭话 ${npcId}（第 ${before + 1} 次）`;
   }
 
   // ── 输入 ──────────────────────────────────────────────────────────
@@ -491,9 +589,47 @@ export class Game {
     if (res.kind === 'battle') this.board.playHeroAttack();
     this.sync();
     // 引擎只「请求」打开界面，具体开哪块面板由编排层决定
-    if (res.openUi === 'merchant') this.openMerchant();
+    if (res.npc) this.openDialogue(res.npc);
+    else if (res.openUi === 'merchant') this.openMerchant();
     else if (res.openUi === 'shop') this.openShop();
     return res.kind;
+  }
+
+  // ── NPC 对话 ─────────────────────────────────────────────────────
+  //
+  // 「说哪一句」是引擎（`src/game/dialogue.ts`）算好的，这里只负责**编排**：
+  // 补上「本层有没有摊子」这条功能引导、按职能给颜色、决定按钮给不给。
+
+  private openDialogue(talk: NpcTalk): void {
+    this.modal = 'dialogue';
+    const role = npcRole(talk.id);
+    const lines = [talk.text];
+
+    // 功能引导：NPC 的价值在于「告诉你现在能做什么」，所以第二段说明摊位状态。
+    // 文案取自引擎算好的报价，不在渲染层重算价格。
+    if (talk.tradeKind === 'merchant') {
+      const offers = merchantOffers(this.state, this.data, this.state.floor);
+      const goods = offers.map((o) => `${o.title}${o.price > 0 ? `（${o.price} 金币）` : ''}`).join('、');
+      lines.push(goods ? `本层货品：${goods}` : '');
+    } else if (talk.tradeKind === 'shop') {
+      const shop = shopOptions(this.state, this.data);
+      lines.push(`本层买卖：第 ${shop.n} 次成交起价 ${shop.cost} 金币，越买越贵（${shop.tierNote}）。`);
+    } else if (talk.id === 'princess') {
+      lines.push('主线：护送公主离开这座塔。');
+    }
+
+    this.dialogue.open({
+      name: talk.name,
+      role,
+      lines: lines.filter(Boolean),
+      hint: talk.from === 'floor' ? '本层专说' : talk.from === 'greet' ? '初次见面' : '又见面了',
+      tradeLabel: talk.tradeKind ? '交易' : undefined,
+      onTrade: () => {
+        this.modal = null;
+        if (talk.tradeKind === 'shop') this.openShop();
+        else if (talk.tradeKind === 'merchant') this.openMerchant();
+      }
+    });
   }
 
   private onUseItem(id: string): void {
@@ -538,7 +674,11 @@ export class Game {
 
   private closeModal(): void {
     if (this.modal === null) return;
+    const was = this.modal;
     this.modal = null;
+    // 对话框的 close() 会回调回来清 modal —— 此时 modal 已经是 null，
+    // 回调里的守卫（`modal === 'dialogue'`）不成立，所以不会自我递归
+    if (was === 'dialogue') this.dialogue.close();
     this.merchantPanel.close();
     this.shopPanel.close();
     this.sync();
@@ -601,6 +741,7 @@ export class Game {
     this.modal = null;
     this.merchantPanel.close();
     this.shopPanel.close();
+    this.dialogue.close();
     this.hoverTarget = { kind: 'none' };
     this.deathLayer.removeChildren().forEach((c) => c.destroy({ children: true }));
     this.toolbar.revealPill.setActive(false);
@@ -637,7 +778,6 @@ export class Game {
     this.status.update(this.state, this.data, this.displayFloor, this.browseFloor !== null);
     this.refreshDetail();
     this.itemBar.update(this.state, this.data);
-    this.log.update(this.state);
     if (this.state.dead && this.deathLayer.children.length === 0) this.showDeath();
   }
 

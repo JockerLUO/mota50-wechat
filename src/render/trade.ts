@@ -12,18 +12,27 @@
 import { Container, Graphics, Rectangle, Sprite, Text } from 'pixi.js';
 import type { GameData, ItemDef, Stat } from '../data';
 import type { MerchantOffer, ShopOption, ShopView } from '../game/engine';
-import { LAYOUT, card, clip, label } from './hud';
+import { LAYOUT, clip, label, panel, wrap } from './hud';
 import { atlas, fitSize } from './atlas';
 import { drawItemGlyph, itemCategoryOf, itemColorOf, type ItemCategory } from './icons';
-import { T } from './theme';
+import { T, UI, npcRole, type PanelRect } from './theme';
 
 // ── 版式常量 ────────────────────────────────────────────────────────
 
 const CARD_X = 22;
 const CARD_W = LAYOUT.W - CARD_X * 2;
-const PAD = 14;
+const PAD = UI.pad;
 const INNER_X = CARD_X + PAD;
 const INNER_W = CARD_W - PAD * 2;
+
+/**
+ * 头部高度 —— 标题行（含职能章）+ 分隔线 + 备注行。
+ *
+ * 这三个数字必须一起动：备注从 `top+54` 起、正文行从 `top+HEAD_H` 起，
+ * 谁单独改一点就会出现「备注压在第一行报价上」。
+ * 与 dialogue-panel.ts 用的是同一套偏移（标题 +12、分隔线 +44、正文 +56）。
+ */
+const HEAD_H = 84;
 
 /** 三个属性的主色：生命=危险红（血条语义）、攻击=信息蓝、防御=安全绿 */
 const STAT_COLOR: Record<Stat, number> = { hp: T.danger, atk: T.info, def: T.ok };
@@ -36,26 +45,10 @@ function fmtPerPoint(v: number): string {
 }
 
 /**
- * 折行。中文按 1 单位、西文按 0.55 单位估算宽度 —— 与 hud.ts 的 `clip` 同一套口径，
- * 这样「生命 1000 → 3000」这类混合串不会被按字符数误判。
+ * 折行用的是 hud.ts 那一份 —— 这里曾经自己抄了一遍同样的算法，
+ * 两边一旦分头改（比如某一处补了标点处理），同一个面板里的两段文字
+ * 就会用两套宽度口径，看着像排版坏了。
  */
-function wrap(s: string, maxUnits: number): string[] {
-  const lines: string[] = [];
-  let cur = '';
-  let units = 0;
-  for (const ch of s) {
-    const u = ch.charCodeAt(0) < 0x2e80 ? 0.55 : 1;
-    if (units + u > maxUnits && cur) {
-      lines.push(cur);
-      cur = '';
-      units = 0;
-    }
-    cur += ch;
-    units += u;
-  }
-  if (cur) lines.push(cur);
-  return lines;
-}
 
 // ── 模态外壳 ────────────────────────────────────────────────────────
 
@@ -64,14 +57,27 @@ function wrap(s: string, maxUnits: number): string[] {
  *
  * 遮罩必须吃掉点击：不加这一层，点在卡片外的位置会穿透到棋盘触发自动寻路，
  * 玩家会看到勇者在面板后面偷偷跑掉。
+ *
+ * ## 头部为什么必须和对话框/楼层浏览长得一样
+ *
+ * 上一版这里还是「`card()` + 一排裸标题 + 蓝色『关闭』」，而同一时刻的
+ * 楼层浏览与 NPC 对话框已经是「主题色短条 + 大标题 + 职能章 + 分隔线」。
+ * 三个浮层并排看就是两套 UI —— 玩家撞 NPC 说话是一套、点交易又是另一套。
+ * 现在标题的坐标、字号、短条位置全部取自 `UI` 令牌，且短条颜色 = NPC 职能色：
+ * 「同一个 NPC」在地图名牌、对话框、交易面板三处是同一个颜色。
  */
 class ModalShell extends Container {
+  /** 卡片矩形（见 theme.ts `UI.tag.rect`）：每次 `layout()` 重算 —— 卡片高度随条目数变 */
+  cardRect: PanelRect = { x: 0, y: 0, w: 0, h: 0 };
   readonly body = new Container();
   private dim = new Graphics();
   private bg = new Graphics();
+  private sep = new Graphics();
   private titleText: Text;
   private noteText: Text;
   private closeText: Text;
+  private roleChip = new Graphics();
+  private roleText: Text;
 
   constructor(onClose: () => void) {
     super();
@@ -85,37 +91,77 @@ class ModalShell extends Container {
 
     this.bg.eventMode = 'static';
 
-    this.titleText = label('', 17, T.ink, '800');
-    this.noteText = label('', 11, T.inkMuted);
-    this.closeText = label('关闭', 12, T.hero, '700');
+    this.titleText = label('', UI.fs.title, T.ink, '800');
+    this.titleText.label = UI.tag.title;
+    this.noteText = label('', UI.fs.body, T.inkMuted);
+    this.roleText = label('', UI.fs.label, T.onDark, '700');
+    this.roleText.anchor.set(0.5);
+    this.closeText = label('关闭', UI.fs.head, T.hero, '700');
     this.closeText.anchor.set(1, 0);
     this.closeText.eventMode = 'static';
     this.closeText.cursor = 'pointer';
     this.closeText.hitArea = new Rectangle(-50, -8, 58, 28);
     this.closeText.on('pointertap', () => onClose());
 
-    this.addChild(this.dim, this.bg, this.titleText, this.noteText, this.closeText, this.body);
+    this.addChild(
+      this.dim,
+      this.bg,
+      this.sep,
+      this.roleChip,
+      this.titleText,
+      this.roleText,
+      this.noteText,
+      this.closeText,
+      this.body
+    );
   }
 
-  /** 按内容高度重画卡片；返回卡片顶边 y，子类据此定位自己的行 */
-  layout(cardH: number, title: string, note: string | null): number {
+  /**
+   * 按内容高度重画卡片；返回卡片顶边 y，子类据此定位自己的行。
+   *
+   * @param role 职能章（名字 + 颜色）。传了就同时给短条上色 ——
+   *             短条与章同色是刻意的：一眼对上「这是哪个 NPC 的生意」。
+   */
+  layout(cardH: number, title: string, note: string | null, role?: { label: string; color: number }): number {
     const top = Math.max(88, Math.round((LAYOUT.H - cardH) / 2));
     this.bg.clear();
-    card(this.bg, CARD_X, top, CARD_W, cardH, 16);
+    panel(this.bg, CARD_X, top, CARD_W, cardH, role?.color ?? null, UI.radius);
     this.bg.hitArea = new Rectangle(CARD_X, top, CARD_W, cardH);
+    this.cardRect = { x: CARD_X, y: top, w: CARD_W, h: cardH };
 
     this.titleText.text = title;
-    this.titleText.x = INNER_X;
-    this.titleText.y = top + 18;
+    this.titleText.x = CARD_X + UI.titleX;
+    this.titleText.y = top + UI.titleYTitle;
 
-    const clipped = note ? clip(note, 36) : '';
+    // 职能章贴在标题右侧：宽度按**实测**文字算，中文宽度不能靠字数硬算
+    this.roleChip.clear();
+    if (role) {
+      this.roleText.text = role.label;
+      const chipW = Math.ceil(this.roleText.width) + 18;
+      const chipH = 20;
+      const chipX = CARD_X + UI.titleX + Math.ceil(this.titleText.width) + 8;
+      const chipY = top + UI.accent.y - 3;
+      this.roleChip.roundRect(chipX, chipY, chipW, chipH, chipH / 2).fill(role.color);
+      this.roleText.x = chipX + chipW / 2;
+      this.roleText.y = chipY + chipH / 2;
+      this.roleText.visible = true;
+    } else {
+      this.roleText.visible = false;
+    }
+
+    // 分隔线：和对话卡片同一条口径，把「这次是谁的生意」与「卖什么」分开
+    this.sep.clear();
+    this.sep.rect(CARD_X + UI.pad, top + 44, CARD_W - UI.pad * 2, 1).fill(T.panelBorder);
+
+    // 备注是要读的一行（层档位 / 本次报价），所以走 body 字号，不再压成 11px 小字
+    const clipped = note ? clip(note, 34) : '';
     this.noteText.text = clipped;
     this.noteText.visible = clipped.length > 0;
     this.noteText.x = INNER_X;
-    this.noteText.y = top + 45;
+    this.noteText.y = top + 54;
 
     this.closeText.x = CARD_X + CARD_W - PAD;
-    this.closeText.y = top + 20;
+    this.closeText.y = top + UI.accent.y - 1;
     return top;
   }
 
@@ -141,6 +187,7 @@ export class MerchantPanel extends Container {
     onClose: () => void
   ) {
     super();
+    this.label = UI.tag.panel + 'merchant';
     this.visible = false;
     this.shell = new ModalShell(onClose);
     this.shell.body.addChild(this.rowLayer);
@@ -164,10 +211,12 @@ export class MerchantPanel extends Container {
 
     const rowH = 58;
     const gap = 8;
-    const headH = 76;
+    const headH = HEAD_H;
     const footH = 50;
     const cardH = headH + offers.length * (rowH + gap) - gap + footH;
-    const top = this.shell.layout(cardH, '商人', note);
+    // 名字取自数据（改 npcs.json 面板跟着变），职能章/短条色取自 NPC_ROLE ——
+    // 与棋盘上「商人」脚下的名牌是同一个字、同一个色
+    const top = this.shell.layout(cardH, this.data.npcs.merchant?.name ?? '商人', note, npcRole('merchant'));
 
     offers.forEach((o, i) => {
       this.rowLayer.addChild(this.buildRow(o, top + headH + i * (rowH + gap), rowH));
@@ -201,8 +250,8 @@ export class MerchantPanel extends Container {
     const paint = (hover: boolean): void => {
       const lit = hover && enabled;
       g.clear();
-      g.roundRect(0, 0, INNER_W, rowH, 10).fill(lit ? 0xeaf1fb : T.panelAlt);
-      g.roundRect(0, 0, INNER_W, rowH, 10).stroke({
+      g.roundRect(0, 0, INNER_W, rowH, UI.radiusInner).fill(lit ? 0xeaf1fb : T.panelAlt);
+      g.roundRect(0, 0, INNER_W, rowH, UI.radiusInner).stroke({
         width: lit ? 2 : 1,
         color: lit ? T.hero : T.panelBorder
       });
@@ -212,8 +261,8 @@ export class MerchantPanel extends Container {
       if (!iconTex) {
         drawItemGlyph(g, cat, 27, 29, 10, enabled || claimed ? color : DISABLED);
       }
-      // 右下角按钮
-      g.roundRect(INNER_W - 12 - 58, rowH - 34, 58, 24, 12).fill(enabled ? T.hero : DISABLED);
+      // 右下角按钮（方角圆角，与工具栏/对话框按钮同一档）
+      g.roundRect(INNER_W - 12 - 58, rowH - 34, 58, 24, UI.radiusInner).fill(enabled ? T.hero : DISABLED);
     };
     paint(false);
     c.addChild(g);
@@ -310,10 +359,12 @@ export class ShopPanel extends Container {
   private rowLayer = new Container();
 
   constructor(
+    private data: GameData,
     private onBuy: (stat: Stat) => void,
     onClose: () => void
   ) {
     super();
+    this.label = UI.tag.panel + 'shop';
     this.visible = false;
     this.shell = new ModalShell(onClose);
     this.shell.body.addChild(this.rowLayer);
@@ -333,13 +384,13 @@ export class ShopPanel extends Container {
 
     const rowH = 76;
     const gap = 10;
-    const headH = 86;
+    const headH = HEAD_H;
     const advice = wrap(view.advice, 34);
     const footH = 40 + advice.length * 17;
 
     const cardH = headH + view.options.length * (rowH + gap) - gap + footH;
     const header = `第 ${view.n} 次购买 · 本次 ${view.cost} 金币 · ${view.tierNote}`;
-    const top = this.shell.layout(cardH, '商店', header);
+    const top = this.shell.layout(cardH, this.data.npcs.shop?.name ?? '商店', header, npcRole('shop'));
 
     view.options.forEach((opt, i) => {
       this.rowLayer.addChild(this.buildOption(opt, top + headH + i * (rowH + gap), rowH));
@@ -386,14 +437,14 @@ export class ShopPanel extends Container {
     const paint = (hover: boolean): void => {
       const lit = hover && enabled;
       g.clear();
-      g.roundRect(0, 0, INNER_W, rowH, 12).fill(lit ? 0xf0f6ff : T.panelAlt);
-      g.roundRect(0, 0, INNER_W, rowH, 12).stroke({
+      g.roundRect(0, 0, INNER_W, rowH, UI.radiusInner).fill(lit ? 0xf0f6ff : T.panelAlt);
+      g.roundRect(0, 0, INNER_W, rowH, UI.radiusInner).stroke({
         width: lit ? 2 : 1,
         color: lit ? color : T.panelBorder
       });
       // 属性色标（左侧竖条）：让三行不需要读字就能区分
       g.roundRect(0, 12, 4, rowH - 24, 2).fill(enabled ? color : DISABLED);
-      g.roundRect(16, 14, 56, 26, 8).fill(enabled ? color : DISABLED);
+      g.roundRect(16, 14, 56, 26, UI.radiusInner).fill(enabled ? color : DISABLED);
     };
     paint(false);
     c.addChild(g);

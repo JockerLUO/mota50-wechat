@@ -874,6 +874,9 @@ def gen_icon(kind: str) -> Image.Image:
 # 这张表不是规整网格：角色比 16px 格子高，且不同行带的帧距不一样。
 # 所以先按投影找出「行带」，再在每个行带里按列投影切帧，而不是硬套 16 的倍率。
 
+# 行带顺序：character.png 的四行是 下/右/上/左。
+# ⚠️ 顺序错了不会报错，只会让左右走时朝向反 —— 实测踩过（左右互换，
+#    因为想当然写成下左上右）。改这里必须对着图确认，不能凭直觉。
 HERO_DIRS = ["down", "right", "up", "left"]
 # NPC 素材的行带顺序与勇者不同：NPC_test.png 四行是 下/左/上/右
 NPC_DIRS = ["down", "left", "up", "right"]
@@ -918,25 +921,259 @@ def build_actor_sheet():
     atk_specs = [(rowbands[i][0], rowbands[i][1], [7, 40, 72, 104], 32) for i in range(4, 8)]
     attack = slice_armm_rows(char, atk_specs)
 
-    # NPC：规整 4×4，帧距 16
-    npc_path = ARMM / "NPC_test.png"
-    npc_specs = [(7, 27, [1, 17, 33, 49], 16), (39, 59, [1, 17, 33, 49], 16),
-                 (70, 91, [1, 17, 33, 49], 16), (103, 123, [1, 17, 33, 49], 16)]
-    npc_frames = slice_armm_rows(npc_path, npc_specs)
-
-    return walk, attack, npc_frames
+    # NPC 不再从图集切 —— NPC_test.png 是**单角色**表（64×128 = 4 向 × 4 帧，全图一个人），
+    # 6 个 NPC 只能用同一张图换色，长得一模一样。现在改为程序化手绘，见 npc_art()。
+    # 勇者仍然从这里切：character.png 是真正的多角色表。
+    return walk, attack
 
 
-# 6 个 NPC 用同一张图做材质渐变区分。原素材只有一个人形，无法逐个重画；
-# 渐变至少能做到「一眼分得清谁是谁」，且保住 4 向 4 帧的动画。
-NPC_STYLE = {
-    "sage":     ((88, 84, 78), (238, 234, 222)),   # 灰白老者
-    "merchant": ((92, 56, 22), (226, 176, 108)),   # 暖褐
-    "thief":    ((28, 26, 42), (128, 124, 156)),   # 暗紫
-    "fairy":    ((72, 120, 132), (186, 240, 236)), # 青白
-    "princess": ((122, 46, 96), (248, 190, 224)),  # 粉
-    "shop":     ((30, 78, 48), (142, 218, 148)),   # 绿
+# ─────────────────────────────────────────────────────────────────────
+# 九之二、NPC 造型（程序化手绘）
+# ─────────────────────────────────────────────────────────────────────
+# ## 为什么必须自己画
+#
+# 六家素材包里**没有一个可用的 NPC 角色集**：
+#   · ArMM 的 NPC_test.png 是单角色表（64×128，全图同一个人四个方向）——
+#     之前 6 个 NPC 就是用这一张图配上一对「暗→亮」颜色渐变来区分的，
+#     结果是一排**剪影完全相同、只有颜色不同**的人。玩家说的「模版太差」
+#     就是这个：不同职能的人分不出谁是谁。
+#   · 0x72 包里有 elf_f / knight_f 之类没被怪物用掉的人形，但只有两三个，
+#     而且和怪物（法师 / 骑士 / 兽人）同源 —— NPC 和怪物长得像比长得丑更糟。
+#
+# 所以直接手绘：**每个职能一套 16×26 的像素画**，靠剪影、帽子、手持物区分，
+# 而不是靠颜色。配色与 src/render/theme.ts 的 NPC_ROLE 一一对应，
+# 棋盘上的职能徽章、对话框的职能章因此和本人同色 ——
+# 「看到什么颜色就知道这个人能干什么」。
+#
+# ## 为什么不画四向
+#
+# NPC 是静止实体，渲染层永远只取 `down`（board.ts: atlas.npcFrame(id, 'down', 0)）。
+# 画四个方向是四倍工作量、零收益。MANIFEST 里四个方向写同一组帧，
+# 只是为了让 `walk[dir]` 这个既有形状继续成立，渲染层一行都不用改。
+
+NPC_W, NPC_H = 16, 26
+SKIN = (247, 217, 184, 255)
+SKIN_DK = (206, 168, 132, 255)
+NPC_INK = (44, 34, 42, 255)
+
+
+def _put(im, x, y, w, h, color):
+    """按像素块填色。所有 NPC 造型只用这一个原语 —— 保证是硬边像素画，不是矢量缩放。"""
+    if color is None:
+        return
+    px = im.load()
+    for j in range(h):
+        for i in range(w):
+            if 0 <= x + i < im.width and 0 <= y + j < im.height:
+                px[x + i, y + j] = color
+
+
+# 每个职能的造型参数。颜色与 src/render/theme.ts 的 NPC_ROLE 对应：
+#   sage 蓝 / merchant 金 / shop 绿 / thief 灰 / fairy 青 / princess 粉
+NPC_ART = {
+    # 智慧老人：灰白长袍、白须、尖顶软帽，手拄法杖（书卷气，不是战斗感）
+    "sage": dict(
+        robe=(226, 224, 214, 255), robe_dark=(148, 146, 140, 255), robe_light=(250, 250, 246, 255),
+        hat="point", hat_color=(88, 92, 106, 255), hair=(238, 236, 230, 255),
+        beard=(244, 242, 236, 255), beard_len=4,
+        prop="staff", prop_color=(122, 86, 48, 255), prop_gem=(96, 156, 246, 255),
+    ),
+    # 商人：暖褐短袍、宽檐帽，腰侧挂钱袋（宽檐帽是「摆摊的」最直白的记号）
+    "merchant": dict(
+        robe=(178, 118, 58, 255), robe_dark=(112, 70, 30, 255), robe_light=(222, 172, 106, 255),
+        hat="wide", hat_color=(206, 156, 92, 255), hair=(96, 62, 30, 255),
+        prop="pouch", prop_color=(226, 176, 72, 255),
+    ),
+    # 商店：深绿外袍 + 皮围裙，手边一摞金币（属性买卖＝柜台生意）
+    "shop": dict(
+        robe=(58, 132, 84, 255), robe_dark=(32, 82, 52, 255), robe_light=(120, 196, 138, 255),
+        apron=(226, 208, 168, 255), hat="none", hair=(74, 52, 34, 255),
+        prop="coins", prop_color=(240, 202, 84, 255),
+    ),
+    # 小偷：兜帽 + 蒙面，只露两条眼缝，腰间短匕（不像是能讲道理的人）
+    "thief": dict(
+        robe=(74, 78, 92, 255), robe_dark=(40, 42, 54, 255), robe_light=(112, 118, 136, 255),
+        hat="hood", hat_color=(52, 56, 70, 255), mask=(38, 40, 54, 255),
+        prop="dagger", prop_color=(198, 204, 216, 255), prop_grip=(126, 82, 42, 255),
+    ),
+    # 仙子：青白长裙、背后一双薄翅、手持星杖（一眼看出「不是人、是来帮你的」）
+    "fairy": dict(
+        robe=(206, 240, 250, 255), robe_dark=(120, 190, 216, 255), robe_light=(248, 254, 255, 255),
+        hat="none", hair=(150, 220, 246, 255), wings=(178, 232, 250, 200),
+        prop="wand", prop_color=(240, 246, 255, 255), prop_gem=(86, 214, 250, 255),
+    ),
+    # 公主：粉裙、长发、金冠（视觉上就该是「被关在这里的那个人」）
+    "princess": dict(
+        robe=(240, 168, 208, 255), robe_dark=(186, 96, 150, 255), robe_light=(252, 214, 234, 255),
+        hat="crown", hat_color=(246, 202, 70, 255), hair=(126, 74, 40, 255), hair_len=6,
+        prop="none",
+    ),
 }
+
+
+def _npc_base(spec) -> Image.Image:
+    """画一帧静止姿态。解剖常量都在这里，改一处六个 NPC 一起对齐。"""
+    im = Image.new("RGBA", (NPC_W, NPC_H), (0, 0, 0, 0))
+    robe = spec["robe"]
+    dark = spec.get("robe_dark", spec["robe"])
+    light = spec.get("robe_light", spec["robe"])
+
+    # 长袍：肩窄摆宽，两段矩形做出 A 字剪影；左亮右暗，让平面剪影有体积
+    _put(im, 4, 12, 8, 4, robe)
+    _put(im, 3, 16, 10, 5, robe)
+    _put(im, 2, 21, 12, 3, dark)
+    _put(im, 4, 12, 1, 9, light)
+    _put(im, 11, 12, 1, 9, dark)
+    if spec.get("apron"):
+        _put(im, 6, 14, 4, 7, spec["apron"])
+    # 手臂 + 手
+    _put(im, 2, 13, 2, 6, robe)
+    _put(im, 12, 13, 2, 6, robe)
+    _put(im, 2, 19, 2, 2, SKIN)
+    _put(im, 12, 19, 2, 2, SKIN)
+    # 脚（必须踩到最后一行为止 —— 底部锚定会让浮空的角色悬在半空，有断言拦）
+    _put(im, 5, 24, 2, 2, dark)
+    _put(im, 9, 24, 2, 2, dark)
+
+    # 翅膀（仙子）：画在躯干之后，露在身体两侧
+    if spec.get("wings"):
+        w = spec["wings"]
+        _put(im, 0, 11, 3, 5, w)
+        _put(im, 13, 11, 3, 5, w)
+
+    # 长发（公主）：垂到肩下
+    if spec.get("hair_len"):
+        hc = spec.get("hair", dark)
+        _put(im, 4, 5, 2, spec["hair_len"], hc)
+        _put(im, 10, 5, 2, spec["hair_len"], hc)
+
+    # 头
+    _put(im, 5, 4, 6, 8, SKIN)
+    _put(im, 5, 11, 6, 1, SKIN_DK)
+    # 眼睛
+    _put(im, 6, 7, 1, 2, NPC_INK)
+    _put(im, 9, 7, 1, 2, NPC_INK)
+    # 蒙面（小偷）：下半张脸盖住，只剩眼缝
+    if spec.get("mask"):
+        _put(im, 5, 9, 6, 4, spec["mask"])
+        _put(im, 6, 7, 1, 1, SKIN)
+        _put(im, 9, 7, 1, 1, SKIN)
+
+    # 胡须（老人）：从下巴往下铺，越长越显老
+    if spec.get("beard_len"):
+        bc = spec["beard"]
+        _put(im, 5, 11, 6, spec["beard_len"], bc)
+        _put(im, 6, 11 + spec["beard_len"], 4, 1, bc)
+
+    # 帽子 / 头发
+    hat = spec.get("hat", "none")
+    hc = spec.get("hat_color", dark)
+    hair = spec.get("hair", dark)
+    if hat == "point":  # 尖顶软帽：智者
+        _put(im, 4, 2, 8, 3, hc)
+        _put(im, 5, 0, 6, 2, hc)
+        _put(im, 4, 5, 8, 1, light)
+    elif hat == "wide":  # 宽檐帽：商人
+        _put(im, 2, 3, 12, 2, hc)
+        _put(im, 5, 0, 6, 3, hc)
+    elif hat == "hood":  # 兜帽：小偷 —— 只盖到眼睛上方，脸留出来给蒙面
+        _put(im, 4, 1, 8, 2, hc)
+        _put(im, 3, 3, 10, 4, hc)
+        # 两侧垂布把脸框住（不在 y<7 的位置盖，否则整个头会变成一坨黑）
+        _put(im, 3, 7, 2, 5, hc)
+        _put(im, 11, 7, 2, 5, hc)
+    elif hat == "crown":  # 金冠：公主
+        _put(im, 5, 3, 6, 2, hair)
+        _put(im, 4, 2, 8, 1, hc)
+        _put(im, 4, 0, 1, 2, hc)
+        _put(im, 7, 0, 2, 2, hc)
+        _put(im, 11, 0, 1, 2, hc)
+    else:
+        _put(im, 5, 3, 6, 2, hair)
+
+    # 手持物 —— 「这个人是干什么的」最直接的表达
+    prop = spec.get("prop", "none")
+    pc = spec.get("prop_color", dark)
+    if prop == "staff":  # 法杖：比人高一截，顶端一颗宝石
+        _put(im, 14, 4, 1, 16, pc)
+        _put(im, 13, 2, 3, 3, spec.get("prop_gem", pc))
+    elif prop == "wand":  # 星杖：短一些，顶端是星
+        _put(im, 14, 8, 1, 12, pc)
+        _put(im, 13, 5, 3, 3, spec.get("prop_gem", pc))
+        _put(im, 14, 4, 1, 1, spec.get("prop_gem", pc))
+    elif prop == "pouch":  # 钱袋：挂在腰侧
+        _put(im, 12, 16, 3, 4, pc)
+        _put(im, 12, 15, 3, 1, dark)
+    elif prop == "coins":  # 手边一摞金币
+        _put(im, 12, 20, 3, 1, pc)
+        _put(im, 12, 18, 3, 1, pc)
+        _put(im, 12, 16, 3, 1, pc)
+    elif prop == "dagger":  # 短匕：斜插在腰侧
+        _put(im, 13, 13, 2, 2, spec.get("prop_grip", dark))
+        _put(im, 13, 15, 2, 3, pc)
+        _put(im, 14, 18, 1, 2, pc)
+
+    return add_outline(im, INK)
+
+
+def _breathe(base: Image.Image, robe, lift: int = 1) -> Image.Image:
+    """
+    呼吸帧：头与躯干整体上移 `lift` 像素，**下摆与脚原地不动**，缝隙用袍色补上。
+
+    为什么不整张图上移：精灵是底部锚定的（board.ts: sp.anchor.set(0.5, 1)），
+    整图上移会让脚离地 1px —— 那是「在飘」，不是「在呼吸」。
+    """
+    out = Image.new("RGBA", base.size, (0, 0, 0, 0))
+    out.paste(base.crop((0, lift, NPC_W, 21)), (0, 0))
+    out.paste(base.crop((0, 21, NPC_W, NPC_H)), (0, 21))
+    _put(out, 3, 21 - lift, 10, lift, robe)
+    return out
+
+
+def npc_art_frames(npc_id: str) -> list[Image.Image]:
+    """
+    一个 NPC 的 4 帧 idle，节奏是「吸气—回位」。
+
+    帧数与 0x72 那批怪物刻意保持一致（都是 4 帧），
+    这样 board.ts 的换帧逻辑对两者是同一条路径。
+    """
+    spec = NPC_ART[npc_id]
+    base = _npc_base(spec)
+    up = _breathe(base, spec["robe"], 1)
+    return [base, up, base, up]
+
+
+def verify_npc_art(images: dict) -> list:
+    """
+    NPC 造型断言。**必须写成断言，不能靠眼看** —— 「六个 NPC 长得一样」这个问题
+    在代码里完全看不出来（它们本来就都是「一个 16×26 的精灵」）。
+
+    三条判据：
+      1. 任意两个职能的静止帧不能逐像素相同；
+      2. 剪影（不透明像素集合）必须不同 —— 「同一张图换色」会被这条拦下；
+      3. 底行必须有像素，否则底部锚定会让角色浮在半空。
+
+    比较用 `tobytes()` 而不是 `getdata()`：后者在 Pillow 12 起被标记弃用
+    （计划 Pillow 14 移除），而这个脚本每次构建都跑，警告会一直刷屏。
+    """
+    problems = []
+    ids = list(images)
+
+    def silhouette(im):
+        alpha = im.getchannel("A").tobytes()
+        return {i for i, a in enumerate(alpha) if a > 8}
+
+    for i, a in enumerate(ids):
+        for b in ids[i + 1:]:
+            fa, fb = images[a][0], images[b][0]
+            if fa.tobytes() == fb.tobytes():
+                problems.append(f"{a} 与 {b} 的静止帧逐像素完全相同")
+            elif silhouette(fa) == silhouette(fb):
+                problems.append(f"{a} 与 {b} 剪影完全相同（只换了颜色）")
+    for npc_id, frames in images.items():
+        if not silhouette(frames[0].crop((0, NPC_H - 1, NPC_W, NPC_H))):
+            problems.append(f"{npc_id} 最后一行为空，底部锚定会让它浮在半空")
+    return problems
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -1410,7 +1647,7 @@ def main() -> int:
         missing.append("地形断言失败：" + p)
 
     # ── 2. 勇者 + NPC ───────────────────────────────────────────
-    walk, attack, npc_frames = build_actor_sheet()
+    walk, attack = build_actor_sheet()
     actor_cells: list[tuple[str, Image.Image]] = []
     actor_meta: list[dict] = []
 
@@ -1429,11 +1666,17 @@ def main() -> int:
             im = bottom_center(fr, 20, 26)
             push_actor(f"hero.attack.{d}.{fi}", im, {"group": "hero", "anim": "attack", "dir": d, "frame": fi})
 
-    for npc_id, (dk, lt) in NPC_STYLE.items():
-        for di, d in enumerate(NPC_DIRS):
-            for fi, fr in enumerate(npc_frames[di]):
-                im = bottom_center(ramp(fr, dk, lt), 16, 26)
-                push_actor(f"npc.{npc_id}.{d}.{fi}", im, {"group": "npc", "npc": npc_id, "dir": d, "frame": fi})
+    # NPC：程序化手绘，四个方向写同一组帧（NPC 是静止实体，只取 down —— 见 NPC_ART 说明）
+    npc_rendered: dict[str, list] = {}
+    for npc_id in NPC_ART:
+        frames = npc_art_frames(npc_id)
+        npc_rendered[npc_id] = frames
+        for d in NPC_DIRS:
+            for fi, fr in enumerate(frames):
+                push_actor(f"npc.{npc_id}.{d}.{fi}", fr, {"group": "npc", "npc": npc_id, "dir": d, "frame": fi})
+    # 「六个 NPC 长得一样」只能靠断言发现 —— 画面上看是六个精灵，代码里看是六次调用
+    for p in verify_npc_art(npc_rendered):
+        missing.append("NPC 造型断言失败：" + p)
 
     actor_shelf = Shelf(512)
     actor_place = []
@@ -1464,9 +1707,14 @@ def main() -> int:
                 {k: m[k] for k in ("x", "y", "w", "h")})
     actors.setdefault("hero", {})["src"] = "ArMM1998 / Zelda-like tilesets and sprites — character.png"
     actors.setdefault("hero", {})["dirOrder"] = HERO_DIRS
-    for npc_id in NPC_STYLE:
+    for npc_id in NPC_ART:
         if npc_id in actors.get("npcs", {}):
-            actors["npcs"][npc_id]["src"] = f"ArMM1998 / Zelda-like — NPC_test.png @ {NPC_STYLE[npc_id]}"
+            # 来源必须写实：这批不是任何第三方素材，是本仓库手绘的程序化像素画。
+            # 写成 ArMM 会让人去那张单角色图集里找一个根本不存在的角色。
+            actors["npcs"][npc_id]["src"] = (
+                "本仓库手绘（tools/build-assets.py: NPC_ART）— 16×26 程序化像素画，"
+                "每个职能一套剪影"
+            )
 
     # ── 3. 怪物 ─────────────────────────────────────────────────
     mon_cells: list[tuple[str, Image.Image]] = []
@@ -1642,7 +1890,7 @@ def main() -> int:
     print(f"  怪物   {sum(1 for v in manifest['monsters'].values() if v)}/{len(manifest['monsters'])} 只有素材")
     print(f"  道具   {sum(1 for v in manifest['items'].values() if v)}/{len(manifest['items'])} 项有素材")
     print(f"  勇者   {len(HERO_DIRS)} 向 × 4 帧走路 + {len(HERO_DIRS)} 向 × 4 帧挥剑")
-    print(f"  NPC    {len(NPC_STYLE)} 人 × {len(HERO_DIRS)} 向 × 4 帧")
+    print(f"  NPC    {len(NPC_ART)} 人（程序化手绘）× {len(NPC_DIRS)} 向 × 4 帧")
     total = sum((ATLAS_DIR / m["file"]).stat().st_size for m in manifest["meta"]["atlases"].values())
     print(f"\n  图集总大小 {total/1024:.1f} KB")
     if missing:

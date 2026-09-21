@@ -59,6 +59,15 @@ export interface GameState {
    */
   claimed: Set<string>;
 
+  /**
+   * 搭话次数：NPC id → 已经说过几句。
+   *
+   * 这是「NPC 只会说同一句」这个问题的解药 —— 台词按它轮换
+   * （见 `src/game/dialogue.ts`）。按 **NPC id** 而不是实体坐标计数，
+   * 所以同一个 NPC 站在哪一格、你从哪个方向撞上去都不影响。
+   */
+  talked: Record<string, number>;
+
   /** 已移除的实体 key：`floor:x:y:type:id` */
   removed: Set<string>;
   /** 地形覆盖：楼层 → `x,y` → 新字符（门被打开、墙被挖掉等） */
@@ -93,6 +102,7 @@ export function createInitialState(data: GameData): GameState {
     visited: [h.startFloor],
     buyTimes: data.constants.shop.nStartsAt,
     claimed: new Set<string>(),
+    talked: {},
     removed: new Set<string>(),
     terrainPatch: {},
     dead: false,

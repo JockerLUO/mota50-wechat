@@ -21,6 +21,7 @@ import {
 } from '../../core/shop.mjs';
 import type { GameData, ItemEffect, Monster, KeyId, Stat } from '../data';
 import { floorOf, tierOf } from '../data';
+import { bumpTalk, npcLine, type NpcLine } from './dialogue';
 import {
   DIRS,
   entityAt,
@@ -76,6 +77,29 @@ export interface StepResult {
   message?: string;
   /** 撞上 NPC 时请求打开的界面（商人 / 商店） */
   openUi?: UiKind;
+  /**
+   * 撞上 NPC 时带出的搭话信息。
+   *
+   * 引擎只说「你撞到了谁、他现在说的是哪一句」，**不负责把它画出来**；
+   * 是弹对话框、还是写进详情卡，由编排层决定。交易入口也从
+   * `openUi` 挪到了这里 —— 先说话、玩家再决定要不要交易（原版就是这个顺序），
+   * 而「说哪一句」也才有地方展示。
+   */
+  npc?: NpcTalk;
+}
+
+/** 一次搭话的完整描述（引擎产出，UI 只负责画） */
+export interface NpcTalk {
+  id: string;
+  name: string;
+  /** 当前该说的那一句 */
+  text: string;
+  /** 这句是从哪个来源取的（floor / greet / repeat / note / fallback） */
+  from: NpcLine['from'];
+  /** 本层是否摆着摊（决定对话框要不要给「交易」按钮） */
+  canTrade: boolean;
+  /** 交易面板的种类：商人按层配货，商店是属性三选一 */
+  tradeKind: 'merchant' | 'shop' | null;
 }
 
 export interface UseResult {
@@ -463,38 +487,30 @@ export function step(state: GameState, data: GameData, dir: Dir): StepResult {
     }
     if (ent.type === 'npc') {
       const npc = data.npcs[ent.id];
+      // 台词在**搭话之前**取，然后再记一次搭话 —— 否则这次就会跳到下一句
+      const line = npcLine(state, data, ent.id, floor);
+      bumpTalk(state, ent.id);
 
-      /** 取 NPC 当前该说的台词：楼层特定 > 通用 talk > note > 兜底 */
-      const npcLine = (n: typeof npc): string => {
-        if (!n) return `${ent.id} 站在这里。`;
-        const floorLine = n.talkByFloor?.[String(floor)];
-        if (floorLine) return floorLine;
-        if (n.talk) return n.talk;
-        if (n.note) return n.note;
-        return `${n.name} 站在这里。`;
+      // 交易入口：商人只在本层真的配了货时才摆摊；商店（sourceId 39）永远可以做属性买卖
+      const tradeKind: NpcTalk['tradeKind'] =
+        npc?.sourceId === SHOP_SOURCE_ID
+          ? 'shop'
+          : npc?.sourceId === MERCHANT_SOURCE_ID && merchantOffers(state, data, floor).length > 0
+            ? 'merchant'
+            : null;
+
+      const talk: NpcTalk = {
+        id: ent.id,
+        name: npc?.name ?? ent.id,
+        text: line.text,
+        from: line.from,
+        canTrade: tradeKind !== null,
+        tradeKind
       };
-
-      // 商店（sourceId 39）：三选一买属性，走 core/shop.mjs 的递增定价
-      if (npc?.sourceId === SHOP_SOURCE_ID) {
-        const msg = `${npc.name}：${npcLine(npc)}`;
-        pushLog(state, msg, 'talk');
-        return { kind: 'talk', moved: false, message: msg, openUi: 'shop' };
-      }
-
-      // 商人（sourceId 33）：只有本层配了商品才开交易界面，否则按普通 NPC 处理
-      if (npc?.sourceId === MERCHANT_SOURCE_ID) {
-        const offers = merchantOffers(state, data, floor);
-        if (offers.length > 0) {
-          const msg = `${npc.name}：${npcLine(npc)}`;
-          pushLog(state, msg, 'talk');
-          return { kind: 'talk', moved: false, message: msg, openUi: 'merchant' };
-        }
-      }
-
-      const msg = `${npc?.name ?? ent.id}：${npcLine(npc)}`;
+      const msg = `${talk.name}：${talk.text}`;
       pushLog(state, msg, 'talk');
-      // NPC 不可踩踏：对话后勇者留在原地
-      return { kind: 'talk', moved: false, message: msg };
+      // NPC 不可踩踏：搭话后勇者留在原地。开不开面板由编排层决定（见 StepResult.npc）
+      return { kind: 'talk', moved: false, message: msg, npc: talk };
     }
   }
 

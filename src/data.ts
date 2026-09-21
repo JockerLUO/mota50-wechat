@@ -67,10 +67,19 @@ export interface NpcDef {
   name: string;
   sprite?: string;
   effects?: ItemEffect[];
-  /** 游戏内点击 NPC 时说的角色化台词（优先于 note） */
-  talk?: string;
-  /** 按楼层变化的台词；key 为楼层数字字符串 */
-  talkByFloor?: Record<string, string>;
+  /**
+   * 首次搭话的台词。
+   *
+   * 旧字段是单个 `talk` —— 结果**同一个 NPC 无论第几次搭话都只会说这一句**，
+   * 玩家一撞就发现「对话是假的」。现在拆成三段：
+   *   `talkByFloor`（本层特供，最优先）→ `greet`（首次）→ `repeat`（之后轮流）
+   * 具体轮换规则见 `src/game/dialogue.ts`。
+   */
+  greet?: string;
+  /** 之后每次搭话轮流说的几句；少于 2 句就会立刻显出重复，所以有几层就写几句 */
+  repeat?: string[];
+  /** 按楼层覆盖的台词；key 为楼层数字字符串。值可以是单句，也可以是数组（多段） */
+  talkByFloor?: Record<string, string | string[]>;
   note?: string;
   goodsByFloor?: Record<string, unknown>;
 }

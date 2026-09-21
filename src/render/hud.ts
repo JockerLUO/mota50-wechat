@@ -1,11 +1,15 @@
 /**
- * HUD —— 状态栏 / 详情卡 / 道具栏 / 消息条 / 楼层面板。
+ * HUD —— 状态栏 / 详情卡 / 道具栏 / 工具栏 / 浮层面板。
  *
  * 全部用 PixiJS 画在 canvas 上（不用 DOM），原因：目标平台是微信小游戏，
  * 那里没有 DOM。原型阶段就用 canvas 做 UI，可以避免后期整体重写一遍。
  *
  * 文字对象都是**预建 + 改 text**，不在每次刷新时销毁重建 —— 悬停会高频触发，
  * 反复 new Text() 会造成明显的 GC 抖动。
+ *
+ * 所有面板走**同一套版式**（见 `theme.ts` 的 `UI` 令牌 + 本文件的 `panel()`）：
+ * 白卡片、1px 冷灰描边、极浅投影、左上角一道主题色短条。这里不写死圆角与内边距，
+ * 一律从令牌取 —— 曾经各面板各写各的，画面就散成了好几种风格。
  */
 
 import { Container, Graphics, Sprite, Text, type TextStyleOptions } from 'pixi.js';
@@ -15,21 +19,29 @@ import { hasNpcOnFloor, regionOf } from '../data';
 // 这里原本内联了一份 `10 * n * (n - 1) + 20`，是明确的漂移风险
 import { shopCost, shopGain } from '../../core/shop.mjs';
 import type { GameState } from '../game/state';
+import { npcLine } from '../game/dialogue';
 import { atlas, fitSize } from './atlas';
 import { drawItemGlyph, itemCategoryOf, itemColorOf } from './icons';
-import { GRADE_STYLE, T } from './theme';
+import { ACCENT, GRADE_STYLE, T, UI, npcRole, type PanelRect } from './theme';
 
 // ── 版式 ────────────────────────────────────────────────────────────
+//
+// 420×780 的设计稿，从上到下：状态卡 → 棋盘 → 操作条 → 详情卡 → 道具栏。
+// 底部原本还有一条「消息条」（两行滚动日志），已按玩家要求整条删除 ——
+// 它占 40px 却只重复状态卡与操作说明里已有的信息。腾出来的空间
+// 全部给了信息面板，**没有拿去放大棋盘**：棋盘格宽必须保持 16 的整数倍
+// （地形素材是 16px 像素画，34/16 = 2.125 这种非整数倍会让硬边糊掉）。
+//
+// 五块面板共用一套纵向节奏：边距 12、面与面之间 6、卡片内边距由 UI.pad 决定。
 
 export const LAYOUT = {
   W: 420,
   H: 780,
-  hud: { x: 0, y: 0, w: 420, h: 96 },
-  board: { x: 34, y: 100, cell: 32 },
-  toolbar: { x: 12, y: 458, w: 396, h: 26 },
-  detail: { x: 12, y: 490, w: 396, h: 140 },
-  items: { x: 12, y: 636, w: 396, h: 92 },
-  log: { x: 12, y: 734, w: 396, h: 40 }
+  hud: { x: 12, y: 10, w: 396, h: 88 },
+  board: { x: 34, y: 118, cell: 32 },
+  toolbar: { x: 12, y: 490, w: 396, h: 32 },
+  detail: { x: 12, y: 528, w: 396, h: 126 },
+  items: { x: 12, y: 660, w: 396, h: 114 }
 } as const;
 
 const FONT = '"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC",sans-serif';
@@ -43,87 +55,176 @@ export function label(text: string, size: number, fill: number, weight: TextStyl
   });
 }
 
-export function card(g: Graphics, x: number, y: number, w: number, h: number, radius = 12, fill: number = T.panel): Graphics {
+/**
+ * 统一面板底板 —— **所有卡片都走这一个函数**。
+ *
+ * 画三层：投影 → 面板（白底 + 1px 描边）→ 左上角主题色短条。
+ * 短条不随内容变，位置固定，于是五块面板的「视觉锚点」在同一处，
+ * 扫一眼就知道这是同一套 UI。
+ *
+ * @param accent 短条颜色。传 `null` 表示不画 —— 这只是「这块面板用别的颜色表达
+ *               职责」时才用（比如遮罩型浮层的短条另有来源），**不是**「临时先不画」。
+ *               历史上有一个固定不画短条的 `card()` 兼容入口，谁顺手拿它写新面板，
+ *               新面板就会缺掉那根短条、长出一副「不是这套 UI」的样子 —— 已删除。
+ */
+export function panel(
+  g: Graphics,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  accent: number | null,
+  radius: number = UI.radius,
+  fill: number = T.panel
+): Graphics {
+  for (const s of UI.shadow) {
+    g.roundRect(x, y + s.dy, w, h, radius).fill({ color: T.panelShadow, alpha: s.alpha });
+  }
   g.roundRect(x, y, w, h, radius).fill(fill);
-  g.roundRect(x, y, w, h, radius).stroke({ width: 1, color: T.panelBorder });
+  g.roundRect(x, y, w, h, radius).stroke({ width: UI.border, color: T.panelBorder });
+  if (accent !== null) {
+    g.roundRect(x + UI.accent.x, y + UI.accent.y, UI.accent.w, UI.accent.h, UI.accent.w / 2).fill(accent);
+  }
   return g;
+}
+
+/** 面板小标题：色条后面那行字 */
+function headerTitle(text: string, fill = T.ink): Text {
+  return label(text, UI.fs.head, fill, '700');
 }
 
 // ── 状态栏 ──────────────────────────────────────────────────────────
 
+/**
+ * 状态卡内部的横向分区（相对卡片左边），**写死在这里而不是跟着文字长度走**。
+ *
+ * 早先的做法是「右栏从左边推开、左栏跟着文字宽度浮动」，两位数楼层（第 12 层）
+ * 或长区名就会和右边挤在一起 —— 而这种碰撞只在特定楼层出现，很容易漏测。
+ * 定死三段之后，任何文字长度都不会改变版面。
+ */
+const STATUS_TEXT_W = 250; // 左栏（区名 / 标题 / 档位）的右边界
+const KEY_CHIP = { w: 38, h: 30, gap: 6, right: 12, y: 10 };
+
 export class StatusBar extends Container {
   private floorBadge = new Graphics();
-  private floorText = label('1', 21, T.onDark, '800');
-  private zoneText = label('', 11.5, T.inkMuted, '600');
-  private titleText = label('', 14, T.ink, '700');
-  private tierText = label('', 11, T.gold, '700');
+  private floorText = label('1', UI.fs.badge, T.onDark, '800');
+  private zoneText = label('', UI.fs.label, T.inkFaint, '600');
+  private titleText = label('', UI.fs.title, T.ink, '800');
+  private tierText = label('', UI.fs.label, T.gold, '700');
 
-  private hpText = label('', 15, T.danger, '700');
-  private atkText = label('', 15, T.info, '700');
-  private defText = label('', 15, T.ok, '700');
-  private goldText = label('', 15, T.gold, '700');
+  private hpText = label('', UI.fs.value, T.danger, '700');
+  private atkText = label('', UI.fs.value, T.info, '700');
+  private defText = label('', UI.fs.value, T.ok, '700');
+  private goldText = label('', UI.fs.value, T.gold, '700');
+  /** 四个数值各自左侧的语义色点 —— 与数值同色，形成「点+名+数」的固定节奏 */
+  private dots: Graphics[] = [];
+  private caps: Text[] = [];
 
   private keyTexts: Text[] = [];
   private keyLayer = new Container();
 
-  constructor() {
+  private readonly badge = { x: 12, y: 10, w: 40, h: 40 };  constructor() {
     super();
+    const { x, y, w, h } = LAYOUT.hud;
     const g = new Graphics();
-    g.rect(0, 0, LAYOUT.hud.w, LAYOUT.hud.h).fill(T.panel);
-    g.rect(0, LAYOUT.hud.h - 1, LAYOUT.hud.w, 1).fill(T.panelBorder);
+    panel(g, x, y, w, h, ACCENT.status);
     this.addChild(g);
 
+    // 楼层徽章：内边距与短条对齐（同一套 12px 网格）
     this.addChild(this.floorBadge);
+    this.paintBadge(T.hero);
     this.floorText.anchor.set(0.5);
     this.addChild(this.floorText, this.zoneText, this.titleText, this.tierText);
-    this.zoneText.x = 64;
-    this.zoneText.y = 12;
-    this.titleText.x = 64;
-    this.titleText.y = 27;
-    this.tierText.x = 64;
-    this.tierText.y = 46;
 
-    const cells: [Text, string][] = [
-      [this.hpText, '生命'],
-      [this.atkText, '攻击'],
-      [this.defText, '防御'],
-      [this.goldText, '金币']
+    const bx = x + this.badge.x + this.badge.w + 10; // 徽章右缘 + 间距
+    this.zoneText.x = bx;
+    this.zoneText.y = y + 11;
+    // 「收益档位」跟在区名后面同一行 —— 单占一行太奢侈，而它本来就只
+    // 描述「本层属于哪一档」，与区名同级
+    this.tierText.x = 0;
+    this.tierText.y = y + 11;
+    this.titleText.x = bx;
+    this.titleText.y = y + 27;
+
+    // 数值条：一条浅底 + 四等分格。分隔线是「同一种风格」的关键 ——
+    // 之前四个数字只是并排飘着，和面板的卡片语言对不上
+    const stripY = y + 52;
+    const stripH = 30;
+    const strip = new Graphics();
+    strip.roundRect(x + 12, stripY, w - 24, stripH, UI.radiusInner).fill(T.panelAlt);
+    strip.roundRect(x + 12, stripY, w - 24, stripH, UI.radiusInner).stroke({ width: 1, color: T.panelBorder, alpha: 0.7 });
+    this.addChild(strip);
+
+    const cells: [Text, string, number][] = [
+      [this.hpText, '生命', T.danger],
+      [this.atkText, '攻击', T.info],
+      [this.defText, '防御', T.ok],
+      [this.goldText, '金币', T.gold]
     ];
-    const sep = new Graphics();
-    cells.forEach(([t, name], i) => {
-      const cx = 16 + i * 101;
-      const cap = label(name, 10.5, T.inkFaint, '600');
-      cap.x = cx;
-      cap.y = 60;
-      t.x = cx;
-      t.y = 73;
-      this.addChild(cap, t);
-      if (i > 0) sep.rect(cx - 8, 58, 1, 32).fill(T.panelBorder);
+    const cellW = (w - 24) / 4;
+    cells.forEach(([t, name, color], i) => {
+      const cx = x + 12 + i * cellW;
+      if (i > 0) {
+        const sep = new Graphics();
+        sep.rect(cx, stripY + 6, 1, stripH - 12).fill({ color: T.panelBorder, alpha: 0.9 });
+        this.addChild(sep);
+      }
+      const dot = new Graphics();
+      dot.circle(cx + 11, stripY + stripH / 2, 3).fill(color);
+      this.dots.push(dot);
+      t.anchor.set(1, 0.5);
+      t.x = cx + cellW - 12;
+      t.y = stripY + stripH / 2;
+      const cap = label(name, UI.fs.label, T.inkMuted, '600');
+      cap.x = cx + 20;
+      cap.y = stripY + stripH / 2 - 7;
+      this.caps.push(cap);
+      this.addChild(dot, cap, t);
     });
-    this.addChild(sep);
     this.addChild(this.keyLayer);
+  }
+
+  /** 徽章底色单独抽出来：update 里「浏览别的楼层」要把它变灰 */
+  private paintBadge(fill: number): void {
+    const { x, y } = LAYOUT.hud;
+    const b = this.badge;
+    this.floorBadge.clear();
+    this.floorBadge.roundRect(x + b.x, y + b.y, b.w, b.h, UI.radiusInner).fill(fill);
+    this.floorBadge
+      .roundRect(x + b.x, y + b.y, b.w, b.h, UI.radiusInner)
+      .stroke({ width: 1, color: 0xffffff, alpha: 0.3 });
+    this.floorText.x = x + b.x + b.w / 2;
+    this.floorText.y = y + b.y + b.h / 2;
   }
 
   /** shownFloor / browsing 服务于「楼层浏览」：画面是别的层，但属性仍是勇者本人的 */
   update(state: GameState, data: GameData, shownFloor = state.floor, browsing = false): void {
+    const { x, y, w } = LAYOUT.hud;
     const f = data.floorIndex[shownFloor];
-    this.floorBadge.clear();
-    const badgeFill = browsing ? 0x64748b : T.hero;
-    this.floorBadge.roundRect(12, 12, 42, 46, 10).fill(badgeFill);
-    this.floorBadge.roundRect(12, 12, 42, 46, 10).stroke({ width: 1, color: 0xffffff, alpha: 0.28 });
+    this.paintBadge(browsing ? 0x64748b : T.hero);
     this.floorText.text = String(shownFloor);
-    this.floorText.x = 33;
-    this.floorText.y = 35;
-    this.zoneText.text = browsing
-      ? `${regionOf(data, shownFloor)} · 浏览中（勇者在 ${state.floor} 层）`
-      : `${regionOf(data, shownFloor)} · 第 ${shownFloor} 层`;
+    this.zoneText.text = clip(
+      browsing ? `${regionOf(data, shownFloor)} · 浏览中` : `${regionOf(data, shownFloor)} · 第 ${shownFloor} 层`,
+      8
+    );
     this.titleText.text = f?.title ?? '';
     const tier = data.constants.shop.tiers.find((t) => shownFloor >= t.floorFrom && shownFloor <= t.floorTo);
     // 措辞刻意不含「商店」：它描述的是**本层所属的收益档位**，
-    // 而全塔只有 4 / 12 / 32 / 46 层真的摆了商店
-    this.tierText.text = tier ? `收益档位 ×${tier.mul}` : '';
+    // 而全塔只有 4 / 12 / 32 / 46 层真的摆了商店。
+    // 浏览模式下换成「勇者在第几层」—— 那时玩家最需要知道的就是这件事。
+    this.tierText.text = browsing
+      ? `勇者在 ${state.floor} 层`
+      : tier
+        ? `收益档位 ×${tier.mul}`
+        : '';
+    this.tierText.style.fill = browsing ? T.warn : T.gold;
+    // 右对齐到左栏右缘（KEY_BLOCK 之前），而不是跟着区名右缘 ——
+    // 跟着区名时位置随文字长度浮动，两位数楼层就会和右边钥匙块挤在一起
+    this.tierText.x = x + STATUS_TEXT_W - Math.ceil(this.tierText.width);
+    this.tierText.y = y + 11;
 
     this.hpText.text = String(state.hp);
+    // 血量偏低时数值转红，色点保持语义色（否则「红色 = 生命」这条规律就断了）
     this.hpText.style.fill = state.hp < 200 ? T.danger : T.ink;
     this.atkText.text = String(state.atk);
     this.defText.text = String(state.def);
@@ -135,29 +236,43 @@ export class StatusBar extends Container {
       ['redKey', state.keys.redKey, T.doorRed]
     ];
     if (this.keyTexts.length === 0) {
+      // 三枚钥匙做成右上角的三个小格：与数值条同底、同圆角、同描边 ——
+      // 「同一种风格」靠的就是这些重复出现的小控件，而不是每一块各画各的
+      const right = x + w - KEY_CHIP.right;
       for (let i = 0; i < 3; i++) {
-        const gk = new Graphics();
-        gk.x = LAYOUT.hud.w - 122 + i * 38;
-        gk.y = 30;
+        const chipX = right - (3 - i) * KEY_CHIP.w - (2 - i) * KEY_CHIP.gap;
+        const chipY = y + KEY_CHIP.y;
+        // ⚠️ 顺序即层序：底板必须先加，否则后加的底板会**盖住**先加的图标。
+        // 这里踩过一次：图标在渲染树里存在、visible=true、alpha=1，
+        // 但屏幕上是三个空盒子 —— 因为面板底把它们糊掉了。
+        const chip = new Graphics();
+        chip.roundRect(chipX, chipY, KEY_CHIP.w, KEY_CHIP.h, UI.radiusInner).fill(T.panelAlt);
+        chip.roundRect(chipX, chipY, KEY_CHIP.w, KEY_CHIP.h, UI.radiusInner).stroke({ width: 1, color: T.panelBorder });
+        this.keyLayer.addChild(chip);
+
         // 三色钥匙在道具表里就有素材（yellowKey / blueKey / redKey），直接用真图，
         // 不必再画一个「通用钥匙 + 染色」的程序化版本
         const ktex = atlas.ready ? atlas.item(keys[i][0]) : null;
         if (ktex) {
-          const size = fitSize(ktex.width, ktex.height, 18);
+          const size = fitSize(ktex.width, ktex.height, 16);
           const sp = new Sprite(ktex);
           sp.anchor.set(0.5);
-          sp.x = gk.x + 10;
-          sp.y = gk.y + 10;
+          sp.x = chipX + 12;
+          sp.y = chipY + KEY_CHIP.h / 2;
           sp.width = size.w;
           sp.height = size.h;
           this.keyLayer.addChild(sp);
         } else {
-          drawItemGlyph(gk, 'key', 10, 10, 8, keys[i][2]);
+          const gk = new Graphics();
+          gk.x = chipX;
+          gk.y = chipY;
+          drawItemGlyph(gk, 'key', 12, KEY_CHIP.h / 2, 7, keys[i][2]);
+          this.keyLayer.addChild(gk);
         }
-        const t = label('0', 13, T.ink, '700');
-        t.x = gk.x + 22;
-        t.y = 21;
-        this.keyLayer.addChild(gk, t);
+        const t = label('0', UI.fs.head, T.ink, '700');
+        t.x = chipX + 27;
+        t.y = chipY + KEY_CHIP.h / 2 - 8;
+        this.keyLayer.addChild(t);
         this.keyTexts.push(t);
       }
     }
@@ -166,6 +281,7 @@ export class StatusBar extends Container {
     });
   }
 }
+
 
 // ── 通用浮层文字池 ──────────────────────────────────────────────────
 
@@ -204,10 +320,40 @@ class TextPool extends Container {
 export function clip(s: string, maxUnits: number): string {
   let units = 0;
   for (let i = 0; i < s.length; i++) {
-    units += s.charCodeAt(i) < 0x2e80 ? 0.55 : 1;
+    units += unitOf(s[i]);
     if (units > maxUnits) return s.slice(0, i) + '…';
   }
   return s;
+}
+
+/**
+ * 折行成多行（不做省略）。单位口径与 `clip` 完全一致。
+ *
+ * 对话框要按宽度把台词折成若干行 —— 而 Pixi 的 Text 不会自动换行
+ * （`wordWrap: true` 走的是它自己的断行规则，中文标点会乱掉），
+ * 所以这里自己折，和 UI 里其余地方的宽度估算保持同一套算法。
+ */
+export function wrap(s: string, maxUnits: number): string[] {
+  const out: string[] = [];
+  let cur = '';
+  let units = 0;
+  for (const ch of s) {
+    const u = unitOf(ch);
+    if (units + u > maxUnits && cur) {
+      out.push(cur);
+      cur = '';
+      units = 0;
+    }
+    cur += ch;
+    units += u;
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
+/** 单字符占几个「单位」：中文/全角 1，西文与数字 0.55 */
+function unitOf(ch: string): number {
+  return ch.charCodeAt(0) < 0x2e80 ? 0.55 : 1;
 }
 
 // ── 详情卡 ──────────────────────────────────────────────────────────
@@ -235,26 +381,36 @@ export interface BattleLike {
 }
 
 export class DetailPanel extends Container {
+  /** 卡片矩形（见 theme.ts `UI.tag.rect`）：版式断言据此换算标题偏移 */
+  readonly cardRect: PanelRect;
   private title: Text;
   private badge = new Graphics();
   private badgeText: Text;
   private pool: TextPool;
 
+  /** 标题基线：与左上角色条垂直居中 */
+  private readonly titleY: number;
+
   constructor() {
     super();
+    this.label = UI.tag.panel + 'detail';
     const { x, y, w, h } = LAYOUT.detail;
+    this.cardRect = { x, y, w, h };
     const g = new Graphics();
-    card(g, x, y, w, h);
+    panel(g, x, y, w, h, ACCENT.detail);
     this.addChild(g);
 
-    this.title = label('', 15, T.ink, '700');
-    this.title.x = x + 14;
-    this.title.y = y + 10;
+    this.title = headerTitle('');
+    this.title.label = UI.tag.title;
+    this.title.x = x + UI.titleX;
+    this.titleY = y + UI.titleYHead;
+    this.title.y = this.titleY;
     this.badgeText = label('', 11, T.onDark, '700');
     this.badgeText.anchor.set(0.5);
     this.addChild(this.badge, this.title, this.badgeText);
 
-    this.pool = new TextPool(5, 12, x + 14, y + 34, 20);
+    // 五行文字池：136 高的卡片放得下「标题 38 + 5×17」
+    this.pool = new TextPool(5, UI.fs.body, x + UI.pad, y + 38, 17);
     this.addChild(this.pool);
   }
 
@@ -299,11 +455,14 @@ export class DetailPanel extends Container {
       this.title.text = `${mon.name}${mon.boss ? ' · BOSS' : ''}　${coord}`;
       const gs = battle ? GRADE_STYLE[battle.grade] : null;
       if (gs) {
-        const bw = gs.label.length * 12 + 18;
-        this.badge.roundRect(x + LAYOUT.detail.w - bw - 14, y + 10, bw, 21, 11).fill(gs.color);
+        // 先落字再量宽：Text 的 width 是「当前内容」的度量，顺序反了会拿到上一只怪的宽度
         this.badgeText.text = gs.label;
-        this.badgeText.x = x + LAYOUT.detail.w - bw / 2 - 14;
-        this.badgeText.y = y + 21;
+        const bw = Math.ceil(this.badgeText.width) + 20;
+        const bx = x + LAYOUT.detail.w - bw - UI.pad;
+        const by = y + UI.accent.y - 1;
+        this.badge.roundRect(bx, by, bw, 18, 9).fill(gs.color);
+        this.badgeText.x = bx + bw / 2;
+        this.badgeText.y = by + 9;
       } else {
         this.badgeText.text = '';
       }
@@ -348,11 +507,13 @@ export class DetailPanel extends Container {
 
     if (target.kind === 'npc') {
       const npc = data.npcs[target.id];
-      this.title.text = `${npc?.name ?? target.id}　${coord}`;
+      const role = npcRole(target.id);
+      this.title.text = `${npc?.name ?? target.id} · ${role.label}　${coord}`;
       this.badgeText.text = '';
       const shownFloor = opts.shownFloor ?? state.floor;
-      const line = npc?.talkByFloor?.[String(shownFloor)] ?? npc?.talk ?? npc?.note ?? '';
-      this.pool.set(0, line, T.ink);
+      // 与对话框同源：台词轮换只在 dialogue.ts 里算一次，这里读到的一定是
+      // 「撞上去会看到的那一句」。悬停预览与真实对话因此不可能不一致。
+      this.pool.set(0, npcLine(state, data, target.id, shownFloor).text, T.ink);
       const goods = npc?.goodsByFloor as Record<string, { goods?: unknown[]; gifts?: unknown[] }> | undefined;
       const rows = goods?.[String(shownFloor)];
       if (rows) {
@@ -451,22 +612,51 @@ function keyCn(s: string): string {
 
 // ── 道具栏 ──────────────────────────────────────────────────────────
 
+/** 槽位尺寸：9 列 × 38 + 8 × 3 = 366，刚好落在卡片 368 的内容宽内，两行共 18 格 */
+const SLOT = { size: 38, gap: 3, perRow: 9 };
+const SLOT_ROWS = 2;
+
 export class ItemBar extends Container {
+  /** 卡片矩形（见 theme.ts `UI.tag.rect`）：版式断言据此换算标题偏移 */
+  readonly cardRect: PanelRect;
   private slotLayer = new Container();
-  private emptyHint: Text;
+  private title: Text;
+  private countText: Text;
   private lastSig = '';
 
   constructor(private onUse: (id: string) => void) {
     super();
+    this.label = UI.tag.panel + 'items';
     const { x, y, w, h } = LAYOUT.items;
+    this.cardRect = { x, y, w, h };
     const g = new Graphics();
-    card(g, x, y, w, h);
+    panel(g, x, y, w, h, ACCENT.items);
     this.addChild(g);
 
-    this.emptyHint = label('还没有可使用的道具。钥匙直接进状态栏，宝石与剑盾拾取即生效。', 11, T.inkFaint);
-    this.emptyHint.x = x + 16;
-    this.emptyHint.y = y + 38;
-    this.addChild(this.emptyHint, this.slotLayer);
+    this.title = headerTitle('道具');
+    this.title.label = UI.tag.title;
+    this.title.x = x + UI.titleX;
+    this.title.y = y + UI.titleYHead;
+    this.countText = label('', UI.fs.label, T.inkFaint, '600');
+    this.countText.anchor.set(1, 0);
+    this.countText.x = x + w - UI.pad;
+    this.countText.y = y + UI.accent.y + 2;
+    this.addChild(this.title, this.countText);
+
+    // 空格子底色：**常驻**，不随背包内容增删。
+    // 上一版是「空背包时显示一句灰色说明文字」，代价是玩家看不出这一栏能装多少、
+    // 也看不出它是空的还是没加载出来。画成格子之后，「有 18 格、现在全是空的」
+    // 一眼就懂，那句说明文字也就不需要了。
+    const empty = new Graphics();
+    for (let i = 0; i < SLOT.perRow * SLOT_ROWS; i++) {
+      const sx = x + UI.pad + (i % SLOT.perRow) * (SLOT.size + SLOT.gap);
+      const sy = y + 34 + Math.floor(i / SLOT.perRow) * (SLOT.size + SLOT.gap);
+      empty.roundRect(sx, sy, SLOT.size, SLOT.size, UI.radiusInner).fill({ color: T.panelAlt, alpha: 0.6 });
+      empty
+        .roundRect(sx + 0.5, sy + 0.5, SLOT.size - 1, SLOT.size - 1, UI.radiusInner)
+        .stroke({ width: 1, color: T.panelBorder, alpha: 0.5 });
+    }
+    this.addChild(empty, this.slotLayer);
   }
 
   update(state: GameState, data: GameData): void {
@@ -476,19 +666,19 @@ export class ItemBar extends Container {
     this.lastSig = sig;
 
     this.slotLayer.removeChildren().forEach((c) => c.destroy({ children: true }));
-    this.emptyHint.visible = entries.length === 0;
+    this.countText.text = entries.length ? `${entries.length} / ${SLOT.perRow * SLOT_ROWS} 格` : '空';
 
     const { x, y } = LAYOUT.items;
-    const slot = 40;
-    const gap = 4;
-    const perRow = 8;
+    const slot = SLOT.size;
+    const gap = SLOT.gap;
+    const perRow = SLOT.perRow;
     entries.forEach(([id, count], i) => {
       const item = data.items[id];
       if (!item) return;
       const col = i % perRow;
       const row = Math.floor(i / perRow);
-      const sx = x + 10 + col * (slot + gap);
-      const sy = y + 6 + row * (slot + gap);
+      const sx = x + UI.pad + col * (slot + gap);
+      const sy = y + 34 + row * (slot + gap);
 
       const c = new Container();
       c.x = sx;
@@ -497,8 +687,11 @@ export class ItemBar extends Container {
       const bg = new Graphics();
       const paint = (hover: boolean): void => {
         bg.clear();
-        bg.roundRect(0, 0, slot, slot, 9).fill(hover ? 0xeaf1fb : T.panelAlt);
-        bg.roundRect(0, 0, slot, slot, 9).stroke({ width: hover ? 2 : 1, color: hover ? T.hero : T.panelBorder });
+        bg.roundRect(0, 0, slot, slot, UI.radiusInner).fill(hover ? 0xeaf1fb : T.panel);
+        bg.roundRect(0, 0, slot, slot, UI.radiusInner).stroke({
+          width: hover ? 2 : 1,
+          color: hover ? T.hero : T.panelBorder
+        });
         // 有素材就不画程序化图标，避免两套图标叠在一起
         if (!tex) {
           drawItemGlyph(bg, itemCategoryOf(id, item.name), slot / 2, slot / 2 - 2, 11, itemColorOf({ ...item, id }));
@@ -536,66 +729,48 @@ export class ItemBar extends Container {
   }
 }
 
-// ── 消息条 ──────────────────────────────────────────────────────────
-
-const LOG_COLOR: Record<string, number> = {
-  info: T.inkMuted,
-  battle: T.danger,
-  loot: T.gold,
-  warn: T.warn,
-  talk: T.info,
-  floor: T.ok
-};
-
-export class LogStrip extends Container {
-  private pool: TextPool;
-  private lastSeq = -1;
-
-  constructor() {
-    super();
-    const { x, y, w, h } = LAYOUT.log;
-    const g = new Graphics();
-    card(g, x, y, w, h, 10, T.panelAlt);
-    this.addChild(g);
-    this.pool = new TextPool(2, 11.5, x + 14, y + 7, 16, 36);
-    this.addChild(this.pool);
-  }
-
-  update(state: GameState): void {
-    const last = state.log[state.log.length - 1];
-    if (!last || last.seq === this.lastSeq) return;
-    this.lastSeq = last.seq;
-    const recent = state.log.slice(-2);
-    for (let i = 0; i < 2; i++) {
-      const e = recent[i];
-      this.pool.set(i, e ? e.text : '', e ? LOG_COLOR[e.kind] ?? T.inkMuted : T.inkMuted);
-    }
-  }
-}
-
 // ── 工具栏 ──────────────────────────────────────────────────────────
+//
+// ⚠️ 这里原本还有一条「消息条」（LogStrip）：底部一张卡，滚动显示最近两条
+// 事件文本（「踏入第 2 层」「拾得黄钥匙」…）。已按玩家要求整条删除 ——
+// 理由是那两行和状态卡重复（楼层、步数、金币状态卡都有），却常年占着 40px。
+// 删除后 `state.log` 仍在记录（引擎的事件台账，`__probe().lastLog` 与自动化
+// 校验都读它），只是**不再有任何一处把它画到屏幕上**。
+//
+// 工具栏本身也从「一排胶囊按钮 + 右侧一句灰色提示」改成三个等宽按钮：
+// 胶囊是 iOS 的语言，而这里的卡片是方角圆角，两者放一起就是「不像一个人做的」。
 
 export class Pill extends Container {
   private bg = new Graphics();
   private t: Text;
   private active: boolean;
   private w: number;
+  private hh: number;
 
   /**
    * @param width 固定宽度，或 `'auto'` 按文字实际宽度 + 边距自适应。
    *              中文在不同字体下的实际宽度与「字符数 × 12」常有偏差，
    *              用 Text 实测宽度比硬算更稳，能避免右侧被切掉。
+   * @param height 默认取工具栏那一行的高度；对话框脚部的按钮略高，用同一个类
+   *              才能保证「所有按钮长一个样」。
    */
-  constructor(text: string, width: number | 'auto', private onClick: () => void, active = false) {
+  constructor(
+    text: string,
+    width: number | 'auto',
+    private onClick: () => void,
+    active = false,
+    height: number = LAYOUT.toolbar.h
+  ) {
     super();
     this.active = active;
-    this.t = label(text, 11, T.ink, '700');
+    this.hh = height;
+    this.t = label(text, UI.fs.head, T.ink, '700');
     this.t.anchor.set(0.5);
-    this.w = width === 'auto' ? Math.ceil(this.t.width) + 24 : width;
+    this.w = width === 'auto' ? Math.ceil(this.t.width) + 28 : width;
     this.t.x = this.w / 2;
-    // 按钮高度 26，文字垂直居中；Pixi Text 的锚点在几何中心，
-    // 但不同字体的 descent 会让底部笔画冒出去，所以留 1px 余量偏上。
-    this.t.y = LAYOUT.toolbar.h / 2 - 0.5;
+    // 文字垂直居中。Pixi Text 的锚点是几何中心，但不同字体的 descent 会让
+    // 底部笔画冒出去，所以留 0.5px 余量偏上。
+    this.t.y = height / 2 - 0.5;
     this.addChild(this.bg, this.t);
     this.eventMode = 'static';
     this.cursor = 'pointer';
@@ -606,16 +781,35 @@ export class Pill extends Container {
   }
 
   private paint(hover: boolean): void {
-    const { h } = LAYOUT.toolbar;
+    const h = this.hh;
     this.bg.clear();
-    const fill = this.active ? T.hero : hover ? 0xe8f0fc : T.panelAlt;
-    this.bg.roundRect(0, 0, this.w, h, h / 2).fill(fill);
-    this.bg.roundRect(0, 0, this.w, h, h / 2).stroke({ width: 1, color: this.active ? T.hero : T.panelBorder });
+    // 圆角与卡片一致（UI.radiusInner），不再用 h/2 的胶囊
+    const r = UI.radiusInner;
+    const fill = this.active ? T.hero : hover ? 0xe8f0fc : T.panel;
+    // 与面板同款投影 —— 按钮和卡片是同一族元素，只是尺寸小一圈
+    for (const s of UI.shadow) {
+      this.bg.roundRect(0, s.dy, this.w, h, r).fill({ color: T.panelShadow, alpha: s.alpha });
+    }
+    this.bg.roundRect(0, 0, this.w, h, r).fill(fill);
+    this.bg.roundRect(0, 0, this.w, h, r).stroke({ width: 1, color: this.active ? T.hero : T.panelBorder });
     this.t.style.fill = this.active ? T.onDark : T.ink;
   }
 
   setActive(v: boolean): void {
     this.active = v;
+    this.paint(false);
+  }
+
+  /**
+   * 换文案并重新量宽。
+   *
+   * 对话框脚部那两个按钮的文案不是固定的（「交易」后面可能跟货量），
+   * 换字之后宽度必须跟着变，否则文字会顶出底板 —— 而 `'auto'` 只在构造时算一次。
+   */
+  setLabel(text: string): void {
+    this.t.text = text;
+    this.w = Math.ceil(this.t.width) + 28;
+    this.t.x = this.w / 2;
     this.paint(false);
   }
 }
@@ -627,31 +821,29 @@ export class Toolbar extends Container {
 
   constructor(handlers: { onToggleReveal: () => void; onBrowse: () => void; onRestart: () => void }) {
     super();
-    const { x, y } = LAYOUT.toolbar;
-    let cx = x;
-    const mk = (text: string, fn: () => void, active = false): Pill => {
-      const p = new Pill(text, 'auto', fn, active);
-      p.x = cx;
+    const { x, y, w } = LAYOUT.toolbar;
+    // 三个等宽按钮铺满整行：宽度由版面算出来，不跟着文字长度走 ——
+    // 「重开」只有两个字，跟着文字走会变成一个挤在左边的窄块，整行看着就散了
+    const gap = 6;
+    const btnW = Math.floor((w - gap * 2) / 3);
+    const mk = (text: string, i: number, fn: () => void, active = false): Pill => {
+      const p = new Pill(text, btnW, fn, active);
+      p.x = x + i * (btnW + gap);
       p.y = y;
-      cx += p.width + 6;
       this.addChild(p);
       return p;
     };
-    this.revealPill = mk('编辑视图', handlers.onToggleReveal);
-    this.browsePill = mk('楼层浏览', handlers.onBrowse);
-    this.restartPill = mk('重开', handlers.onRestart);
-
-    const hint = label('点击地图自动寻路', 10.5, T.inkFaint);
-    hint.anchor.set(1, 0.5);
-    hint.x = x + LAYOUT.toolbar.w;
-    hint.y = y + LAYOUT.toolbar.h / 2;
-    this.addChild(hint);
+    this.revealPill = mk('编辑视图', 0, handlers.onToggleReveal);
+    this.browsePill = mk('楼层浏览', 1, handlers.onBrowse);
+    this.restartPill = mk('重开', 2, handlers.onRestart);
   }
 }
 
 // ── 楼层面板（传送 / 浏览） ─────────────────────────────────────────
 
 export class FloorPanel extends Container {
+  /** 卡片矩形（见 theme.ts `UI.tag.rect`）：版式断言据此换算标题偏移 */
+  readonly cardRect: PanelRect;
   private grid = new Container();
   private title: Text;
   private hint: Text;
@@ -664,6 +856,7 @@ export class FloorPanel extends Container {
     private onClose: () => void
   ) {
     super();
+    this.label = UI.tag.panel + 'floor';
     this.visible = false;
     const W = LAYOUT.W;
     const H = LAYOUT.H;
@@ -676,25 +869,29 @@ export class FloorPanel extends Container {
     const py = 150;
     const pw = W - 44;
     const ph = 460;
+    this.cardRect = { x: px, y: py, w: pw, h: ph };
     const bg = new Graphics();
-    card(bg, px, py, pw, ph, 16);
+    // 浮层同样走统一底板 —— 短条颜色由 panel() 一并画出（以前这里自己再画一根，
+    // 两处画同一根短条迟早会分头改：改了一边，另一边就悄悄错位）
+    panel(bg, px, py, pw, ph, ACCENT.detail, UI.radius);
     bg.eventMode = 'static';
     this.addChild(bg);
 
-    this.title = label('', 17, T.ink, '800');
-    this.title.x = px + 20;
-    this.title.y = py + 18;
+    this.title = label('', UI.fs.title, T.ink, '800');
+    this.title.label = UI.tag.title;
+    this.title.x = px + UI.titleX;
+    this.title.y = py + UI.titleYTitle;
     this.addChild(this.title);
 
-    this.hint = label('', 11.5, T.inkMuted);
-    this.hint.x = px + 20;
+    this.hint = label('', UI.fs.label, T.inkMuted);
+    this.hint.x = px + UI.pad;
     this.hint.y = py + 44;
     this.addChild(this.hint);
 
-    const close = label('关闭', 12, T.hero, '700');
+    const close = label('关闭', UI.fs.head, T.hero, '700');
     close.anchor.set(1, 0);
-    close.x = px + pw - 18;
-    close.y = py + 18;
+    close.x = px + pw - UI.pad;
+    close.y = py + UI.accent.y - 1;
     close.eventMode = 'static';
     close.cursor = 'pointer';
     close.on('pointertap', () => this.onClose());

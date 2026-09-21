@@ -19,21 +19,32 @@
  * 玩法信息也不会少。
  */
 
-import { Container, Graphics, Rectangle, Sprite, Text, TilingSprite } from 'pixi.js';
+import { Container, Graphics, Rectangle, Sprite, TilingSprite } from 'pixi.js';
 import type { GameData } from '../data';
 import { tileAt, type GameState } from '../game/state';
 import { atlas, fitSize, isWallChar, terrainKeyFor, variantIndex } from './atlas';
-import { drawHero, drawItemGlyph, drawMonsterBody, drawTerrain, itemCategoryOf, itemColorOf, shade } from './icons';
-import { GRADE_STYLE, T, monsterPalette } from './theme';
+import {
+  drawHero,
+  drawItemGlyph,
+  drawMonsterBody,
+  drawNpcFallback,
+  drawTerrain,
+  itemCategoryOf,
+  itemColorOf,
+  shade
+} from './icons';
+import { GRADE_STYLE, T, monsterPalette, npcRole } from './theme';
 
-const NPC_COLOR: Record<string, number> = {
-  sage: 0x3b6fd4,
-  merchant: 0xd99e0b,
-  shop: 0x15a34a,
-  princess: 0xdb5a9a,
-  thief: 0x6b7280,
-  fairy: 0x38bdf8
-};
+/**
+ * NPC 落屏造型 —— 分两层，缺一不可：
+ *
+ * 1. **精灵本身按职能各不相同**（图集里的 npc.<id>，由 tools/build-assets.py 的
+ *    NPC_ART 手绘）。之前 6 个 NPC 是同一张图换色，剪影完全一样，
+ *    在地图上一眼看不出「这个人是卖东西的还是给情报的」。
+ * 2. **脚下名牌用职能色**（theme.ts 的 NPC_ROLE，与对话框的职能章同源）。
+ *    名字只取前两个字，但颜色与职能章一致 —— 玩家在对话框里认出「金色=交易」之后，
+ *    回到地图上还能靠颜色继续认人。
+ */
 
 /** 怪物 idle 动画每帧时长（ms）。四帧一轮 ≈ 0.7s，慢到不抢注意力 */
 const MONSTER_FRAME_MS = 170;
@@ -41,11 +52,8 @@ const MONSTER_FRAME_MS = 170;
 const ATTACK_MS = 300;
 /** 每步走路前进一帧：一步一格 = 一个完整步态循环 */
 const WALK_FRAMES = 4;
-
-/** 怪物名缩到 2 字，让同族不同阶在棋盘上可分辨（骷髅 / 骷士 / 骷队） */
-function shortName(name: string): string {
-  return name.length <= 2 ? name : name.slice(0, 2);
-}
+/** NPC 静帧呼吸每帧时长（ms）。比怪物慢一倍 —— 站着的人不该动得像喘气 */
+const NPC_FRAME_MS = 340;
 
 /** 勇者朝向名，与 MANIFEST 的 dirOrder 一致 */
 type Facing = 'down' | 'left' | 'up' | 'right';
@@ -57,6 +65,8 @@ interface EntityView {
   y: number;
   /** 有值表示这格是怪物，参与 idle 动画 */
   monsterId?: string;
+  /** 有值表示这格是 NPC，参与呼吸动画 */
+  npcId?: string;
   sprite?: Sprite;
   /** 每只怪物错开一点相位，否则满屏怪物同步呼吸，像一个人在动 */
   phase?: number;
@@ -382,9 +392,9 @@ export class Board extends Container {
       v.node?.destroy({ children: true });
       this.entityViews = this.entityViews.filter((s) => s !== v);
     }
-    // 相位错开，别让满屏怪物同步呼吸
+    // 相位错开，别让满屏怪物同步呼吸（NPC 同理 —— 两个智者一起点头很出戏）
     this.entityViews.forEach((v, i) => {
-      if (v.monsterId && v.phase === undefined) v.phase = (i * 137) % (MONSTER_FRAME_MS * 4);
+      if ((v.monsterId || v.npcId) && v.phase === undefined) v.phase = (i * 137) % (MONSTER_FRAME_MS * 4);
     });
   }
 
@@ -491,8 +501,11 @@ export class Board extends Container {
         c.addChild(g);
       }
     } else {
-      const npc = data.npcs[id];
+      const role = npcRole(id);
       const npcTex = atlas.ready ? atlas.npcFrame(id, 'down', 0) : null;
+      // NPC 有自己的静帧呼吸动画（图集里 4 帧），按下方同一套相位错开
+      view.npcId = id;
+      view.frameIdx = -1;
       if (npcTex) {
         const sp = new Sprite(npcTex);
         const s = atlas.actorScale;
@@ -501,31 +514,25 @@ export class Board extends Container {
         sp.y = S;
         sp.width = npcTex.width * s;
         sp.height = npcTex.height * s;
+        view.sprite = sp;
         c.addChild(sp);
       } else {
         const g = new Graphics();
-        const color = NPC_COLOR[id] ?? 0x64748b;
-        g.circle(cx, cy + S * 0.04, S * 0.4).fill({ color: 0xffffff, alpha: 0.75 });
-        // 长袍人形
-        g.poly([cx - r * 0.8, cy + r * 0.95, cx, cy - r * 0.1, cx + r * 0.8, cy + r * 0.95]).fill(color);
-        g.circle(cx, cy - r * 0.42, r * 0.38).fill(shade(color, 0.25));
-        g.circle(cx - r * 0.13, cy - r * 0.45, r * 0.06).fill(0x1e293b);
-        g.circle(cx + r * 0.13, cy - r * 0.45, r * 0.06).fill(0x1e293b);
+        // 兜底：程序化图形也按职能分工，不能退回「所有人一个样」
+        drawNpcFallback(g, id, cx, cy, r, role.color);
         c.addChild(g);
       }
-      const label = new Text({
-        text: shortName(npc?.name ?? id),
-        style: {
-          fontFamily: '"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif',
-          fontSize: Math.max(8, S * 0.28),
-          fontWeight: '700',
-          fill: T.inkMuted
-        }
-      });
-      label.anchor.set(0.5);
-      label.x = cx;
-      label.y = cy + r * 1.24;
-      c.addChild(label);
+      // 脚下名牌：只用**职能色**，不写名字。
+      // 名字在详情卡与对话框里都有；格子只有 32px，写名字会压到邻格，
+      // 而颜色本身就能回答玩家唯一的问题 ——「这个人能干什么」。
+      const plateH = Math.max(4, Math.round(S * 0.12));
+      const plateW = Math.max(10, Math.round(S * 0.4));
+      const plate = new Graphics();
+      plate.label = 'npcPlate';
+      plate
+        .roundRect(Math.round(cx - plateW / 2), S - plateH - 2, plateW, plateH, plateH / 2)
+        .fill(role.color);
+      c.addChild(plate);
     }
 
     this.entityLayer.addChild(c);
@@ -617,16 +624,27 @@ export class Board extends Container {
       if (e >= 1) this.heroAnim.active = false;
     }
 
-    // 怪物 idle 循环：只在帧号真的变了才换贴图，避免每帧无谓的查表与赋值
+    // 怪物 idle 与 NPC 呼吸循环：只在帧号真的变了才换贴图，
+    // 避免每帧无谓的查表与赋值
     if (atlas.ready) {
       for (const v of this.entityViews) {
-        if (!v.monsterId || !v.sprite) continue;
-        const fi = Math.floor((this.clock + (v.phase ?? 0)) / MONSTER_FRAME_MS) % 4;
-        if (fi === v.frameIdx) continue;
-        const tex = atlas.monster(v.monsterId, 'idle', fi);
-        if (tex) {
-          v.sprite.texture = tex;
-          v.frameIdx = fi;
+        if (!v.sprite) continue;
+        if (v.monsterId) {
+          const fi = Math.floor((this.clock + (v.phase ?? 0)) / MONSTER_FRAME_MS) % 4;
+          if (fi === v.frameIdx) continue;
+          const tex = atlas.monster(v.monsterId, 'idle', fi);
+          if (tex) {
+            v.sprite.texture = tex;
+            v.frameIdx = fi;
+          }
+        } else if (v.npcId) {
+          const fi = Math.floor((this.clock + (v.phase ?? 0)) / NPC_FRAME_MS) % 4;
+          if (fi === v.frameIdx) continue;
+          const tex = atlas.npcFrame(v.npcId, 'down', fi);
+          if (tex) {
+            v.sprite.texture = tex;
+            v.frameIdx = fi;
+          }
         }
       }
     }

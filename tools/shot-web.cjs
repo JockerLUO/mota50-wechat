@@ -202,6 +202,26 @@ const CLIP_EXPR = {
     console.log('--eval → ' + JSON.stringify(val, null, 2));
   }
 
+  // --after：等画面稳定**之后**再动一下状态（撞 NPC、开面板…），然后再截图。
+  // 存在的理由：--eval 与截图之间没有渲染帧，改完状态立刻截图会拍到一个
+  // 「状态已变、画面未重绘」的中间态 —— 拍出来的东西不是玩家会看到的。
+  if (args.after) {
+    const val = await page.evaluate((code) => {
+      const fn = new Function(`return (${code});`); // eslint-disable-line no-new-func
+      return fn();
+    }, args.after);
+    console.log('--after → ' + JSON.stringify(val));
+    await page.evaluate(
+      (ms) =>
+        new Promise((r) => {
+          const t0 = performance.now();
+          const tick = () => (performance.now() - t0 >= ms ? r() : requestAnimationFrame(tick));
+          requestAnimationFrame(tick);
+        }),
+      Number(args.afterWait || 400)
+    );
+  }
+
   const clip = CLIP_EXPR[args.clip]
     ? await page.evaluate(CLIP_EXPR[args.clip])
     : null;

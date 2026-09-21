@@ -409,6 +409,79 @@ export function drawHero(g: Graphics, cx: number, cy: number, r: number): void {
   g.circle(cx + r * 0.15, cy - r * 0.5, r * 0.07).fill(0x1e293b);
 }
 
+// ── NPC（图集缺失时的程序化兜底） ───────────────────────────────────
+//
+// ⚠️ 这一份是**兜底**，只在图集加载失败时用到（`atlas.ready === false`）。
+// 但它同样必须按职能分工：上一版是「所有人同一个长袍人形 + 换个颜色」，
+// 结果图集一失败，整座塔的人长得一模一样 —— 而兜底路径恰恰是最不容易被
+// 发现的那条（画面只是变朴素，不会报错）。
+
+export function drawNpcFallback(g: Graphics, id: string, cx: number, cy: number, r: number, color: number): void {
+  const dark = shade(color, -0.35);
+  const light = shade(color, 0.3);
+  const skin = 0xf7d9b8;
+
+  // 底色盘：让角色从地板里浮出来（兜底路径没有像素描边，只能靠底衬）
+  g.circle(cx, cy + r * 0.04, r * 0.86).fill({ color: 0xffffff, alpha: 0.7 });
+
+  // 长袍：所有职能共用的身体，剪影差异靠下面的「帽子 / 手持物」制造
+  g.poly([cx - r * 0.78, cy + r * 0.95, cx, cy - r * 0.15, cx + r * 0.78, cy + r * 0.95]).fill(color);
+  g.poly([cx - r * 0.78, cy + r * 0.95, cx, cy - r * 0.15, cx, cy + r * 0.95]).fill({ color: light, alpha: 0.35 });
+  // 头
+  g.circle(cx, cy - r * 0.48, r * 0.36).fill(skin);
+  g.circle(cx - r * 0.12, cy - r * 0.5, r * 0.06).fill(0x1e293b);
+  g.circle(cx + r * 0.12, cy - r * 0.5, r * 0.06).fill(0x1e293b);
+
+  switch (id) {
+    case 'sage':
+      // 尖顶帽 + 白须 + 法杖
+      g.poly([cx - r * 0.42, cy - r * 0.7, cx, cy - r * 1.35, cx + r * 0.42, cy - r * 0.7]).fill(dark);
+      g.poly([cx - r * 0.3, cy - r * 0.28, cx, cy + r * 0.5, cx + r * 0.3, cy - r * 0.28]).fill(0xf4f2ec);
+      g.rect(cx + r * 0.72, cy - r * 0.95, Math.max(1.4, r * 0.14), r * 1.7).fill(0x7a5630);
+      g.circle(cx + r * 0.79, cy - r * 1.05, r * 0.2).fill(0x4a8cf6);
+      break;
+    case 'merchant':
+      // 宽檐帽 + 钱袋
+      g.ellipse(cx, cy - r * 0.72, r * 0.95, r * 0.2).fill(dark);
+      g.roundRect(cx - r * 0.34, cy - r * 1.12, r * 0.68, r * 0.42, r * 0.12).fill(dark);
+      g.circle(cx + r * 0.62, cy + r * 0.5, r * 0.26).fill(0xe2b048);
+      break;
+    case 'shop':
+      // 围裙 + 一摞金币
+      g.roundRect(cx - r * 0.4, cy - r * 0.1, r * 0.8, r * 0.9, r * 0.14).fill(0xe2d0a8);
+      for (let i = 0; i < 3; i++) g.ellipse(cx + r * 0.66, cy + r * (0.2 + i * 0.26), r * 0.24, r * 0.1).fill(0xf0ca54);
+      break;
+    case 'thief':
+      // 兜帽 + 蒙面（只留眼缝）
+      g.poly([cx - r * 0.5, cy - r * 0.18, cx, cy - r * 1.1, cx + r * 0.5, cy - r * 0.18]).fill(dark);
+      g.rect(cx - r * 0.34, cy - r * 0.42, r * 0.68, r * 0.26).fill(0x262a3a);
+      break;
+    case 'fairy':
+      // 翅膀 + 星杖
+      g.ellipse(cx - r * 0.72, cy - r * 0.2, r * 0.34, r * 0.6).fill({ color: 0xb2e8fa, alpha: 0.85 });
+      g.ellipse(cx + r * 0.72, cy - r * 0.2, r * 0.34, r * 0.6).fill({ color: 0xb2e8fa, alpha: 0.85 });
+      g.rect(cx + r * 0.68, cy - r * 0.7, Math.max(1.2, r * 0.1), r * 1.3).fill(0xf0f6ff);
+      g.circle(cx + r * 0.74, cy - r * 0.85, r * 0.16).fill(0x56d6fa);
+      break;
+    case 'princess':
+      // 金冠 + 长发
+      g.poly([
+        cx - r * 0.34, cy - r * 0.66,
+        cx - r * 0.34, cy - r * 1.02,
+        cx - r * 0.16, cy - r * 0.8,
+        cx, cy - r * 1.08,
+        cx + r * 0.16, cy - r * 0.8,
+        cx + r * 0.34, cy - r * 1.02,
+        cx + r * 0.34, cy - r * 0.66
+      ]).fill(0xf6ca46);
+      g.rect(cx - r * 0.42, cy - r * 0.6, r * 0.16, r * 1.0).fill(0x7e4a28);
+      g.rect(cx + r * 0.26, cy - r * 0.6, r * 0.16, r * 1.0).fill(0x7e4a28);
+      break;
+    default:
+      break;
+  }
+}
+
 // ── 工具 ────────────────────────────────────────────────────────────
 
 /** 按比例提亮(正)/压暗(负)一个颜色 */
