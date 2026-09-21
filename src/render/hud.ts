@@ -28,6 +28,10 @@ import { ACCENT, GRADE_STYLE, T, UI, npcRole, realm, type PanelRect } from './th
 //
 // 420×940 的设计稿，从上到下：状态卡 → 棋盘 → 操作条 → 详情卡 → 道具栏。
 //
+// **道具栏是唯一高度可变的一块**：没有可用道具时它连底板一起不画，
+// 那段高度（798..912）直接成为位面背景。其余四块位置恒定 ——
+// 「拿到一件道具时整屏往上跳一下」是比「底部空一块」严重得多的体验问题。
+//
 // ## 三个数决定一切
 //
 //   pad = 20   左右边距（面板 x）= 面板宽 380 的来源
@@ -82,7 +86,16 @@ export const LAYOUT = {
   parapet: { t: 14, merlon: 8 },
   toolbar: { x: 20, y: 584, w: 380, h: 32 },
   detail: { x: 20, y: 644, w: 380, h: 126 },
-  items: { x: 20, y: 798, w: 380, h: 114 }
+  /**
+   * 道具栏的**基准位置**。`h` 在这里是「两行槽位时的最大高度」，
+   * **不是实际画出来的高度** —— 真实高度由 `itemBoxHeight(件数)` 算：
+   * 一件可用道具都没有时它等于 0，整栏连底板一起不画，
+   * 798..912 这段还给位面背景（见 `ItemBar`）。
+   *
+   * 它是最后一个模块，所以「自己的高度」不影响自己的 y ——
+   * 这也是为什么动态高度在这里特别便宜：没有任何模块需要跟着挪。
+   */
+  items: { x: 20, y: 798, w: 380, h: 117 }
 } as const;
 
 /**
@@ -707,26 +720,57 @@ function keyCn(s: string): string {
 
 // ── 道具栏 ──────────────────────────────────────────────────────────
 
-/** 槽位尺寸：9 列 × 36 + 8 × 3 = 348，落在卡片 352 的内容宽内，两行共 18 格 */
+/**
+ * 槽位尺寸：9 列 × 36 + 8 × 3 = 348，落在卡片 352 的内容宽内。
+ *
+ * ⚠️ 这里**不再有「两行共 18 格」这个概念**。上一版把 18 个空格子常驻画出来，
+ * 玩家一进游戏看到的就是一整片空槽 —— 那是「容量展示」，代价是 114px 的版面
+ * 常年被一块空卡片占着。现在卡片高度由**实际持有件数**算出来，
+ * 一件都没有时整栏不占位（高度 0），空出来的地方还给位面背景。
+ */
 const SLOT = { size: 36, gap: 3, perRow: 9 };
-const SLOT_ROWS = 2;
+/** 第一行槽位的 y 偏移（短条 + 标题占掉的高度） */
+const ITEM_HEAD = 34;
+/**
+ * 最后一行槽位与卡片底的内边距。
+ *
+ * 这个 5 不是随手写的，是从**版面节奏倒推**出来的：本作可用道具一共 12 种
+ * （`data/items.json` 里 `kind: 'usable'`），最多占 2 行，而
+ *   34（头）+ 36×2 + 3（行距）+ 5 = 114 = (940 − 28) − 798
+ * 正好让两行时的卡片底落在 `H − gap`，也就是**底部留白与其它模块同节奏**。
+ * 改 SLOT.size / ITEM_HEAD 时这个值要一起重算，A8 会红。
+ */
+const ITEM_PAD_BOTTOM = 5;
+
+/** 持有 n 件可用道具时，道具栏需要的卡片高度。**n = 0 → 0（整栏不占位）** */
+export function itemBoxHeight(n: number): number {
+  if (n <= 0) return 0;
+  const rows = Math.ceil(n / SLOT.perRow);
+  return ITEM_HEAD + rows * SLOT.size + (rows - 1) * SLOT.gap + ITEM_PAD_BOTTOM;
+}
 
 export class ItemBar extends Container {
-  /** 卡片矩形（见 theme.ts `UI.tag.rect`）：版式断言据此换算标题偏移 */
+  /**
+   * 卡片矩形（见 theme.ts `UI.tag.rect`）：版式断言据此换算标题偏移。
+   *
+   * **它是动态的** —— `update()` 每次按件数改写。断言读到 h = 0 就意味着
+   * 「这一栏现在不占位」，所以 A8 量间隙时要跳过它（见 tools/verify-visual.cjs）。
+   */
   readonly cardRect: PanelRect;
   /** 底板单独持有：位面变了要重画 */
   private cardGfx = new Graphics();
   private slotLayer = new Container();
   private title: Text;
   private countText: Text;
-  private lastSig = '';
+  /** null 而不是 '' —— 初始「空背包」的签名也是 ''，用 '' 会让第一次 update 直接 return */
+  private lastSig: string | null = null;
 
   constructor(private onUse: (id: string) => void) {
     super();
     this.label = UI.tag.panel + 'items';
-    const { x, y, w, h } = LAYOUT.items;
-    this.cardRect = { x, y, w, h };
-    this.repaintCard();
+    const { x, y, w } = LAYOUT.items;
+    this.cardRect = { x, y, w, h: 0 };
+    this.visible = false;
     this.addChild(this.cardGfx);
 
     this.title = headerTitle('道具');
@@ -737,29 +781,20 @@ export class ItemBar extends Container {
     this.countText.anchor.set(1, 0);
     this.countText.x = x + w - UI.pad;
     this.countText.y = y + UI.accent.y + 2;
-    this.addChild(this.title, this.countText);
-
-    // 空格子底色：**常驻**，不随背包内容增删。
-    // 上一版是「空背包时显示一句灰色说明文字」，代价是玩家看不出这一栏能装多少、
-    // 也看不出它是空的还是没加载出来。画成格子之后，「有 18 格、现在全是空的」
-    // 一眼就懂，那句说明文字也就不需要了。
-    const empty = new Graphics();
-    for (let i = 0; i < SLOT.perRow * SLOT_ROWS; i++) {
-      const sx = x + UI.pad + (i % SLOT.perRow) * (SLOT.size + SLOT.gap);
-      const sy = y + 34 + Math.floor(i / SLOT.perRow) * (SLOT.size + SLOT.gap);
-      empty.roundRect(sx, sy, SLOT.size, SLOT.size, UI.radiusInner).fill({ color: T.panelAlt, alpha: 0.6 });
-      empty
-        .roundRect(sx + 0.5, sy + 0.5, SLOT.size - 1, SLOT.size - 1, UI.radiusInner)
-        .stroke({ width: 1, color: T.panelBorder, alpha: 0.5 });
-    }
-    this.addChild(empty, this.slotLayer);
+    this.addChild(this.title, this.countText, this.slotLayer);
   }
 
-  /** 重画底板（位面色调，见 StatusBar.repaintCard） */
+  /**
+   * 重画底板（位面色调，见 StatusBar.repaintCard）。
+   *
+   * 高度取 `cardRect.h` 而不是 `LAYOUT.items.h` —— 后者只是基准位置，
+   * 真实高度由件数决定。这里读 cardRect 才不会有「底板和内容不一样高」。
+   */
   repaintCard(): void {
-    const { x, y, w, h } = LAYOUT.items;
+    const { x, y, w } = LAYOUT.items;
+    const h = this.cardRect.h;
     this.cardGfx.clear();
-    panel(this.cardGfx, x, y, w, h, ACCENT.items);
+    if (h > 0) panel(this.cardGfx, x, y, w, h, ACCENT.items);
   }
 
   update(state: GameState, data: GameData): void {
@@ -768,8 +803,19 @@ export class ItemBar extends Container {
     if (sig === this.lastSig) return;
     this.lastSig = sig;
 
+    // 空背包 = 整栏不占位。**不要留一张空卡片** —— 上一版常驻 18 个空格子，
+    // 玩家看到的第一屏里有一整块什么都不放的地方。
+    const h = itemBoxHeight(entries.length);
+    (this.cardRect as PanelRect).h = h;
+    this.visible = h > 0;
+    this.repaintCard();
+    if (h === 0) {
+      this.slotLayer.removeChildren().forEach((c) => c.destroy({ children: true }));
+      return;
+    }
+
     this.slotLayer.removeChildren().forEach((c) => c.destroy({ children: true }));
-    this.countText.text = entries.length ? `${entries.length} / ${SLOT.perRow * SLOT_ROWS} 格` : '空';
+    this.countText.text = `${entries.length} 件`;
 
     const { x, y } = LAYOUT.items;
     const slot = SLOT.size;
@@ -781,7 +827,7 @@ export class ItemBar extends Container {
       const col = i % perRow;
       const row = Math.floor(i / perRow);
       const sx = x + UI.pad + col * (slot + gap);
-      const sy = y + 34 + row * (slot + gap);
+      const sy = y + ITEM_HEAD + row * (slot + gap);
 
       const c = new Container();
       c.x = sx;

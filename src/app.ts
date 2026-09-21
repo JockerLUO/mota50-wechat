@@ -288,6 +288,10 @@ export class Game {
     gap: number;
     pad: number;
     modules: Array<{ id: string; x: number; y: number; w: number; h: number }>;
+    /** 真正参与排版的模块 id（道具栏为空时会缺一个） */
+    placed: string[];
+    /** 道具栏是不是「空背包 → 整栏不占位」 */
+    itemsHidden: boolean;
     gaps: Array<{ after: string; value: number }>;
     boardCell: number;
     boardSpan: number;
@@ -307,11 +311,15 @@ export class Game {
       { id: 'detail', ...this.detail.cardRect },
       { id: 'items', ...this.itemBar.cardRect }
     ];
-    const gaps: Array<{ after: string; value: number }> = [{ after: 'top', value: modules[0].y }];
-    for (let i = 0; i < modules.length - 1; i++) {
-      gaps.push({ after: modules[i].id, value: modules[i + 1].y - (modules[i].y + modules[i].h) });
+    // 道具栏 h = 0 表示「空背包，整栏不占位」。这时它必须整块从版面里**摘出去**，
+    // 而不是留一条 0 高的缝 —— 否则 `detail → items` 与 `items → 底` 两条
+    // 会变成 28 与 142 这样的假间隙，A8 立刻报错，而画面其实是对的。
+    const placed = modules.filter((m) => m.h > 0);
+    const gaps: Array<{ after: string; value: number }> = [{ after: 'top', value: placed[0].y }];
+    for (let i = 0; i < placed.length - 1; i++) {
+      gaps.push({ after: placed[i].id, value: placed[i + 1].y - (placed[i].y + placed[i].h) });
     }
-    const last = modules[modules.length - 1];
+    const last = placed[placed.length - 1];
     gaps.push({ after: last.id, value: LAYOUT.H - (last.y + last.h) });
     return {
       W: LAYOUT.W,
@@ -319,6 +327,9 @@ export class Game {
       gap: LAYOUT.gap,
       pad: LAYOUT.pad,
       modules,
+      /** 参与排版的模块（h=0 的已摘除）。断言用这个 */
+      placed: placed.map((m) => m.id),
+      itemsHidden: this.itemBar.cardRect.h === 0,
       gaps,
       boardCell: LAYOUT.board.cell,
       boardSpan: LAYOUT.board.cell * 11,

@@ -1,6 +1,6 @@
 {
   "meta": {
-    "generatedAt": "2026-09-21T14:52:49+00:00",
+    "generatedAt": "2026-09-21T17:11:58+00:00",
     "generator": "tools/build-assets.py",
     "baseTile": 16,
     "cell": 32,
@@ -529,8 +529,8 @@
       ]
     },
     "vampire": {
-      "src": "0x72/zombie",
-      "note": "紫，尸族",
+      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "note": "手绘：高领斗篷 + 獠牙 + 红眼（旧为 zombie 换紫，毫无吸血鬼特征）",
       "drawScale": 2,
       "atlas": "monsters",
       "frame": {
@@ -621,8 +621,8 @@
       ]
     },
     "bat": {
-      "src": "0x72/imp",
-      "note": "褐",
+      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "note": "手绘：窄膜翼，棕",
       "drawScale": 2,
       "atlas": "monsters",
       "frame": {
@@ -667,8 +667,8 @@
       ]
     },
     "bigBat": {
-      "src": "0x72/imp",
-      "note": "深褐（原为 ×3，实测越出格子 4px）",
+      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "note": "手绘：宽膜翼，深褐",
       "drawScale": 2,
       "atlas": "monsters",
       "frame": {
@@ -713,8 +713,8 @@
       ]
     },
     "vampireBat": {
-      "src": "0x72/imp",
-      "note": "血红（原为 ×3）",
+      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "note": "手绘：宽膜翼 + 獠牙，血红",
       "drawScale": 2,
       "atlas": "monsters",
       "frame": {
@@ -759,8 +759,8 @@
       ]
     },
     "greenSlime": {
-      "src": "0x72/swampy",
-      "note": "原色即绿",
+      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "note": "手绘：绿圆顶果冻",
       "drawScale": 2,
       "atlas": "monsters",
       "frame": {
@@ -805,8 +805,8 @@
       ]
     },
     "redSlime": {
-      "src": "0x72/swampy",
-      "note": "红",
+      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "note": "手绘：红圆顶果冻",
       "drawScale": 2,
       "atlas": "monsters",
       "frame": {
@@ -851,8 +851,8 @@
       ]
     },
     "bigSlime": {
-      "src": "0x72/muddy",
-      "note": "绿（原为 ×3，实测越出格子 7px）",
+      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "note": "手绘：更高的圆顶（用体量而不是换色表达「大」）",
       "drawScale": 2,
       "atlas": "monsters",
       "frame": {
@@ -897,8 +897,8 @@
       ]
     },
     "slimeKing": {
-      "src": "0x72/muddy",
-      "note": "金（原为 ×3）",
+      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "note": "手绘：金 + 三尖冠",
       "drawScale": 2,
       "atlas": "monsters",
       "frame": {
@@ -1725,8 +1725,8 @@
       ]
     },
     "stoneGolem": {
-      "src": "0x72/ogre",
-      "note": "石色（原为 ×3，实测越出格子 7px）",
+      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "note": "手绘：方块躯干 + 砖缝 + 发光眼（旧为 ogre 食人魔）",
       "drawScale": 2,
       "atlas": "monsters",
       "frame": {
@@ -1771,8 +1771,8 @@
       ]
     },
     "dragon": {
-      "src": "0x72/chort",
-      "note": "赤红，放大",
+      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "note": "手绘：角 + 长吻 + 展翼 + 卷尾（旧为 chort 小鬼）",
       "drawScale": 3,
       "atlas": "monsters",
       "frame": {
@@ -1817,8 +1817,8 @@
       ]
     },
     "kraken": {
-      "src": "0x72/swampy",
-      "note": "深紫，放大",
+      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "note": "手绘：圆头 + 侧鳍 + 六条打卷的腕（旧为 swampy 绿衣人）",
       "drawScale": 3,
       "atlas": "monsters",
       "frame": {
@@ -1863,8 +1863,8 @@
       ]
     },
     "demonKing": {
-      "src": "0x72/big_demon",
-      "note": "源为 32×32，归一化到 16 后放大，与巨龙同级",
+      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "note": "手绘：巨角 + 膜翼 + 发光眼，紫",
       "drawScale": 3,
       "atlas": "monsters",
       "frame": {
@@ -1909,8 +1909,8 @@
       ]
     },
     "demonKingTrue": {
-      "src": "0x72/big_demon",
-      "note": "猩红真身",
+      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "note": "手绘：同形状换猩红 + 金冠（真身）",
       "drawScale": 3,
       "atlas": "monsters",
       "frame": {

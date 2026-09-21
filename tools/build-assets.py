@@ -622,10 +622,15 @@ OVERSIZE_BOSSES = {
 # ─────────────────────────────────────────────────────────────────────
 # 格式： id -> (0x72 源名, 变换函数, 绘制倍数, 变换说明)
 #
+# **源名写 `"gen"` 表示这只不取 0x72，改由本仓库按名称手绘** ——
+# 形状与配色见上面的 `PROC_MONSTERS`（0x72 地牢包 24 张角色底图全是人形，
+# 蝙蝠/龙/乌贼/石头人/史莱姆它一个都没有，只能自己画）。
+# 两边必须严格一一对应，有断言拦（见 verify_mon_art）。
+#
 # 设计依据：这份怪物名单本身就成族（skeleton/skeletonSoldier/skeletonCaptain），
 # 原版 50 层魔塔就是靠同图换色做的三级进阶，这里沿用同一套做法 ——
 # 换色不是偷懒，是这个品类的既定视觉语言。
-# 变换一律用 ramp（保明暗结构）而非 hue_shift（会糊成一坨纯色），
+# 变化一律用 ramp（保明暗结构）而非 hue_shift（会糊成一坨纯色），
 # 因为战士/骑士/骷髅这三族的阶差主要靠「材质」表达（铁→银→金）。
 #
 # ⚠️ 绘制倍数只有 BOSS 能取 3，其余一律 2 —— 这条有断言（见 verify_monster_fit）。
@@ -657,20 +662,20 @@ MONSTERS = {
     # ── 亡灵族 ──────────────────────────────────────────────────
     "ghostWarrior":    ("wogol",         _h(160, 0.55, 1.1),                2, "青白，幽灵感"),
     "phantom":         ("wogol",         lambda im: alpha_mul(hue_shift(im, 250, 0.7), 0.7), 2, "紫，半透明"),
-    "vampire":         ("zombie",        _h(300, 0.5, 0.9),                 2, "紫，尸族"),
+    "vampire":         ("gen",           None,                              2, "手绘：高领斗篷 + 獠牙 + 红眼（旧为 zombie 换紫，毫无吸血鬼特征）"),
     "ice_zombie":      ("ice_zombie",    None,                              2, "原样（备用图，本作暂未用）"),
 
-    # ── 蝙蝠族：用带翼的 imp ────────────────────────────────────
+    # ── 蝙蝠族：手绘（0x72 没有蝙蝠，旧版用 imp 小恶魔顶替）──────
     # ⚠️ 只有 OVERSIZE_BOSSES 里的那 4 只允许乘 3。其余一律乘 2 —— 见该常量的说明。
-    "bat":             ("imp",           _h(20, 0.9, 0.95),                 2, "褐"),
-    "bigBat":          ("imp",           _h(10, 1.15, 0.8),                 2, "深褐（原为 ×3，实测越出格子 4px）"),
-    "vampireBat":      ("imp",           _h(340, 1.4, 0.95),                2, "血红（原为 ×3）"),
+    "bat":             ("gen",           None,                              2, "手绘：窄膜翼，棕"),
+    "bigBat":          ("gen",           None,                              2, "手绘：宽膜翼，深褐"),
+    "vampireBat":      ("gen",           None,                              2, "手绘：宽膜翼 + 獠牙，血红"),
 
-    # ── 史莱姆族：绿 → 红 → 大 → 王 ────────────────────────────
-    "greenSlime":      ("swampy",        _h(0, 1.0, 1.0),                   2, "原色即绿"),
-    "redSlime":        ("swampy",        _h(300, 1.3, 1.05),                2, "红"),
-    "bigSlime":        ("muddy",         _h(0, 1.15, 1.0),                  2, "绿（原为 ×3，实测越出格子 7px）"),
-    "slimeKing":       ("muddy",         lambda im: ramp(im, (96, 62, 10), (250, 216, 112)), 2, "金（原为 ×3）"),
+    # ── 史莱姆族：手绘（0x72 没有史莱姆，旧版用 swampy 绿衣人顶替）─
+    "greenSlime":      ("gen",           None,                              2, "手绘：绿圆顶果冻"),
+    "redSlime":        ("gen",           None,                              2, "手绘：红圆顶果冻"),
+    "bigSlime":        ("gen",           None,                              2, "手绘：更高的圆顶（用体量而不是换色表达「大」）"),
+    "slimeKing":       ("gen",           None,                              2, "手绘：金 + 三尖冠"),
 
     # ── 法师族：学徒 → 资深（蓝 → 紫） ─────────────────────────
     "juniorMage":      ("wizzard_m",     _h(150, 1.2),                      2, "蓝袍"),
@@ -696,13 +701,13 @@ MONSTERS = {
     "knight":          ("knight_m",      _h(170, 1.2),                      2, "蓝甲"),
     "knightCaptain":   ("knight_f",      _r(IRON, SILVER),                  2, "白银"),
     "darkKnight":      ("knight_m",      _r((14, 12, 20), (110, 106, 128)), 2, "近黑"),
-    "stoneGolem":      ("ogre",          _r(STONE_F, STONE_L),              2, "石色（原为 ×3，实测越出格子 7px）"),
+    "stoneGolem":      ("gen",           None,                              2, "手绘：方块躯干 + 砖缝 + 发光眼（旧为 ogre 食人魔）"),
 
     # ── BOSS：允许 ×3（48px）。层级信号靠尺寸，但**只有 BOSS 有这个特权** ──────
-    "dragon":          ("chort",         _h(320, 1.4),                      3, "赤红，放大"),
-    "kraken":          ("swampy",        _h(250, 1.25, 0.9),                3, "深紫，放大"),
-    "demonKing":       ("big_demon",     None,                              3, "源为 32×32，归一化到 16 后放大，与巨龙同级"),
-    "demonKingTrue":   ("big_demon",     _h(320, 1.45, 1.1),                3, "猩红真身"),
+    "dragon":          ("gen",           None,                              3, "手绘：角 + 长吻 + 展翼 + 卷尾（旧为 chort 小鬼）"),
+    "kraken":          ("gen",           None,                              3, "手绘：圆头 + 侧鳍 + 六条打卷的腕（旧为 swampy 绿衣人）"),
+    "demonKing":       ("gen",           None,                              3, "手绘：巨角 + 膜翼 + 发光眼，紫"),
+    "demonKingTrue":   ("gen",           None,                              3, "手绘：同形状换猩红 + 金冠（真身）"),
 }
 
 # ─────────────────────────────────────────────────────────────────────
@@ -956,6 +961,42 @@ SKIN = (247, 217, 184, 255)
 SKIN_DK = (206, 168, 132, 255)
 NPC_INK = (44, 34, 42, 255)
 
+# ── NPC 的纵向解剖（绝对行号，画布 26 行）────────────────────────────
+#
+# ⚠️ **行区间必须和勇者一模一样（内容占 3..25，高 23）。**
+#
+# 第一版把帽顶画在第 0 行、脚踩到第 25 行，内容高 26 —— 而勇者的帧内容
+# 只占 3..25（高 23，ArMM 的角色图集上方留了几行空）。两者都是 16×26 的帧、
+# 同样 ×2 绘制，但**视觉上 NPC 是勇者的 26/23 = 1.13 倍**，站在棋盘上
+# 就把勇者「压」住了。用户反馈的「NPC 模型改小一点、比例适中」就是这个：
+# 它不是排版问题，是**内容包围盒**高了一截。
+#
+# 为什么不在渲染层把 NPC 的 scale 调小：23/26 = 0.885 不是整数倍，
+# 像素画会被插值成宽窄不一的糊边。**唯一正确的做法是把内容画进同一段行区间**，
+# 帧尺寸、锚点、×2 全部不变。这条有断言（verify_npc_scale）。
+#
+# 三件容易搞错的事：
+#  ① 勇者各帧的内容高不是常数：走路起伏让它在 21..23 之间跳，朝上那两帧
+#     因为头发多 1px 才是 23。所以取**最高帧**当基准 —— 目标是
+#     「NPC 在任何一帧都不会比勇者高」，而不是「等于某一帧」。
+#  ② `add_outline` 会往上多占一行。所以**画的时候顶到第 4 行**，
+#     产出后内容顶行才是 3。
+#  ③ 行号一律用下面这张表，**不要在 _npc_base 里写裸数字** ——
+#     否则下一次「NPC 又变大了」会是六个角色各错一点，很难查。
+#
+# 行分配（自上而下，数字是**绘制**行号）：
+#   hat    4..6   帽/冠/发（尖顶 / 宽檐 / 兜帽 / 金冠 / 皮帽 / 花冠）
+#   head   7..14  脸（8 行；有帽子的那几种第 7 行被帽檐压住）
+#   eyes  10..11
+#   body  15..18  肩窄（袍子上段）
+#   robe  19..21  摆宽（袍子下段）
+#   hem   22..23  下摆（深色，A 字剪影的底）
+#   feet  24..25  脚 —— 必须踩到第 25 行，底部锚定才不浮空
+NPC_ART_TOP, NPC_ART_FEET = 4, 25   # 绘制行区间（描边前）；描边后顶行变 3
+NPC_CONTENT_TOP = NPC_ART_TOP - 1   # 产出后允许的内容顶行（add_outline 占一行）
+NPC_FEET = NPC_ART_FEET
+NPC_BREATH_SPLIT = 22  # 呼吸帧的分界：这一行往上整体抬 1px，往下原地不动
+
 
 def _put(im, x, y, w, h, color):
     """按像素块填色。所有 NPC 造型只用这一个原语 —— 保证是硬边像素画，不是矢量缩放。"""
@@ -984,10 +1025,11 @@ NPC_ART = {
         hat="wide", hat_color=(206, 156, 92, 255), hair=(96, 62, 30, 255),
         prop="pouch", prop_color=(226, 176, 72, 255),
     ),
-    # 商店：深绿外袍 + 皮围裙，手边一摞金币（属性买卖＝柜台生意）
+    # 商店：深绿外袍 + 皮围裙 + 皮帽，手边一摞金币（属性买卖＝柜台生意）
     "shop": dict(
         robe=(58, 132, 84, 255), robe_dark=(32, 82, 52, 255), robe_light=(120, 196, 138, 255),
-        apron=(226, 208, 168, 255), hat="none", hair=(74, 52, 34, 255),
+        apron=(226, 208, 168, 255), hat="cap", hat_color=(168, 128, 84, 255),
+        hair=(74, 52, 34, 255),
         prop="coins", prop_color=(240, 202, 84, 255),
     ),
     # 小偷：兜帽 + 蒙面，只露两条眼缝，腰间短匕（不像是能讲道理的人）
@@ -996,10 +1038,12 @@ NPC_ART = {
         hat="hood", hat_color=(52, 56, 70, 255), mask=(38, 40, 54, 255),
         prop="dagger", prop_color=(198, 204, 216, 255), prop_grip=(126, 82, 42, 255),
     ),
-    # 仙子：青白长裙、背后一双薄翅、手持星杖（一眼看出「不是人、是来帮你的」）
+    # 仙子：青白长裙、花冠、背后一双薄翅、手持星杖
+    # （一眼看出「不是人、是来帮你的」）
     "fairy": dict(
         robe=(206, 240, 250, 255), robe_dark=(120, 190, 216, 255), robe_light=(248, 254, 255, 255),
-        hat="none", hair=(150, 220, 246, 255), wings=(178, 232, 250, 200),
+        hat="tiara", hat_color=(246, 252, 255, 255), hair=(150, 220, 246, 255),
+        wings=(178, 232, 250, 200),
         prop="wand", prop_color=(240, 246, 255, 255), prop_gem=(86, 214, 250, 255),
     ),
     # 公主：粉裙、长发、金冠（视觉上就该是「被关在这里的那个人」）
@@ -1012,106 +1056,121 @@ NPC_ART = {
 
 
 def _npc_base(spec) -> Image.Image:
-    """画一帧静止姿态。解剖常量都在这里，改一处六个 NPC 一起对齐。"""
+    """
+    画一帧静止姿态。解剖常量都在这里，改一处六个 NPC 一起对齐。
+
+    行号全部取自上面的纵向解剖表 —— **不要在这里写裸数字**，
+    否则下一次「NPC 又变大了」会是六个角色各错一点，很难查。
+    """
     im = Image.new("RGBA", (NPC_W, NPC_H), (0, 0, 0, 0))
     robe = spec["robe"]
     dark = spec.get("robe_dark", spec["robe"])
     light = spec.get("robe_light", spec["robe"])
 
     # 长袍：肩窄摆宽，两段矩形做出 A 字剪影；左亮右暗，让平面剪影有体积
-    _put(im, 4, 12, 8, 4, robe)
-    _put(im, 3, 16, 10, 5, robe)
-    _put(im, 2, 21, 12, 3, dark)
-    _put(im, 4, 12, 1, 9, light)
-    _put(im, 11, 12, 1, 9, dark)
+    _put(im, 4, 15, 8, 4, robe)
+    _put(im, 3, 19, 10, 3, robe)
+    _put(im, 2, 22, 12, 2, dark)
+    _put(im, 4, 15, 1, 7, light)
+    _put(im, 11, 15, 1, 7, dark)
     if spec.get("apron"):
-        _put(im, 6, 14, 4, 7, spec["apron"])
+        _put(im, 6, 17, 4, 5, spec["apron"])
     # 手臂 + 手
-    _put(im, 2, 13, 2, 6, robe)
-    _put(im, 12, 13, 2, 6, robe)
-    _put(im, 2, 19, 2, 2, SKIN)
-    _put(im, 12, 19, 2, 2, SKIN)
-    # 脚（必须踩到最后一行为止 —— 底部锚定会让浮空的角色悬在半空，有断言拦）
+    _put(im, 2, 16, 2, 6, robe)
+    _put(im, 12, 16, 2, 6, robe)
+    _put(im, 2, 20, 2, 2, SKIN)
+    _put(im, 12, 20, 2, 2, SKIN)
+    # 脚（必须踩到第 25 行 —— 底部锚定会让浮空的角色悬在半空，有断言拦）
     _put(im, 5, 24, 2, 2, dark)
     _put(im, 9, 24, 2, 2, dark)
 
     # 翅膀（仙子）：画在躯干之后，露在身体两侧
     if spec.get("wings"):
         w = spec["wings"]
-        _put(im, 0, 11, 3, 5, w)
-        _put(im, 13, 11, 3, 5, w)
+        _put(im, 0, 14, 3, 5, w)
+        _put(im, 13, 14, 3, 5, w)
 
     # 长发（公主）：垂到肩下
     if spec.get("hair_len"):
         hc = spec.get("hair", dark)
-        _put(im, 4, 5, 2, spec["hair_len"], hc)
-        _put(im, 10, 5, 2, spec["hair_len"], hc)
+        _put(im, 4, 8, 2, spec["hair_len"], hc)
+        _put(im, 10, 8, 2, spec["hair_len"], hc)
 
-    # 头
-    _put(im, 5, 4, 6, 8, SKIN)
-    _put(im, 5, 11, 6, 1, SKIN_DK)
+    # 头（8 行：7..14）。有帽子的那几种第 7 行被帽檐压住，看不见 —— 这是刻意的，
+    # 让六个人的脸在同一水平线上，只有头顶的记号不同。
+    _put(im, 5, 7, 6, 8, SKIN)
+    _put(im, 5, 14, 6, 1, SKIN_DK)
     # 眼睛
-    _put(im, 6, 7, 1, 2, NPC_INK)
-    _put(im, 9, 7, 1, 2, NPC_INK)
+    _put(im, 6, 10, 1, 2, NPC_INK)
+    _put(im, 9, 10, 1, 2, NPC_INK)
     # 蒙面（小偷）：下半张脸盖住，只剩眼缝
     if spec.get("mask"):
-        _put(im, 5, 9, 6, 4, spec["mask"])
-        _put(im, 6, 7, 1, 1, SKIN)
-        _put(im, 9, 7, 1, 1, SKIN)
+        _put(im, 5, 12, 6, 3, spec["mask"])
+        _put(im, 6, 10, 1, 1, SKIN)
+        _put(im, 9, 10, 1, 1, SKIN)
 
     # 胡须（老人）：从下巴往下铺，越长越显老
     if spec.get("beard_len"):
         bc = spec["beard"]
-        _put(im, 5, 11, 6, spec["beard_len"], bc)
-        _put(im, 6, 11 + spec["beard_len"], 4, 1, bc)
+        _put(im, 5, 14, 6, spec["beard_len"], bc)
+        _put(im, 6, 14 + spec["beard_len"], 4, 1, bc)
 
-    # 帽子 / 头发
+    # 帽子 / 头发 —— 一律从第 4 行开始（这是「NPC 不比勇者高」的上界）
     hat = spec.get("hat", "none")
     hc = spec.get("hat_color", dark)
     hair = spec.get("hair", dark)
     if hat == "point":  # 尖顶软帽：智者
-        _put(im, 4, 2, 8, 3, hc)
-        _put(im, 5, 0, 6, 2, hc)
-        _put(im, 4, 5, 8, 1, light)
+        _put(im, 5, 4, 6, 2, hc)
+        _put(im, 4, 6, 8, 2, hc)
     elif hat == "wide":  # 宽檐帽：商人
-        _put(im, 2, 3, 12, 2, hc)
-        _put(im, 5, 0, 6, 3, hc)
+        _put(im, 5, 4, 6, 3, hc)
+        _put(im, 2, 7, 12, 1, hc)
     elif hat == "hood":  # 兜帽：小偷 —— 只盖到眼睛上方，脸留出来给蒙面
-        _put(im, 4, 1, 8, 2, hc)
-        _put(im, 3, 3, 10, 4, hc)
-        # 两侧垂布把脸框住（不在 y<7 的位置盖，否则整个头会变成一坨黑）
-        _put(im, 3, 7, 2, 5, hc)
-        _put(im, 11, 7, 2, 5, hc)
+        _put(im, 4, 4, 8, 2, hc)
+        _put(im, 3, 6, 10, 2, hc)
+        # 两侧垂布把脸框住（不往里盖，否则整个头会变成一坨黑）
+        _put(im, 3, 8, 2, 7, hc)
+        _put(im, 11, 8, 2, 7, hc)
     elif hat == "crown":  # 金冠：公主
-        _put(im, 5, 3, 6, 2, hair)
-        _put(im, 4, 2, 8, 1, hc)
-        _put(im, 4, 0, 1, 2, hc)
-        _put(im, 7, 0, 2, 2, hc)
-        _put(im, 11, 0, 1, 2, hc)
+        _put(im, 5, 7, 6, 1, hair)
+        _put(im, 4, 6, 8, 1, hc)
+        _put(im, 4, 4, 1, 2, hc)
+        _put(im, 7, 4, 2, 2, hc)
+        _put(im, 11, 4, 1, 2, hc)
+    elif hat == "cap":  # 皮帽：商店（扁顶 + 宽檐，一眼是「看摊儿的」）
+        _put(im, 5, 4, 6, 2, hc)
+        _put(im, 4, 6, 8, 1, hc)
+    elif hat == "tiara":  # 花冠：仙子（花环 + 两侧各一朵，与其它五个的剪影都不同）
+        _put(im, 5, 4, 6, 2, hair)
+        _put(im, 4, 6, 8, 1, hc)
+        _put(im, 3, 5, 2, 2, hc)
+        _put(im, 11, 5, 2, 2, hc)
     else:
-        _put(im, 5, 3, 6, 2, hair)
+        _put(im, 5, 4, 6, 3, hair)
 
-    # 手持物 —— 「这个人是干什么的」最直接的表达
+    # 手持物 —— 「这个人是干什么的」最直接的表达。
+    # 注意法杖顶端的宝石也压在**第 4 行**：它比头高，但不能再高，
+    # 否则整帧的内容高度又回到 26，NPC 又会显得比勇者大。
     prop = spec.get("prop", "none")
     pc = spec.get("prop_color", dark)
     if prop == "staff":  # 法杖：比人高一截，顶端一颗宝石
-        _put(im, 14, 4, 1, 16, pc)
-        _put(im, 13, 2, 3, 3, spec.get("prop_gem", pc))
+        _put(im, 14, 7, 1, 16, pc)
+        _put(im, 13, 4, 3, 3, spec.get("prop_gem", pc))
     elif prop == "wand":  # 星杖：短一些，顶端是星
-        _put(im, 14, 8, 1, 12, pc)
-        _put(im, 13, 5, 3, 3, spec.get("prop_gem", pc))
-        _put(im, 14, 4, 1, 1, spec.get("prop_gem", pc))
+        _put(im, 14, 12, 1, 10, pc)
+        _put(im, 13, 9, 3, 3, spec.get("prop_gem", pc))
+        _put(im, 14, 8, 1, 1, spec.get("prop_gem", pc))
     elif prop == "pouch":  # 钱袋：挂在腰侧
-        _put(im, 12, 16, 3, 4, pc)
-        _put(im, 12, 15, 3, 1, dark)
+        _put(im, 12, 19, 3, 4, pc)
+        _put(im, 12, 18, 3, 1, dark)
     elif prop == "coins":  # 手边一摞金币
-        _put(im, 12, 20, 3, 1, pc)
-        _put(im, 12, 18, 3, 1, pc)
-        _put(im, 12, 16, 3, 1, pc)
+        _put(im, 12, 21, 3, 1, pc)
+        _put(im, 12, 19, 3, 1, pc)
+        _put(im, 12, 17, 3, 1, pc)
     elif prop == "dagger":  # 短匕：斜插在腰侧
-        _put(im, 13, 13, 2, 2, spec.get("prop_grip", dark))
-        _put(im, 13, 15, 2, 3, pc)
-        _put(im, 14, 18, 1, 2, pc)
+        _put(im, 13, 16, 2, 2, spec.get("prop_grip", dark))
+        _put(im, 13, 18, 2, 3, pc)
+        _put(im, 14, 21, 1, 2, pc)
 
     return add_outline(im, INK)
 
@@ -1122,11 +1181,15 @@ def _breathe(base: Image.Image, robe, lift: int = 1) -> Image.Image:
 
     为什么不整张图上移：精灵是底部锚定的（board.ts: sp.anchor.set(0.5, 1)），
     整图上移会让脚离地 1px —— 那是「在飘」，不是「在呼吸」。
+
+    分界行是 `NPC_BREATH_SPLIT`（下摆的第一行）。原来写死 21，
+    解剖压缩到 22 行之后必须一起改 —— 写死的话补缝那一行会落到「腿的下方」，
+    看起来像下摆被撕开一条口子。
     """
     out = Image.new("RGBA", base.size, (0, 0, 0, 0))
-    out.paste(base.crop((0, lift, NPC_W, 21)), (0, 0))
-    out.paste(base.crop((0, 21, NPC_W, NPC_H)), (0, 21))
-    _put(out, 3, 21 - lift, 10, lift, robe)
+    out.paste(base.crop((0, lift, NPC_W, NPC_BREATH_SPLIT)), (0, 0))
+    out.paste(base.crop((0, NPC_BREATH_SPLIT, NPC_W, NPC_H)), (0, NPC_BREATH_SPLIT))
+    _put(out, 3, NPC_BREATH_SPLIT - lift, 10, lift, robe)
     return out
 
 
@@ -1173,6 +1236,555 @@ def verify_npc_art(images: dict) -> list:
     for npc_id, frames in images.items():
         if not silhouette(frames[0].crop((0, NPC_H - 1, NPC_W, NPC_H))):
             problems.append(f"{npc_id} 最后一行为空，底部锚定会让它浮在半空")
+    return problems
+
+
+def verify_npc_scale(npc_images: dict, hero_frames: list) -> list:
+    """
+    NPC 必须和勇者**一样高**。
+
+    这条断言来自一个真实反馈：「NPC 模型改小一点，比例适中」。
+    量出来才知道：勇者帧的内容占 3..25（高 23，朝上的两帧因为头发多 1px
+    才到第 3 行，其余是 4..25），NPC 占 0..25（高 26）—— 两者都是 16×26 的帧、
+    同样 ×2 绘制，**视觉上 NPC 是勇者的 1.13 倍**，站在棋盘上就把勇者压住了。
+    这种错在代码里完全看不出来（两边都是「一个 16×26 的精灵」），
+    只能靠量内容包围盒。
+
+    判据（基准取勇者的**极值**，不是某一帧）：
+      1. 内容高度 == 勇者最高帧（「NPC 在任何一帧都不会比勇者高」）；
+      2. 内容顶行 == 勇者最靠上的那一帧的顶行；
+      3. 内容底行 == 勇者底行（两边都是底部锚定，不一致会一个站地一个浮空）。
+    """
+    problems: list[str] = []
+    if not hero_frames:
+        return ["verify_npc_scale 拿不到勇者帧，无法比较比例"]
+
+    def rows(im):
+        a = im.getchannel("A")
+        ys = [y for y in range(im.height) if any(a.getpixel((x, y)) for x in range(im.width))]
+        return (ys[0], ys[-1]) if ys else (im.height, -1)
+
+    hero_spans = [rows(f) for f in hero_frames]
+    hero_top = min(s[0] for s in hero_spans)
+    hero_bottom = max(s[1] for s in hero_spans)
+    hero_h = hero_bottom - hero_top + 1
+
+    for npc_id, frames in npc_images.items():
+        top, bottom = rows(frames[0])
+        h = bottom - top + 1
+        if h != hero_h:
+            problems.append(
+                f"NPC {npc_id} 内容高 {h}px，勇者最高帧 {hero_h}px —— 差 {h - hero_h}px。"
+                f"同帧尺寸同倍数下，这会让 NPC 在棋盘上显得比勇者大/小"
+                f"（用户反馈的「NPC 比例」就是这个）。请调 NPC 纵向解剖表"
+            )
+        if top != hero_top:
+            problems.append(
+                f"NPC {npc_id} 内容顶行在 {top}，勇者最靠上的一帧在 {hero_top} —— "
+                f"注意 add_outline 会往上多占一行，绘制时要顶到第 {NPC_ART_TOP} 行"
+                f"（产出后顶行才是 {NPC_CONTENT_TOP}）"
+            )
+        if bottom != hero_bottom:
+            problems.append(
+                f"NPC {npc_id} 内容底行在 {bottom}，勇者在 {hero_bottom} —— "
+                f"两边都是底部锚定，底行不一致会一个站地一个浮空"
+            )
+    return problems
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 九·B、程序化怪物造型（按**名称**画，不按手里有什么素材画）
+# ─────────────────────────────────────────────────────────────────────
+#
+# ## 为什么必须自己画
+#
+# 0x72 地牢包一共 24 张角色底图（skelet / knight / imp / swampy / chort / ogre …），
+# **全都是人形**——它根本没有蝙蝠、没有龙、没有乌贼、没有石头人、没有史莱姆。
+# 于是第一版只能硬凑：
+#
+#   小蝙蝠 / 大蝙蝠 / 吸血蝙蝠  ← imp（有角的小恶魔人形）
+#   魔龙                      ← chort（小鬼）
+#   大乌贼                    ← swampy（绿衣人形）
+#   石头人                    ← ogre（食人魔）
+#   绿/红/大史莱姆、史莱姆王     ← swampy / muddy（穿绿衣的小人）
+#
+# 棋盘上因此出现「标着『绿史』却是个拿铲子的绿衣人」这种画面。
+# **换素材解决不了**（包里没有非人形），所以改成按名称手绘 ——
+# 做法与 NPC 完全一致：`_put()` 一个原语填像素块，硬边、不是矢量缩放。
+#
+# ## 形状与颜色分开，是为了「同形换色」这件事是显式的
+#
+# 史莱姆族四只是同一个形状、四套颜色（绿 / 红 / 更大 / 金冠）。
+# 旧写法用 `hue_shift` 去猜（把 swampy 的绿推到红），结果是把明暗结构一起推糊了。
+# 这里颜色直接写在 `PROC_MONSTERS` 的 spec 里 —— 想要什么色就是什么色。
+#
+# ## 一条纪律：任何一帧的底行都必须有像素
+#
+# 渲染层让精灵「站在脚下名牌的上沿」（board.ts: sp.anchor.set(0.5, 1)），
+# 帧底留白 = 怪物浮在半空。有断言（verify_monster_fit 的 padIdle，与旧素材同一套）。
+
+MON_W = MON_H = 16
+
+MON_INK = (42, 32, 40, 255)
+MON_WHITE = (250, 250, 252, 255)
+MON_BONE = (232, 226, 206, 255)
+
+
+def _mon_canvas() -> Image.Image:
+    return Image.new("RGBA", (MON_W, MON_H), (0, 0, 0, 0))
+
+
+def _sym(im, x, y, w, h, color):
+    """
+    左右镜像地填两块。
+
+    翅膀、角、耳朵、手臂、腿这些成对结构**只写一次** ——
+    手写成对坐标时最容易两边差 1px（棋盘上就是「翅膀一高一低」），
+    而且改形状时必然漏掉一半。
+    """
+    _put(im, x, y, w, h, color)
+    _put(im, MON_W - x - w, y, w, h, color)
+
+
+def _stamp(rows: list[str], legend: dict[str, tuple]) -> Image.Image:
+    """
+    按**字符模板**填像素 —— 「画出来」的造型只用这一条路。
+
+    为什么蝙蝠/龙不再手写坐标：第一版蝙蝠的翼是「每行一段 (x, y, w)」，
+    八行都写成了满宽，剪影于是成了一个**锚**（宽横梁 + 细杆 + 下面两块）。
+    最要命的是**看不出来** —— 坐标是数字，读代码读不出形状，得先把图画出来才看得见。
+
+    模板把「哪一行从第几列到第几列」直接画在源码里：可读、可 review、可 diff，
+    改一列就是改一个字符。行/列长度断言在构建时拦下「多写少写一个点」。
+
+    另外记住 `add_outline` 是 1px 八邻域膨胀（见该函数）：**1~2 列宽的缺口会被描边填满**。
+    想要一条可见的分缝，缺口至少要 3 列。想靠「留 1 列空隙」把两块分开是徒劳的。
+    """
+    im = _mon_canvas()
+    if len(rows) != MON_H:
+        raise ValueError(f"模板 {len(rows)} 行，应为 {MON_H} 行")
+    for y, row in enumerate(rows):
+        if len(row) != MON_W:
+            raise ValueError(f"模板第 {y} 行有 {len(row)} 列，应为 {MON_W} 列：{row!r}")
+        x = 0
+        while x < MON_W:
+            ch = row[x]
+            if ch == ".":
+                x += 1
+                continue
+            if ch not in legend:
+                raise ValueError(f"模板第 {y} 行第 {x} 列的字符 {ch!r} 不在图例里")
+            x2 = x
+            while x2 < MON_W and row[x2] == ch:
+                x2 += 1
+            _put(im, x, y, x2 - x, 1, legend[ch])
+            x = x2
+    return im
+
+
+def _mon_squash(base: Image.Image) -> Image.Image:
+    """
+    呼吸帧：内容整体上抬 1px，再把原来的底行补回最底 —— **脚不离地**。
+
+    整张图上移是不行的：底部锚定下那就是「怪物飘起来了」。
+    补回底行的做法让身体看起来在「喘」，与 NPC 的呼吸帧是同一个套路。
+    """
+    out = Image.new("RGBA", base.size, (0, 0, 0, 0))
+    out.paste(base.crop((0, 1, MON_W, MON_H)), (0, 0))
+    out.paste(base.crop((0, MON_H - 1, MON_W, MON_H)), (0, MON_H - 1))
+    return out
+
+
+# ── 形状 ────────────────────────────────────────────────────────────
+#
+# 每个形状只吃 spec 里的颜色，不关心自己代表谁 —— 「皇帝史莱姆」和
+# 「绿史莱姆」的差别在 spec，不在函数里。
+#
+# 两条实现路线，按「形状是算出来的还是画出来的」分：
+#   · **算出来的**（史莱姆的圆顶、乌贼张开的腕、石头人的直角、魔王对称的角）
+#     用 `_put` / `_sym` 一行行生成 —— 半径、张角本来就是算法。
+#   · **画出来的**（蝙蝠的膜翼、龙）用 `_stamp` + 字符模板 —— 形状本身就是一笔一笔的，
+#     写成坐标只会出现「写出来是锚、读代码看不出来」这种事故（见 _stamp 的注释）。
+
+# ── 蝙蝠模板 ───────────────────────────────────────────────────────
+#
+# 腰鼓形：第 3~9 行做翼，宽度走 8 → 10 → 16 → 14 → 12 → 10 → 8，
+# 上下各收回去，中间一鼓 —— 这是「展开的膜翼」在剪影上唯一读得出来的特征。
+# 耳朵（第 0 行两个点）与垂在下面的身体（第 10~15 行）是另外两个记号。
+BAT_NARROW = [
+    "......m..m......",
+    "......bbbb......",
+    "......ibbi......",
+    "....MMbbbbMM....",
+    "...MMmbbbbmMM...",
+    "MMMmmmbbbbmmmMMM",
+    ".MMmmmbbbbmmmMM.",
+    "..mmmmbbbbmmmm..",
+    "...mmmbbbbmmm...",
+    "....mmbbbbmm....",
+    "......bbbb......",
+    "......bbbb......",
+    "......bbbb......",
+    "......bbbb......",
+    ".....bbbbbb.....",
+    ".....bbbbbb.....",
+]
+
+# 宽翼：中腰多两行到满幅（第 5、6 行），剪影明显比窄翼宽 —— 大蝙蝠 / 吸血蝙蝠。
+BAT_WIDE = [
+    "......m..m......",
+    "......bbbb......",
+    "......ibbi......",
+    "...MMMbbbbMMM...",
+    "..MMmmbbbbmmMM..",
+    "MMMmmmbbbbmmmMMM",
+    "MMMMmmbbbbmmMMMM",
+    ".MMmmmbbbbmmmMM.",
+    "..mmmmbbbbmmmm..",
+    "...mmmbbbbmmm...",
+    "....mmbbbbmm....",
+    "......bbbb......",
+    "......bbbb......",
+    "......bbbb......",
+    ".....bbbbbb.....",
+    ".....bbbbbb.....",
+]
+
+# ── 龙模板（侧视，头朝左） ──────────────────────────────────────────
+#
+# 四个识别记号被分到四个方向，互不打架：
+#   角       第 0~1 行左上（`k`）
+#   长吻大头  第 2~4 行左侧（`b` + 第 3 行两颗眼 `i`、第 4 行獠牙 `w`）
+#   翼       第 0~4 行右上扇开（`W`），下缘台阶状收到背脊
+#   尾巴     第 7~8 行右端伸出去（`L`）
+#   两条腿   第 10~15 行（`L`），两腿之间留 4 列缝才不被描边糊成一块
+#
+# 三条纪律（都是被咬过的）：
+#   · **翼 / 尾 / 腿 必须是三种不同的颜色**。第一版全用 `dark`，结果右侧
+#     一整团黑红看不出哪是翅膀哪是尾巴哪是腿 —— 剪影糊成一块砖。
+#   · **别让身体横贯满幅超过 3 行** —— 那读出来是一块砖，不是兽（旧版就是 7 行满幅）。
+#     身体的右端到第 10 列，只有尾巴才伸到 15。
+#   · **第 0 行要用上**：底部锚定 + 16px 画布，空一行就是白矮 1px。
+DRAGON_ROWS = [
+    "...k......WWWW..",
+    "..kk....WWWWWW..",
+    "bbbbbbWWWWWWWWW.",
+    "bibbibWWWWWWW...",
+    "bwwbbbWW........",
+    ".bbbbbbbbbb.....",
+    ".bbbBBBBbbb.....",
+    "..bbBBBBbbLLLLLL",
+    "..bbbbbbbLLLL...",
+    "...bbbbb........",
+    "...LL....LL.....",
+    "...LL....LL.....",
+    "...LL....LL.....",
+    "...LL....LL.....",
+    "...LLL...LLL....",
+    "...LLL...LLL....",
+]
+
+
+def _mon_slime(s) -> Image.Image:
+    """史莱姆：圆顶 + 扁底，两只眼。`top` 越小越「大只」。"""
+    im = _mon_canvas()
+    body, dark, light = s["body"], s["dark"], s["light"]
+    top = s.get("top", 6)
+    # 半宽逐行 +1 直到满宽 8，做出水袋一样的圆顶
+    for i, y in enumerate(range(top, MON_H)):
+        hw = min(2 + i, 8)
+        _put(im, 8 - hw, y, hw * 2, 1, body)
+    # 底部两行压暗：让圆顶「坐」在地上而不是浮着
+    for y in range(MON_H - 2, MON_H):
+        _put(im, 0, y, MON_W, 1, dark)
+    # 顶部高光（偏左上，光从左上打）
+    _put(im, 4, top + 2, 3, 2, light)
+    # 眼睛落在圆顶中段，2×2 的黑豆眼最像果冻
+    ey = top + 5
+    _put(im, 5, ey, 2, 2, MON_INK)
+    _put(im, 9, ey, 2, 2, MON_INK)
+    _put(im, 7, ey + 2, 2, 1, dark)  # 嘴
+    if s.get("crown"):  # 史莱姆王：一顶三尖金冠
+        g = s["crown"]
+        _put(im, 5, 2, 6, 1, g)          # 冠圈
+        for x in (5, 7, 10):             # 三个尖（中间那个两像素宽）
+            _put(im, x, 1, 2 if x == 7 else 1, 1, g)
+    return im
+
+
+def _mon_bat(s) -> Image.Image:
+    """
+    蝙蝠：尖耳 + 小头 + **张开的膜翼**（宽腰鼓形），身体垂在下面。
+
+    剪影的关键是**腰鼓**：翼的轮廓必须「窄 → 宽 → 窄」地鼓出来。
+    第一版八行都满宽，读出来是**锚**；只把中腰加宽、上下收回去，才像蝙蝠。
+
+    图例：`m` 翼膜（暗） / `M` 翼膜受光 / `b` 身体 / `i` 眼 / `w` 獠牙。
+    """
+    legend = {"m": s["dark"], "M": s["light"], "b": s["body"], "i": MON_INK, "w": MON_WHITE}
+    # 宽翼（大蝙蝠 / 吸血蝙蝠）比窄翼多铺两行到满幅 —— 一眼分得出「更大只」
+    rows = BAT_WIDE if s.get("span") else BAT_NARROW
+    im = _stamp(rows, legend)
+    if s.get("fangs"):  # 吸血蝙蝠：獠牙落在头下缘中央，与「大蝙蝠」只差这一处
+        _put(im, 7, 3, 2, 1, MON_WHITE)
+    return im
+
+
+def _mon_dragon(s) -> Image.Image:
+    """
+    魔龙：**侧视** —— 长吻大头在左，翼从背脊向右上扇开，尾巴向右伸，两条腿落地。
+
+    为什么改成侧视：正面视角下「两翼 + 身体 + 两条腿」在 16px 里必然糊成一团方块，
+    第一版画出来就是「上下一般宽的柱子 + 顶上一排刺」，看不出是龙。
+    侧视把四个识别记号（角 / 长吻 / 背上的翼 / 尾巴）分到了四个不同的方向，
+    16px 也读得出来。
+
+    图例：`k` 角（骨色） / `b` 身体 / `B` 腹甲（亮） / `W` 翼膜 / `L` 腿与尾 / `i` 眼 / `w` 獠牙。
+    """
+    legend = {"k": MON_BONE, "b": s["body"], "B": s["belly"], "W": s["wing"],
+              "L": s["dark"], "i": s["eye"], "w": MON_WHITE}
+    return _stamp(DRAGON_ROWS, legend)
+
+
+
+def _mon_kraken(s) -> Image.Image:
+    """
+    大乌贼：宽圆头 + 侧鳍 + 六条**向外张开**的腕。
+
+    第一版的腕是六根竖直色条，配上窄头，剪影读出来是一个「穿竖条纹袍子的人」。
+    修正两处：① 外套膜加宽（最宽 12），让头成为剪影的主体；
+    ② 腕按 `dir` 每行向外挪 1px，末端铺开到整幅宽度 —— 「张开」才是乌贼。
+    """
+    im = _mon_canvas()
+    body, dark, light = s["body"], s["dark"], s["light"]
+    # 外套膜（宽圆头）
+    for x, y, w in [(6, 1, 4), (5, 2, 6), (4, 3, 8), (3, 4, 10),
+                    (2, 5, 12), (2, 6, 12), (3, 7, 10), (4, 8, 8)]:
+        _put(im, x, y, w, 1, body)
+    _put(im, 3, 3, 4, 2, light)
+    # 侧鳍
+    _sym(im, 1, 2, 2, 3, dark)
+    # 大眼（白底黑瞳 —— 与其它怪的小豆眼不同，一眼认出「不是人形」）
+    _put(im, 4, 4, 3, 3, MON_WHITE)
+    _put(im, 9, 4, 3, 3, MON_WHITE)
+    _put(im, 5, 5, 2, 2, MON_INK)
+    _put(im, 9, 5, 2, 2, MON_INK)
+    # 六条腕：(起点 x, 每行外移方向)。中间的直着往下，两侧逐行外张。
+    for x0, dr in [(1, -1), (3, -1), (6, 0), (8, 0), (11, 1), (13, 1)]:
+        for i, y in enumerate(range(9, MON_H)):
+            x = max(0, min(MON_W - 2, x0 + dr * i))
+            _put(im, x, y, 1, 1, light)                            # 左侧受光
+            _put(im, x + 1, y, 1, 1, body if (y % 2 == 0) else dark)  # 右侧隔行压暗
+    return im
+
+
+def _mon_golem(s) -> Image.Image:
+    """
+    石头人：方块躯干 + 砖缝 + 发光的眼。全程只有直角，和生物形成对比。
+
+    第一版把手臂画成与躯干同宽同高的一条横带（躯干 10 宽 + 两条 3 宽的臂 = 满宽 16），
+    结果剪影是一根**灰长条上顶着一个小头**。修正：手臂收窄到 2 宽、贴在躯干两侧，
+    躯干收成 8 宽，并单独做出拳头 —— 「头小、肩宽、腿短」才是石头人。
+    """
+    im = _mon_canvas()
+    face, dark, light, seam = s["body"], s["dark"], s["light"], s["seam"]
+    # 头（方块，比躯干窄一半）
+    _put(im, 6, 2, 4, 4, face)
+    _put(im, 6, 2, 4, 1, light)
+    _put(im, 6, 3, 1, 1, s["glow"])
+    _put(im, 9, 3, 1, 1, s["glow"])
+    _put(im, 7, 6, 2, 1, dark)  # 短脖子
+    # 躯干（8 宽）
+    _put(im, 4, 7, 8, 6, face)
+    _put(im, 4, 7, 8, 1, light)
+    # 砖缝：一条竖缝 + 两条错开的横缝 = 立刻读成「砌起来的石头」
+    _put(im, 7, 8, 1, 5, seam)
+    _put(im, 4, 9, 3, 1, seam)
+    _put(im, 8, 11, 4, 1, seam)
+    _put(im, 5, 10, 1, 2, seam)  # 裂缝
+    # 手臂 + 拳头：比躯干矮一档、窄一档，让「肩宽」来自躯干而不是手臂
+    _sym(im, 2, 8, 2, 5, dark)
+    _sym(im, 2, 8, 2, 1, face)
+    _sym(im, 2, 13, 2, 2, dark)
+    # 腿（方块，踩到第 15 行）
+    _sym(im, 5, 13, 2, 3, dark)
+    return im
+
+
+def _mon_vampire(s) -> Image.Image:
+    """吸血鬼：高领 + 尖牙 + 红眼 + 下摆呈蝙蝠状的斗篷。斗篷的缺口是识别记号。"""
+    im = _mon_canvas()
+    skin, cape, dark, light = s["body"], s["cape"], s["dark"], s["light"]
+    # 头发（美人尖）
+    _put(im, 4, 2, 8, 2, dark)
+    _put(im, 7, 4, 2, 1, dark)
+    # 高领 —— 竖起来的领子是吸血鬼最直白的记号
+    _sym(im, 3, 4, 2, 3, cape)
+    _sym(im, 3, 4, 2, 1, light)
+    # 脸
+    _put(im, 5, 4, 6, 4, skin)
+    _put(im, 6, 5, 1, 1, s["eye"])
+    _put(im, 9, 5, 1, 1, s["eye"])
+    # 獠牙
+    _put(im, 7, 7, 1, 1, MON_WHITE)
+    _put(im, 8, 7, 1, 1, MON_WHITE)
+    # 斗篷：上窄下宽，底缘挖出蝙蝠翼一样的凹口
+    _put(im, 3, 8, 10, 4, cape)
+    _put(im, 2, 12, 12, 2, cape)
+    _put(im, 2, 14, 12, 1, cape)
+    _put(im, 3, 15, 4, 1, cape)
+    _put(im, 9, 15, 4, 1, cape)  # 底缘缺口 → 剪影成「翼」
+    _put(im, 6, 8, 4, 3, light)  # 胸前的内衬
+    # 手（苍白的手从斗篷里伸出来）
+    _sym(im, 1, 10, 2, 2, skin)
+    return im
+
+
+def _mon_demon(s) -> Image.Image:
+    """魔王：巨角 + 发光眼 + 膜翼 + 獠牙。`crown` 给真身加王冠以区分两只。"""
+    im = _mon_canvas()
+    body, dark, light = s["body"], s["dark"], s["light"]
+    # 巨角（往外上方弯）
+    _sym(im, 3, 1, 2, 3, MON_BONE)
+    _sym(im, 2, 1, 1, 2, MON_BONE)
+    # 膜翼
+    for x, y, w in [(1, 3, 2), (0, 4, 3), (0, 5, 3), (0, 6, 3), (1, 7, 2), (1, 8, 2)]:
+        _sym(im, x, y, w, 1, dark)
+    _sym(im, 1, 3, 2, 1, light)
+    # 头
+    _put(im, 5, 3, 6, 4, body)
+    _put(im, 6, 4, 2, 1, s["glow"])
+    _put(im, 9, 4, 2, 1, s["glow"])
+    _put(im, 6, 6, 4, 1, dark)
+    _put(im, 6, 7, 1, 1, MON_WHITE)
+    _put(im, 9, 7, 1, 1, MON_WHITE)
+    if s.get("crown"):
+        _put(im, 5, 1, 6, 1, s["crown"])
+        for x in (5, 7, 10):
+            _put(im, x, 0, 1, 1, s["crown"])
+            if x == 7:
+                _put(im, 8, 0, 1, 1, s["crown"])
+    # 躯干 + 胸甲
+    _put(im, 4, 8, 8, 5, body)
+    _put(im, 6, 9, 4, 3, dark)
+    # 腿
+    _sym(im, 4, 13, 3, 3, dark)
+    return im
+
+
+MON_SHAPES = {
+    "slime": _mon_slime,
+    "bat": _mon_bat,
+    "dragon": _mon_dragon,
+    "kraken": _mon_kraken,
+    "golem": _mon_golem,
+    "vampire": _mon_vampire,
+    "demon": _mon_demon,
+}
+
+# 哪些怪物按名称手绘。键必须出现在 MONSTERS 里（有断言拦漏网）。
+#
+# 颜色一律写在 spec 里，不再用 hue_shift 去推 —— 推出来的色会连明暗结构
+# 一起偏（旧版把 swampy 的绿推成红，结果是一团脏红）。
+PROC_MONSTERS = {
+    # 史莱姆族：绿 → 红 → 大 → 王（王的冠与「更大」都改剪影，不只是换色）
+    "greenSlime": dict(shape="slime", body=(74, 196, 92, 255), dark=(32, 116, 50, 255),
+                       light=(158, 236, 166, 255), top=6),
+    "redSlime":   dict(shape="slime", body=(224, 84, 72, 255), dark=(146, 34, 30, 255),
+                       light=(252, 156, 138, 255), top=6),
+    "bigSlime":   dict(shape="slime", body=(58, 170, 86, 255), dark=(24, 96, 44, 255),
+                       light=(134, 216, 142, 255), top=3),
+    "slimeKing":  dict(shape="slime", body=(236, 198, 66, 255), dark=(158, 114, 18, 255),
+                       light=(252, 234, 142, 255), top=3, crown=(250, 220, 96, 255)),
+    # 蝙蝠族：窄翼 → 宽翼 → 宽翼 + 獠牙
+    "bat":        dict(shape="bat", body=(128, 94, 66, 255), dark=(70, 48, 34, 255),
+                       light=(182, 142, 106, 255)),
+    "bigBat":     dict(shape="bat", body=(90, 64, 44, 255), dark=(46, 30, 20, 255),
+                       light=(140, 104, 74, 255), span=1),
+    "vampireBat": dict(shape="bat", body=(170, 52, 56, 255), dark=(96, 20, 26, 255),
+                       light=(228, 104, 104, 255), span=1, fangs=1),
+    # 巨龙 / 乌贼 / 石头人 —— 三只名字与旧素材完全无关的
+    "dragon":     dict(shape="dragon", body=(198, 62, 52, 255), wing=(104, 30, 38, 255),
+                       belly=(238, 200, 128, 255), dark=(62, 18, 22, 255),
+                       eye=(250, 216, 96, 255)),
+    "kraken":     dict(shape="kraken", body=(132, 78, 176, 255), dark=(74, 38, 112, 255),
+                       light=(186, 140, 226, 255)),
+    "stoneGolem": dict(shape="golem", body=(126, 122, 120, 255), dark=(78, 74, 74, 255),
+                       light=(182, 178, 174, 255), seam=(58, 54, 54, 255),
+                       glow=(248, 168, 64, 255)),
+    # 吸血鬼：旧版是 zombie 换紫，人形但毫无「吸血鬼」特征
+    "vampire":    dict(shape="vampire", body=(238, 226, 226, 255), cape=(58, 32, 72, 255),
+                       dark=(34, 22, 44, 255), light=(112, 68, 132, 255),
+                       eye=(214, 40, 54, 255)),
+    # 魔王族：旧版用 big_demon（是恶魔，但 32×32 归一化到 16 丢掉了大量像素）
+    "demonKing":  dict(shape="demon", body=(146, 62, 150, 255), dark=(84, 30, 92, 255),
+                       light=(202, 122, 206, 255), glow=(252, 226, 92, 255)),
+    "demonKingTrue": dict(shape="demon", body=(186, 34, 40, 255), dark=(104, 14, 20, 255),
+                          light=(240, 96, 88, 255), glow=(252, 226, 92, 255),
+                          crown=(250, 214, 84, 255)),
+}
+
+
+def mon_art_base(art_id: str) -> Image.Image:
+    """画一帧静止姿态（16×16），收尾统一补描边 —— 与整套素材的描边语言一致。"""
+    spec = dict(PROC_MONSTERS[art_id])
+    shape = MON_SHAPES[spec.pop("shape")]
+    return add_outline(shape(spec), MON_INK)
+
+
+def mon_art_frames(art_id: str) -> list[Image.Image]:
+    """
+    4 帧 idle，节奏与 0x72 的怪物一致（「吸—回—吸—回」），
+    这样 board.ts 的换帧逻辑对新旧两批怪物是同一条路径。
+
+    帧序 [静止, 呼吸, 静止, 呼吸] 与 NPC 的 [静止, 抬, 静止, 抬] 对齐。
+    """
+    base = mon_art_base(art_id)
+    return [base, _mon_squash(base), base, _mon_squash(base)]
+
+
+def verify_mon_art(bases: dict[str, Image.Image]) -> list:
+    """
+    程序化怪物造型断言。四条判据，全是「代码里看不出来、只有量才知道」的：
+
+      1. **每个形状的剪影互不相同** —— 抓「画了半天结果都是同一个圆」；
+      2. **同形状的变体必须有区别** —— 抓「换色没生效 / 两只一模一样」；
+      3. **底行必须有像素** —— 底部锚定下帧底留白 = 怪物浮在半空；
+      4. **每个形状至少有一只怪在用它** —— 抓「画了却忘了接进 PROC_MONSTERS」。
+
+    与 NPC 的断言刻意分开：NPC 是「六个各不相同」，怪物是「七种形状、同形状可成族换色」——
+    两边的判据不一样，所以不能共用一个函数。
+    """
+    problems: list[str] = []
+
+    def sil(im: Image.Image):
+        a = im.getchannel("A").tobytes()
+        return {i for i, v in enumerate(a) if v > 8}
+
+    by_shape: dict[str, list[str]] = {}
+    for art_id, spec in PROC_MONSTERS.items():
+        by_shape.setdefault(spec["shape"], []).append(art_id)
+
+    used = {spec["shape"] for spec in PROC_MONSTERS.values()}
+    for sh in MON_SHAPES:
+        if sh not in used:
+            problems.append(f"形状 {sh} 画了但 PROC_MONSTERS 里没有一只怪用它")
+
+    names = sorted(by_shape)
+    for i, a in enumerate(names):
+        for b in names[i + 1:]:
+            if sil(bases[by_shape[a][0]]) == sil(bases[by_shape[b][0]]):
+                problems.append(f"形状 {a} 与 {b} 的剪影完全相同 —— 两种形状长一个样")
+
+    for sh, ids in by_shape.items():
+        for i, a in enumerate(ids):
+            for b in ids[i + 1:]:
+                if bases[a].tobytes() == bases[b].tobytes():
+                    problems.append(f"{a} 与 {b} 同形状且逐像素完全相同 —— 换色没生效")
+
+    for art_id, im in bases.items():
+        if not sil(im.crop((0, MON_H - 1, MON_W, MON_H))):
+            problems.append(f"{art_id} 最后一行为空，底部锚定会让它浮在半空")
     return problems
 
 
@@ -1656,10 +2268,15 @@ def main() -> int:
         actor_meta.append(meta)
 
     hero_w, hero_h = 0, 0
+    # 攒一份勇者的走路帧，给 verify_npc_scale 量「NPC 有没有比勇者大」。
+    # 必须用**产出后的真实帧**（bottom_center 补过底对齐），不能用源图 ——
+    # 否则量的是源素材而不是玩家看到的那一帧。
+    hero_walk_frames: list = []
     for di, d in enumerate(HERO_DIRS):
         for fi, fr in enumerate(walk[di]):
             im = bottom_center(fr, 16, 26)
             hero_w, hero_h = im.size
+            hero_walk_frames.append(im)
             push_actor(f"hero.walk.{d}.{fi}", im, {"group": "hero", "anim": "walk", "dir": d, "frame": fi})
     for di, d in enumerate(HERO_DIRS):
         for fi, fr in enumerate(attack[di]):
@@ -1677,6 +2294,9 @@ def main() -> int:
     # 「六个 NPC 长得一样」只能靠断言发现 —— 画面上看是六个精灵，代码里看是六次调用
     for p in verify_npc_art(npc_rendered):
         missing.append("NPC 造型断言失败：" + p)
+    # 「NPC 比勇者大」同理 —— 两边都是 16×26 的帧，只有量内容包围盒才知道差了 4px
+    for p in verify_npc_scale(npc_rendered, hero_walk_frames):
+        missing.append("NPC 比例断言失败：" + p)
 
     actor_shelf = Shelf(512)
     actor_place = []
@@ -1719,7 +2339,31 @@ def main() -> int:
     # ── 3. 怪物 ─────────────────────────────────────────────────
     mon_cells: list[tuple[str, Image.Image]] = []
     mon_meta: list[dict] = []
+    proc_used: set[str] = set()
+    proc_bases: dict[str, Image.Image] = {}
+
     for mid, (src_name, xf, scale, note) in MONSTERS.items():
+        # 源名 "gen" = 本仓库按名称手绘（蝙蝠/史莱姆/龙/乌贼/石头人/吸血鬼/魔王）。
+        # 形状与配色在 PROC_MONSTERS，这里只负责出帧 + 记 meta。
+        if src_name == "gen":
+            if mid not in PROC_MONSTERS:
+                missing.append(f"{mid}: MONSTERS 标了 gen，但 PROC_MONSTERS 里没有它的造型")
+                continue
+            proc_used.add(mid)
+            proc_bases[mid] = mon_art_base(mid)
+            frames = mon_art_frames(mid)
+            for anim in ("idle", "run"):
+                for fi, im in enumerate(frames):
+                    top, bot = _art_rows(im)
+                    mon_cells.append((f"{mid}.{anim}.{fi}", im))
+                    mon_meta.append({
+                        "monster": mid, "anim": anim, "frame": fi,
+                        "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+                        "note": note, "drawScale": scale,
+                        "artH": bot - top + 1, "artPadBottom": im.height - 1 - bot,
+                    })
+            continue
+
         for anim in ("idle", "run"):
             names, actual = monster_frames(src_name, anim)
             if not names:
@@ -1764,6 +2408,19 @@ def main() -> int:
         _fit[m["monster"]] = prev
     for p in verify_monster_fit(_fit):
         missing.append(p)
+
+    # 手绘怪物的造型断言：七种形状互不相同、同形状的变体确有区别、帧底不留白
+    for p in verify_mon_art(proc_bases):
+        missing.append("怪物造型断言失败：" + p)
+    # 两张表必须严格一一对应 —— 「在 MONSTERS 里标了 gen 却忘了画」会静默少一只怪
+    declared = {mid for mid, (s, _, _, _) in MONSTERS.items() if s == "gen"}
+    for mid in sorted(declared - proc_used):
+        missing.append(f"{mid}: MONSTERS 标了 gen，但没有产出任何帧")
+    for mid in sorted(set(PROC_MONSTERS) - declared - proc_used):
+        missing.append(f"{mid}: PROC_MONSTERS 里有造型，但 MONSTERS 没标 gen，接不上")
+    hand = len(proc_used)
+    print(f"  手绘怪物 {hand} 只 / {len(MON_SHAPES)} 种形状"
+          f"（其余 {len(MONSTERS) - hand} 只取自 0x72）")
 
     for m in mon_meta:
         node = manifest["monsters"].setdefault(m["monster"], {

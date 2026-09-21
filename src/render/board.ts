@@ -68,6 +68,8 @@ interface EntityView {
   monsterId?: string;
   /** 有值表示这格是 NPC，参与呼吸动画 */
   npcId?: string;
+  /** 有值表示这格是道具（`__sprites()` 用它报出「这一格是什么」） */
+  itemId?: string;
   sprite?: Sprite;
   /** 每只怪物错开一点相位，否则满屏怪物同步呼吸，像一个人在动 */
   phase?: number;
@@ -362,6 +364,44 @@ export class Board extends Container {
     };
   }
 
+  /**
+   * 校验用：把棋子上**真正落屏**的精灵报出来（纹理来源 uid + 帧矩形）。
+   *
+   * 存在的理由：所有实体都是「图集就绪就用精灵，否则退回 `icons.ts` 的程序化图形」。
+   * 于是「某只怪悄悄退回了程序化图形」在截图上几乎看不出来 —— 形状相近、色系也接近，
+   * 肉眼比对不可靠。但 `source.uid` 是**同一性**，一比就知道。
+   *
+   * 这一条对本轮的 13 只手绘怪物尤其关键：它们的存在意义就是「换掉与名字不符的素材」，
+   * 一旦退回程序化图形，等于这轮改动白做，而画面看起来「还好」。
+   *
+   * `uid` 为 null 表示该格走的是程序化兜底（没有精灵）。
+   */
+  __sprites(): Array<{
+    key: string;
+    x: number;
+    y: number;
+    kind: 'monster' | 'npc' | 'item';
+    id: string | null;
+    uid: number | null;
+    frame: { x: number; y: number; w: number; h: number } | null;
+  }> {
+    return this.entityViews.map((v) => {
+      const sp = v.sprite ?? null;
+      const f = sp ? sp.texture.frame : null;
+      return {
+        key: v.key,
+        x: v.x,
+        y: v.y,
+        kind: v.monsterId ? 'monster' : v.npcId ? 'npc' : 'item',
+        id: v.monsterId ?? v.npcId ?? v.itemId ?? null,
+        uid: sp ? sp.texture.source.uid : null,
+        frame: f
+          ? { x: Math.round(f.x), y: Math.round(f.y), w: Math.round(f.width), h: Math.round(f.height) }
+          : null
+      };
+    });
+  }
+
   /** 换层：重建地形与实体 */
   setFloor(state: GameState, data: GameData, floor: number): void {
     this.floorShown = floor;
@@ -561,6 +601,7 @@ export class Board extends Container {
     } else if (type === 'item') {
       const item = data.items[id];
       if (!item) return view;
+      view.itemId = id;
       const tex = atlas.ready ? atlas.item(id) : null;
       if (tex) {
         const sp = new Sprite(tex);

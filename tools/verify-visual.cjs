@@ -22,6 +22,12 @@
  *   A4 变体是活的：地面/墙身键在棋盘上确实用到了多个变体（防止变体路径被绕过）
  *   A5 怪物布局：非 BOSS 精灵装得进一格；每只怪有且只有一个战斗评级指示灯，且指示灯在格内
  *   A6 BOSS 与倍数：drawScale > 2 的必须是玩法上的 BOSS（不许有「巨大的杂兵」）
+ *   A7 面板版式：每块面板的标题落在同一套坐标上（见「统一版式」）
+ *   A8 版面：模块间隙相等，棋盘没被挤小，棋盘盒与面板同栏
+ *   A9 塔壁与地图内墙同源（比 source.uid，不比颜色）
+ *   A10 位面：地平线随楼层单调上移、同一层可复现、背景跟随显示层
+ *   A11 道具栏：空背包整块不占位，有道具时高度按件数算
+ *   A12 手绘怪物：落屏用的是 monsters 图集且帧与 MANIFEST 一致（不退回程序化图形）
  *
  * 用法：node tools/verify-visual.cjs [--verbose]（先 npm run build）
  */
@@ -448,8 +454,18 @@ function check(name, ok, detail) {
     const BOARD_CELL_KEPT = 32;
     // 期望值在这里**独立写死**（与 hud.ts 的 LAYOUT.gap / LAYOUT.boardGap 一一对应）。
     // `after` 指的是「这一项之后那段缝」：top = 状态卡之前、hud = 状态卡与棋盘之间…
-    const GAP_EXPECT = { top: 28, hud: 40, board: 40, toolbar: 28, detail: 28, items: 28 };
-    const gapBad = layout.gaps.filter((g) => g.value !== GAP_EXPECT[g.after]);
+    //
+    // ⚠️ **模块序列末尾那一条不算「间距」**，它是自由留白：
+    // 空背包时道具栏整块不占位（见 A11），`detail` 之后就是到底边的一片场景（170px）；
+    // 有道具时又回到 28。按构造它恒等于 `H −（最后一个模块的底）`，
+    // 拿它做相等断言是同义反复，所以只量**模块之间**那几条。
+    // 判据用「最后一个真的参与排版的模块」来定位，而不是写死索引 ——
+    // 道具栏在不在序列里是动态的。
+    const GAP_BETWEEN = { top: 28, hud: 40, board: 40, toolbar: 28, detail: 28, items: 28 };
+    const lastPlaced = layout.placed[layout.placed.length - 1];
+    const gapBad = layout.gaps
+      .filter((g) => g.after !== lastPlaced)
+      .filter((g) => g.value !== GAP_BETWEEN[g.after]);
     const boardKept = layout.boardSpan === BOARD_SPAN_KEPT && layout.boardCell === BOARD_CELL_KEPT;
     // 棋盘视觉盒的宽 = 面板宽 → 两者左右两端对齐，是「同一栏」的硬指标
     const aligned = layout.boardBox.w === layout.modules[0].w;
@@ -457,18 +473,22 @@ function check(name, ok, detail) {
     const boardRoomier =
       layout.gaps.find((g) => g.after === 'hud').value >
       layout.gaps.find((g) => g.after === 'toolbar').value;
+    // 空背包这一条要真的成立，A8 量的间隙才有意义
+    const itemsDetached = !layout.itemsHidden || !layout.placed.includes('items');
     check(
-      `A8 版面：间隙 ${GAP_EXPECT.top}px、棋盘前后 ${GAP_EXPECT.hud}px，棋盘 ${layout.boardSpan}px（未缩）、与面板同栏`,
-      gapBad.length === 0 && boardKept && aligned && boardRoomier,
+      `A8 版面：间隙 ${GAP_BETWEEN.top}px、棋盘前后 ${GAP_BETWEEN.hud}px，棋盘 ${layout.boardSpan}px（未缩）、与面板同栏`,
+      gapBad.length === 0 && boardKept && aligned && boardRoomier && itemsDetached,
       gapBad.length > 0
-        ? `间隙不合：${gapBad.map((g) => `${g.after}=${g.value}（应 ${GAP_EXPECT[g.after]}）`).join(' ')}`
+        ? `间隙不合：${gapBad.map((g) => `${g.after}=${g.value}（应 ${GAP_BETWEEN[g.after]}）`).join(' ')}`
         : !boardKept
           ? `棋盘被改了：span=${layout.boardSpan}（应 ${BOARD_SPAN_KEPT}）cell=${layout.boardCell}（应 ${BOARD_CELL_KEPT}）`
           : !aligned
             ? `棋盘盒宽 ${layout.boardBox.w} ≠ 面板宽 ${layout.modules[0].w}`
             : !boardRoomier
               ? '棋盘前后那两条缝没有比面板之间更宽'
-              : layout.gaps.map((g) => `${g.after}=${g.value}`).join(' ')
+              : !itemsDetached
+                ? `道具栏空着但还占在排版序列里：placed=${layout.placed.join(',')}`
+                : layout.gaps.map((g) => `${g.after}=${g.value}`).join(' ')
     );
 
     // ── A9 塔壁与地图内墙同源 ──
@@ -523,8 +543,170 @@ function check(name, ok, detail) {
         ` 背景跟随=${followed}（第 3 层时 paintedFloor=${realms.bad.paintedFloor}）`
     );
 
-    check('无控制台错误', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | ') || '干净');
+    // ── A11 道具栏：按需占位（空背包时整块不占位） ──
+    //
+    // 玩家原话是「移除无用的道具栏」。它不是没用 —— 可用道具（铁锹 / 地震卷轴 /
+    // 炸药 / 上下飞行器 / 楼层传送器…共 12 种）只能从这一栏使用。真正的问题是
+    // **它空着的时候也占着一整块版面**：上一版常驻 18 个空格子、高度写死 114px，
+    // 一进游戏就有一块什么都不放的地方。
+    //
+    // 期望值在这里**独立重算**（与 hud.ts 的 itemBoxHeight 对撞）：
+    //   空背包 → 0；1 件 → 1 行；10 件 → 2 行。
+    // 最后一条还要检查「两行时卡片底正好距画布底 28」—— 那是版面节奏本身，
+    // 只验高度看不出卡片跑偏。
+    const ITEM_HEAD = 34;
+    const SLOT_SIZE = 36;
+    const SLOT_GAP = 3;
+    const PER_ROW = 9;
+    const PAD_BOTTOM = 5;
+    const expectItemH = (n) => {
+      if (n <= 0) return 0;
+      const rows = Math.ceil(n / PER_ROW);
+      return ITEM_HEAD + rows * SLOT_SIZE + (rows - 1) * SLOT_GAP + PAD_BOTTOM;
+    };
+    const itemFlow = await page.evaluate((ids) => {
+      const g = window.mota.game;
+      const snap = () => {
+        const l = g.__layout();
+        const m = l.modules.find((x) => x.id === 'items');
+        return {
+          h: m.h,
+          y: m.y,
+          H: l.H,
+          hidden: l.itemsHidden,
+          placed: l.placed.join(','),
+          bag: g.__probe().bag.length
+        };
+      };
+      const none = snap();
+      g.__grant(ids[0]);
+      const one = snap();
+      for (const id of ids.slice(1)) g.__grant(id); // 补到 10 件
+      const ten = snap();
+      return { none, one, ten };
+    }, ['shovel', 'snowflake', 'bomb', 'quakeScroll', 'upFlyer', 'downFlyer',
+        'mirrorFlyer', 'floorTeleporter', 'holyWater', 'goldenKey']);
+    // ① 空背包：高度 0、不参与排版、渲染层也不可见
+    const noBagOk =
+      itemFlow.none.h === 0 &&
+      itemFlow.none.hidden === true &&
+      !itemFlow.none.placed.split(',').includes('items') &&
+      itemFlow.none.bag === 0;
+    // ② 1 件：一行高
+    const oneOk =
+      itemFlow.one.h === expectItemH(1) &&
+      itemFlow.one.hidden === false &&
+      itemFlow.one.placed.includes('items');
+    // ③ 10 件：两行高，且卡片底与画布底的距离回到 28（与其它模块同节奏）
+    const bottomGap = itemFlow.ten.H - (itemFlow.ten.y + itemFlow.ten.h);
+    const tenOk =
+      itemFlow.ten.bag === 10 &&
+      itemFlow.ten.h === expectItemH(10) &&
+      itemFlow.ten.h === 114 &&
+      bottomGap === 28;
+    check(
+      `A11 道具栏：空背包不占位（0px）、1 件 ${expectItemH(1)}px、10 件 ${expectItemH(10)}px 且底距 ${bottomGap}px`,
+      noBagOk && oneOk && tenOk,
+      !noBagOk
+        ? `空背包时：h=${itemFlow.none.h} hidden=${itemFlow.none.hidden} placed=${itemFlow.none.placed} bag=${itemFlow.none.bag}`
+        : !oneOk
+          ? `1 件时：h=${itemFlow.one.h}（应 ${expectItemH(1)}）hidden=${itemFlow.one.hidden}`
+          : !tenOk
+            ? `10 件时：h=${itemFlow.ten.h}（应 ${expectItemH(10)}=114）bag=${itemFlow.ten.bag} 底距=${bottomGap}（应 28）`
+            : `空背包 0 → 1 件 ${itemFlow.one.h} → 10 件 ${itemFlow.ten.h}`
+    );
 
+    // ── A12 手绘怪物：落屏的确实是图集，不是退回的程序化图形 ──
+    //
+    // 本轮把 13 只「名字与素材对不上」的怪物改成按名称手绘（MANIFEST 里 src 含「手绘」：
+    // 史莱姆族 4、蝙蝠族 3、石人 / 乌贼 / 龙 / 吸血鬼 / 魔王 2）。
+    // 它们存在的意义就是**换掉**原来那张不符的素材。而渲染层是「有图集用图集，
+    // 没有就退回 icons.ts 的程序化图形」—— 一旦退回，这一轮就等于白做，
+    // 而画面看上去「还好」，肉眼比对不可靠。`source.uid` 是同一性，一比就知道。
+    //
+    // 两个独立来源对撞：
+    //   期望值：Node 侧读 assets/MANIFEST.json 的 idle[0] + data/floors/*.json 的实体表；
+    //   实测值：浏览器里 `board.__sprites()` 报出的落屏纹理 uid 与帧矩形。
+    // 判据：
+    //   ① 棋盘上没有**任何**怪物走到程序化兜底（uid === null）；
+    //   ② 全部怪物共用同一个 source（怪物只有一张 monsters.png）；
+    //   ③ 落屏帧矩形与 MANIFEST 里的 idle[0] 一致（图集与运行时同一份坐标）；
+    //   ④ 这 6 层里该出现的手绘怪物一只不少地被看见过（抓「改完忘了接进 PROC_MONSTERS」）。
+    //
+    // 注：`vampire` 与 `demonKingTrue` 在 50 层里没有出场点，只在图集里备着，
+    // 所以下面按「这几层实际出现的」来算，不硬要求 13 只全见过。
+    const handDrawn = Object.entries(MANIFEST.monsters)
+      .filter(([, m]) => String(m.src ?? '').includes('手绘'))
+      .map(([id]) => id);
+    const SHOWCASE = [1, 14, 15, 35, 45, 50];
+    const perFloor = new Map(); // 楼层 → 该层出现的手绘怪物 id
+    for (const f of SHOWCASE) {
+      const p = path.join(ROOT, 'data/floors', `floor-${String(f).padStart(2, '0')}.json`);
+      const j = JSON.parse(fs.readFileSync(p, 'utf8'));
+      perFloor.set(
+        f,
+        (j.entities ?? [])
+          .filter((e) => e.type === 'monster' && handDrawn.includes(e.id))
+          .map((e) => e.id)
+      );
+    }
+    const seenMon = new Map(); // 手绘怪物 id → uid
+    const monUids = new Set(); // 棋盘上出现过的**全部**怪物 uid
+    const fellBack = [];
+    const frameBad = [];
+    for (const f of SHOWCASE) {
+      if (perFloor.get(f).length === 0) continue;
+      const sprites = await page.evaluate((floor) => {
+        window.mota.game.__goto(floor);
+        return window.mota.game.board.__sprites();
+      }, f);
+      const want = new Set(perFloor.get(f));
+      for (const s of sprites) {
+        if (s.kind !== 'monster') continue;
+        monUids.add(s.uid);
+        if (s.uid === null) fellBack.push(`第 ${f} 层 ${s.id}`);
+        if (!want.has(s.id)) continue;
+        // 落屏的必须是 MANIFEST 里 **idle 四帧中的某一帧** —— 不能只对 idle[0]：
+        // 渲染层按相位错开取帧，所以拍到哪一帧取决于相位，但对 idle[0]
+        // 会得到「明明对却报错」的假红（这条断言第一版就是这么红的）。
+        const idle = MANIFEST.monsters[s.id]?.idle ?? [];
+        const fw = MANIFEST.monsters[s.id]?.frame;
+        const hit = idle.findIndex((fr) => s.frame && fr.x === s.frame.x && fr.y === s.frame.y);
+        const sizeOk = s.frame && s.frame.w === (fw?.w ?? 16) && s.frame.h === (fw?.h ?? 16);
+        if (hit < 0 || !sizeOk) {
+          frameBad.push(
+            `第 ${f} 层 ${s.id} 落屏 ${JSON.stringify(s.frame)} / 该怪的 idle ${JSON.stringify(idle)}`
+          );
+        } else if (!seenMon.has(s.id)) {
+          seenMon.set(s.id, { uid: s.uid, frameIdx: hit });
+        }
+      }
+    }
+    const shouldSee = [...new Set(SHOWCASE.flatMap((f) => perFloor.get(f)))];
+    const notSeen = shouldSee.filter((id) => !seenMon.has(id));
+    const uids = [...monUids].filter((u) => u !== null);
+    check(
+      `A12 手绘怪物：${shouldSee.length} 只全部落在一张图集上（帧 16×16 与 MANIFEST 一致）`,
+      handDrawn.length >= 10 &&
+        fellBack.length === 0 &&
+        frameBad.length === 0 &&
+        notSeen.length === 0 &&
+        uids.length === 1,
+      handDrawn.length < 10
+        ? `MANIFEST 里标了「手绘」的怪物只有 ${handDrawn.length} 只，前提不成立`
+        : fellBack.length
+          ? `这些怪物走了程序化兜底（uid=null）：${fellBack.slice(0, 4).join(' ')}`
+          : frameBad.length
+            ? `落屏帧与 MANIFEST 不符：${frameBad.slice(0, 3).join(' | ')}`
+            : notSeen.length
+              ? `这几层里该出现却没在棋子上看见：${notSeen.join(' ')}`
+              : uids.length !== 1
+                ? `怪物用到了 ${uids.length} 个不同的 source：${uids.join(',')}`
+                : `手绘 ${handDrawn.length} 只 / 本组实见 ${shouldSee.length} 只，全部落在 source=${uids[0]}，` +
+                  `拍到 idle 第 ${[...new Set([...seenMon.values()].map((v) => v.frameIdx))].sort().join('/')} 帧`
+    );
+
+    check('无控制台错误', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | ') || '干净');
     if (VERBOSE) {
       console.log('\n  变体使用分布：');
       for (const k of ['0', '1']) {
