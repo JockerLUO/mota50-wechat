@@ -1,0 +1,30 @@
+{
+  "name": "mota50-wechat",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "类魔塔 RPG —— 微信小游戏方向。数据层派生自原版《魔塔50层》。",
+  "license": "GPL-3.0-only",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "build:minigame": "tsc --noEmit && vite build --config vite.minigame.config.ts && node tools/copy-minigame-assets.mjs",
+    "verify:minigame": "node tools/verify-minigame.cjs",
+    "verify:visual": "node tools/verify-visual.cjs",
+    "assets": "${PYTHON:-python3} tools/build-assets.py",
+    "shot": "node tools/shot-web.cjs",
+    "preview": "vite preview --port 4173 --strictPort",
+    "typecheck": "tsc --noEmit",
+    "validate": "node tools/validate-data.mjs",
+    "import": "node tools/import-mota50.mjs",
+    "balance": "node tools/build-balance-check.mjs"
+  },
+  "dependencies": {
+    "pixi.js": "^8.6.6"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.63.0",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5"
+  }
+}

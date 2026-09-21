@@ -1,0 +1,221 @@
+{
+ "id": "floor-09",
+ "index": 9,
+ "title": "主塔 9 层",
+ "size": {
+  "cols": 11,
+  "rows": 11
+ },
+ "terrain": [
+  "...y.v.y...",
+  "...#...#...",
+  ".####b####.",
+  "...#...yy..",
+  "...y...##w#",
+  "######.#...",
+  "..y..#.#.#.",
+  "..#..#.###y",
+  "y###y#.#...",
+  "..#..#.#...",
+  "^.b..y.y..."
+ ],
+ "stairs": {
+  "up": [
+   {
+    "x": 0,
+    "y": 10,
+    "to": 10,
+    "arrive": {
+     "x": 0,
+     "y": 10
+    }
+   }
+  ],
+  "down": [
+   {
+    "x": 5,
+    "y": 0,
+    "to": 8,
+    "arrive": {
+     "x": 5,
+     "y": 0
+    }
+   }
+  ]
+ },
+ "doors": {
+  "yellow": 11,
+  "blue": 2,
+  "red": 0
+ },
+ "entities": [
+  {
+   "type": "monster",
+   "id": "skeleton",
+   "x": 2,
+   "y": 0
+  },
+  {
+   "type": "monster",
+   "id": "greenSlime",
+   "x": 8,
+   "y": 0
+  },
+  {
+   "type": "item",
+   "id": "redPotion",
+   "x": 10,
+   "y": 0
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 1,
+   "y": 1
+  },
+  {
+   "type": "monster",
+   "id": "greenSlime",
+   "x": 9,
+   "y": 1
+  },
+  {
+   "type": "monster",
+   "id": "skeletonSoldier",
+   "x": 0,
+   "y": 2
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 1,
+   "y": 3
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 4,
+   "y": 3
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 6,
+   "y": 3
+  },
+  {
+   "type": "npc",
+   "id": "sage",
+   "x": 10,
+   "y": 3
+  },
+  {
+   "type": "item",
+   "id": "blueGem",
+   "x": 0,
+   "y": 4
+  },
+  {
+   "type": "monster",
+   "id": "bat",
+   "x": 2,
+   "y": 4
+  },
+  {
+   "type": "item",
+   "id": "redGem",
+   "x": 5,
+   "y": 4
+  },
+  {
+   "type": "monster",
+   "id": "redSlime",
+   "x": 6,
+   "y": 5
+  },
+  {
+   "type": "monster",
+   "id": "skeletonSoldier",
+   "x": 10,
+   "y": 5
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 0,
+   "y": 6
+  },
+  {
+   "type": "monster",
+   "id": "skeletonSoldier",
+   "x": 3,
+   "y": 6
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 4,
+   "y": 6
+  },
+  {
+   "type": "item",
+   "id": "ironShield",
+   "x": 8,
+   "y": 6
+  },
+  {
+   "type": "monster",
+   "id": "skeletonSoldier",
+   "x": 0,
+   "y": 7
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 8,
+   "y": 8
+  },
+  {
+   "type": "monster",
+   "id": "juniorMage",
+   "x": 10,
+   "y": 8
+  },
+  {
+   "type": "item",
+   "id": "redPotion",
+   "x": 1,
+   "y": 9
+  },
+  {
+   "type": "monster",
+   "id": "skeleton",
+   "x": 4,
+   "y": 9
+  },
+  {
+   "type": "monster",
+   "id": "bat",
+   "x": 6,
+   "y": 9
+  },
+  {
+   "type": "monster",
+   "id": "skeleton",
+   "x": 9,
+   "y": 9
+  },
+  {
+   "type": "monster",
+   "id": "juniorMage",
+   "x": 8,
+   "y": 10
+  },
+  {
+   "type": "item",
+   "id": "redPotion",
+   "x": 10,
+   "y": 10
+  }
+ ]
+}

@@ -1,0 +1,3142 @@
+{
+  "meta": {
+    "generatedAt": "2026-09-21T03:32:37+00:00",
+    "generator": "tools/build-assets.py",
+    "baseTile": 16,
+    "cell": 32,
+    "drawScale": 2,
+    "bigScale": 3,
+    "note": "实体 → 图集坐标的唯一事实来源。改映射请改 tools/build-assets.py 后重跑，不要直接编辑本文件。",
+    "terrainVariants": {
+      "0": 6,
+      "1": 5,
+      "1:top": 5
+    },
+    "atlases": {
+      "terrain": {
+        "file": "terrain.png",
+        "w": 512,
+        "h": 49
+      },
+      "actors": {
+        "file": "actors.png",
+        "w": 512,
+        "h": 134
+      },
+      "monsters": {
+        "file": "monsters.png",
+        "w": 512,
+        "h": 169
+      },
+      "items": {
+        "file": "items.png",
+        "w": 512,
+        "h": 99
+      }
+    }
+  },
+  "terrain": {
+    "0": {
+      "atlas": "terrain",
+      "x": 0,
+      "y": 0,
+      "w": 16,
+      "h": 16,
+      "drawScale": 2,
+      "name": "floor",
+      "src": "0x72/floor_1 @ 暖砂石渐变（亮度归一化后映射，与墙拉开明度差）"
+    },
+    "1": {
+      "atlas": "terrain",
+      "x": 17,
+      "y": 0,
+      "w": 16,
+      "h": 16,
+      "drawScale": 2,
+      "name": "wall",
+      "src": "0x72/wall_mid"
+    },
+    "2": {
+      "atlas": "terrain",
+      "x": 0,
+      "y": 17,
+      "w": 32,
+      "h": 32,
+      "drawScale": 2,
+      "name": "prisonDoor",
+      "src": "0x72/doors_leaf_closed（原色木门，区别于三色钥匙门）"
+    },
+    "3": {
+      "atlas": "terrain",
+      "x": 33,
+      "y": 17,
+      "w": 16,
+      "h": 16,
+      "drawScale": 2,
+      "name": "stairsDown",
+      "src": "0x72/floor_ladder"
+    },
+    "4": {
+      "atlas": "terrain",
+      "x": 50,
+      "y": 17,
+      "w": 16,
+      "h": 16,
+      "drawScale": 2,
+      "name": "stairsUp",
+      "src": "0x72/floor_ladder @ 预翻转（与下楼梯镜像）"
+    },
+    "5": {
+      "atlas": "terrain",
+      "x": 67,
+      "y": 17,
+      "w": 16,
+      "h": 16,
+      "drawScale": 2,
+      "name": "lava",
+      "src": "0x72/wall_goo @ 岩浆渐变（原素材是绿色黏液）"
+    },
+    "6": {
+      "atlas": "terrain",
+      "x": 84,
+      "y": 17,
+      "w": 16,
+      "h": 16,
+      "drawScale": 2,
+      "name": "void",
+      "src": "0x72/wall_goo_base @ 星际渐变"
+    },
+    "7": {
+      "atlas": "terrain",
+      "x": 101,
+      "y": 17,
+      "w": 32,
+      "h": 32,
+      "drawScale": 2,
+      "name": "doorYellow",
+      "src": "0x72/doors_leaf_closed @ 黄渐变"
+    },
+    "8": {
+      "atlas": "terrain",
+      "x": 134,
+      "y": 17,
+      "w": 32,
+      "h": 32,
+      "drawScale": 2,
+      "name": "doorBlue",
+      "src": "0x72/doors_leaf_closed @ 蓝渐变"
+    },
+    "9": {
+      "atlas": "terrain",
+      "x": 167,
+      "y": 17,
+      "w": 32,
+      "h": 32,
+      "drawScale": 2,
+      "name": "doorRed",
+      "src": "0x72/doors_leaf_closed @ 红渐变"
+    },
+    "10": {
+      "atlas": "terrain",
+      "x": 200,
+      "y": 17,
+      "w": 32,
+      "h": 32,
+      "drawScale": 2,
+      "name": "autoDoor",
+      "src": "0x72/doors_leaf_open"
+    },
+    "11": {
+      "atlas": "terrain",
+      "x": 233,
+      "y": 17,
+      "w": 16,
+      "h": 16,
+      "drawScale": 2,
+      "name": "fakeWall",
+      "src": "0x72/wall_mid（与真墙同图，这是玩法本身）"
+    },
+    "1:top": {
+      "atlas": "terrain",
+      "x": 250,
+      "y": 17,
+      "w": 16,
+      "h": 16,
+      "drawScale": 2,
+      "name": "wallTop",
+      "src": "0x72/wall_mid + wall_top_mid 翻转预合成（压顶落在本格上沿）"
+    },
+    "0:1": {
+      "atlas": "terrain",
+      "x": 267,
+      "y": 17,
+      "w": 16,
+      "h": 16,
+      "drawScale": 2,
+      "name": "floor#1",
+      "src": "由 TERRAIN[0] 派生：倒角缺口重排 + 同色小杂质（第 1 号变体）"
+    },
+    "0:2": {
+      "atlas": "terrain",
+      "x": 284,
+      "y": 17,
+      "w": 16,
+      "h": 16,
+      "drawScale": 2,
+      "name": "floor#2",
+      "src": "由 TERRAIN[0] 派生：倒角缺口重排 + 同色小杂质（第 2 号变体）"
+    },
+    "0:3": {
+      "atlas": "terrain",
+      "x": 301,
+      "y": 17,
+      "w": 16,
+      "h": 16,
+      "drawScale": 2,
+      "name": "floor#3",
+      "src": "由 TERRAIN[0] 派生：倒角缺口重排 + 同色小杂质（第 3 号变体）"
+    },
+    "0:4": {
+      "atlas": "terrain",
+      "x": 318,
+      "y": 17,
+      "w": 16,
+      "h": 16,
+      "drawScale": 2,
+      "name": "floor#4",
+      "src": "由 TERRAIN[0] 派生：倒角缺口重排 + 同色小杂质（第 4 号变体）"
+    },
+    "0:5": {
+      "atlas": "terrain",
+      "x": 335,
+      "y": 17,
+      "w": 16,
+      "h": 16,
+      "drawScale": 2,
+      "name": "floor#5",
+      "src": "由 TERRAIN[0] 派生：倒角缺口重排 + 同色小杂质（第 5 号变体）"
+    },
+    "1:1": {
+      "atlas": "terrain",
+      "x": 352,
+      "y": 17,
+      "w": 16,
+      "h": 16,
+      "drawScale": 2,
+      "name": "wall#1",
+      "src": "由 TERRAIN[1] 派生：竖缝位置重排，砌层与配色不变（第 1 号变体）"
+    },
+    "1:2": {
+      "atlas": "terrain",
+      "x": 369,
+      "y": 17,
+      "w": 16,
+      "h": 16,
+      "drawScale": 2,
+      "name": "wall#2",
+      "src": "由 TERRAIN[1] 派生：竖缝位置重排，砌层与配色不变（第 2 号变体）"
+    },
+    "1:3": {
+      "atlas": "terrain",
+      "x": 386,
+      "y": 17,
+      "w": 16,
+      "h": 16,
+      "drawScale": 2,
+      "name": "wall#3",
+      "src": "由 TERRAIN[1] 派生：竖缝位置重排，砌层与配色不变（第 3 号变体）"
+    },
+    "1:4": {
+      "atlas": "terrain",
+      "x": 403,
+      "y": 17,
+      "w": 16,
+      "h": 16,
+      "drawScale": 2,
+      "name": "wall#4",
+      "src": "由 TERRAIN[1] 派生：竖缝位置重排，砌层与配色不变（第 4 号变体）"
+    },
+    "1:top:1": {
+      "atlas": "terrain",
+      "x": 420,
+      "y": 17,
+      "w": 16,
+      "h": 16,
+      "drawScale": 2,
+      "name": "wallTop#1",
+      "src": "由 TERRAIN_TOP[1] 派生：墙身换变体后重新合成压顶（第 1 号变体）"
+    },
+    "1:top:2": {
+      "atlas": "terrain",
+      "x": 437,
+      "y": 17,
+      "w": 16,
+      "h": 16,
+      "drawScale": 2,
+      "name": "wallTop#2",
+      "src": "由 TERRAIN_TOP[1] 派生：墙身换变体后重新合成压顶（第 2 号变体）"
+    },
+    "1:top:3": {
+      "atlas": "terrain",
+      "x": 454,
+      "y": 17,
+      "w": 16,
+      "h": 16,
+      "drawScale": 2,
+      "name": "wallTop#3",
+      "src": "由 TERRAIN_TOP[1] 派生：墙身换变体后重新合成压顶（第 3 号变体）"
+    },
+    "1:top:4": {
+      "atlas": "terrain",
+      "x": 471,
+      "y": 17,
+      "w": 16,
+      "h": 16,
+      "drawScale": 2,
+      "name": "wallTop#4",
+      "src": "由 TERRAIN_TOP[1] 派生：墙身换变体后重新合成压顶（第 4 号变体）"
+    }
+  },
+  "monsters": {
+    "skeleton": {
+      "src": "0x72/skelet",
+      "note": "骨色原样",
+      "drawScale": 2,
+      "atlas": "monsters",
+      "frame": {
+        "w": 16,
+        "h": 16
+      },
+      "idle": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 17,
+          "y": 0
+        },
+        {
+          "x": 34,
+          "y": 0
+        },
+        {
+          "x": 51,
+          "y": 0
+        }
+      ],
+      "run": [
+        {
+          "x": 68,
+          "y": 0
+        },
+        {
+          "x": 85,
+          "y": 0
+        },
+        {
+          "x": 102,
+          "y": 0
+        },
+        {
+          "x": 119,
+          "y": 0
+        }
+      ]
+    },
+    "skeletonSoldier": {
+      "src": "0x72/skelet",
+      "note": "铁甲渐变",
+      "drawScale": 2,
+      "atlas": "monsters",
+      "frame": {
+        "w": 16,
+        "h": 16
+      },
+      "idle": [
+        {
+          "x": 136,
+          "y": 0
+        },
+        {
+          "x": 153,
+          "y": 0
+        },
+        {
+          "x": 170,
+          "y": 0
+        },
+        {
+          "x": 187,
+          "y": 0
+        }
+      ],
+      "run": [
+        {
+          "x": 204,
+          "y": 0
+        },
+        {
+          "x": 221,
+          "y": 0
+        },
+        {
+          "x": 238,
+          "y": 0
+        },
+        {
+          "x": 255,
+          "y": 0
+        }
+      ]
+    },
+    "skeletonCaptain": {
+      "src": "0x72/skelet",
+      "note": "金甲渐变",
+      "drawScale": 2,
+      "atlas": "monsters",
+      "frame": {
+        "w": 16,
+        "h": 16
+      },
+      "idle": [
+        {
+          "x": 272,
+          "y": 0
+        },
+        {
+          "x": 289,
+          "y": 0
+        },
+        {
+          "x": 306,
+          "y": 0
+        },
+        {
+          "x": 323,
+          "y": 0
+        }
+      ],
+      "run": [
+        {
+          "x": 340,
+          "y": 0
+        },
+        {
+          "x": 357,
+          "y": 0
+        },
+        {
+          "x": 374,
+          "y": 0
+        },
+        {
+          "x": 391,
+          "y": 0
+        }
+      ]
+    },
+    "ghostWarrior": {
+      "src": "0x72/wogol",
+      "note": "青白，幽灵感",
+      "drawScale": 2,
+      "atlas": "monsters",
+      "frame": {
+        "w": 16,
+        "h": 16
+      },
+      "idle": [
+        {
+          "x": 408,
+          "y": 0
+        },
+        {
+          "x": 425,
+          "y": 0
+        },
+        {
+          "x": 442,
+          "y": 0
+        },
+        {
+          "x": 459,
+          "y": 0
+        }
+      ],
+      "run": [
+        {
+          "x": 476,
+          "y": 0
+        },
+        {
+          "x": 493,
+          "y": 0
+        },
+        {
+          "x": 0,
+          "y": 17
+        },
+        {
+          "x": 17,
+          "y": 17
+        }
+      ]
+    },
+    "phantom": {
+      "src": "0x72/wogol",
+      "note": "紫，半透明",
+      "drawScale": 2,
+      "atlas": "monsters",
+      "frame": {
+        "w": 16,
+        "h": 16
+      },
+      "idle": [
+        {
+          "x": 34,
+          "y": 17
+        },
+        {
+          "x": 51,
+          "y": 17
+        },
+        {
+          "x": 68,
+          "y": 17
+        },
+        {
+          "x": 85,
+          "y": 17
+        }
+      ],
+      "run": [
+        {
+          "x": 102,
+          "y": 17
+        },
+        {
+          "x": 119,
+          "y": 17
+        },
+        {
+          "x": 136,
+          "y": 17
+        },
+        {
+          "x": 153,
+          "y": 17
+        }
+      ]
+    },
+    "vampire": {
+      "src": "0x72/zombie",
+      "note": "紫，尸族",
+      "drawScale": 2,
+      "atlas": "monsters",
+      "frame": {
+        "w": 16,
+        "h": 16
+      },
+      "idle": [
+        {
+          "x": 170,
+          "y": 17
+        },
+        {
+          "x": 187,
+          "y": 17
+        },
+        {
+          "x": 204,
+          "y": 17
+        },
+        {
+          "x": 221,
+          "y": 17
+        }
+      ],
+      "run": [
+        {
+          "x": 238,
+          "y": 17
+        },
+        {
+          "x": 255,
+          "y": 17
+        },
+        {
+          "x": 272,
+          "y": 17
+        },
+        {
+          "x": 289,
+          "y": 17
+        }
+      ]
+    },
+    "ice_zombie": {
+      "src": "0x72/ice_zombie",
+      "note": "原样（备用图，本作暂未用）",
+      "drawScale": 2,
+      "atlas": "monsters",
+      "frame": {
+        "w": 16,
+        "h": 16
+      },
+      "idle": [
+        {
+          "x": 306,
+          "y": 17
+        },
+        {
+          "x": 323,
+          "y": 17
+        },
+        {
+          "x": 340,
+          "y": 17
+        },
+        {
+          "x": 357,
+          "y": 17
+        }
+      ],
+      "run": [
+        {
+          "x": 374,
+          "y": 17
+        },
+        {
+          "x": 391,
+          "y": 17
+        },
+        {
+          "x": 408,
+          "y": 17
+        },
+        {
+          "x": 425,
+          "y": 17
+        }
+      ]
+    },
+    "bat": {
+      "src": "0x72/imp",
+      "note": "褐",
+      "drawScale": 2,
+      "atlas": "monsters",
+      "frame": {
+        "w": 16,
+        "h": 16
+      },
+      "idle": [
+        {
+          "x": 442,
+          "y": 17
+        },
+        {
+          "x": 459,
+          "y": 17
+        },
+        {
+          "x": 476,
+          "y": 17
+        },
+        {
+          "x": 493,
+          "y": 17
+        }
+      ],
+      "run": [
+        {
+          "x": 0,
+          "y": 34
+        },
+        {
+          "x": 17,
+          "y": 34
+        },
+        {
+          "x": 34,
+          "y": 34
+        },
+        {
+          "x": 51,
+          "y": 34
+        }
+      ]
+    },
+    "bigBat": {
+      "src": "0x72/imp",
+      "note": "深褐（原为 ×3，实测越出格子 4px）",
+      "drawScale": 2,
+      "atlas": "monsters",
+      "frame": {
+        "w": 16,
+        "h": 16
+      },
+      "idle": [
+        {
+          "x": 68,
+          "y": 34
+        },
+        {
+          "x": 85,
+          "y": 34
+        },
+        {
+          "x": 102,
+          "y": 34
+        },
+        {
+          "x": 119,
+          "y": 34
+        }
+      ],
+      "run": [
+        {
+          "x": 136,
+          "y": 34
+        },
+        {
+          "x": 153,
+          "y": 34
+        },
+        {
+          "x": 170,
+          "y": 34
+        },
+        {
+          "x": 187,
+          "y": 34
+        }
+      ]
+    },
+    "vampireBat": {
+      "src": "0x72/imp",
+      "note": "血红（原为 ×3）",
+      "drawScale": 2,
+      "atlas": "monsters",
+      "frame": {
+        "w": 16,
+        "h": 16
+      },
+      "idle": [
+        {
+          "x": 204,
+          "y": 34
+        },
+        {
+          "x": 221,
+          "y": 34
+        },
+        {
+          "x": 238,
+          "y": 34
+        },
+        {
+          "x": 255,
+          "y": 34
+        }
+      ],
+      "run": [
+        {
+          "x": 272,
+          "y": 34
+        },
+        {
+          "x": 289,
+          "y": 34
+        },
+        {
+          "x": 306,
+          "y": 34
+        },
+        {
+          "x": 323,
+          "y": 34
+        }
+      ]
+    },
+    "greenSlime": {
+      "src": "0x72/swampy",
+      "note": "原色即绿",
+      "drawScale": 2,
+      "atlas": "monsters",
+      "frame": {
+        "w": 16,
+        "h": 16
+      },
+      "idle": [
+        {
+          "x": 340,
+          "y": 34
+        },
+        {
+          "x": 357,
+          "y": 34
+        },
+        {
+          "x": 374,
+          "y": 34
+        },
+        {
+          "x": 391,
+          "y": 34
+        }
+      ],
+      "run": [
+        {
+          "x": 408,
+          "y": 34
+        },
+        {
+          "x": 425,
+          "y": 34
+        },
+        {
+          "x": 442,
+          "y": 34
+        },
+        {
+          "x": 459,
+          "y": 34
+        }
+      ]
+    },
+    "redSlime": {
+      "src": "0x72/swampy",
+      "note": "红",
+      "drawScale": 2,
+      "atlas": "monsters",
+      "frame": {
+        "w": 16,
+        "h": 16
+      },
+      "idle": [
+        {
+          "x": 476,
+          "y": 34
+        },
+        {
+          "x": 493,
+          "y": 34
+        },
+        {
+          "x": 0,
+          "y": 51
+        },
+        {
+          "x": 17,
+          "y": 51
+        }
+      ],
+      "run": [
+        {
+          "x": 34,
+          "y": 51
+        },
+        {
+          "x": 51,
+          "y": 51
+        },
+        {
+          "x": 68,
+          "y": 51
+        },
+        {
+          "x": 85,
+          "y": 51
+        }
+      ]
+    },
+    "bigSlime": {
+      "src": "0x72/muddy",
+      "note": "绿（原为 ×3，实测越出格子 7px）",
+      "drawScale": 2,
+      "atlas": "monsters",
+      "frame": {
+        "w": 16,
+        "h": 16
+      },
+      "idle": [
+        {
+          "x": 102,
+          "y": 51
+        },
+        {
+          "x": 119,
+          "y": 51
+        },
+        {
+          "x": 136,
+          "y": 51
+        },
+        {
+          "x": 153,
+          "y": 51
+        }
+      ],
+      "run": [
+        {
+          "x": 170,
+          "y": 51
+        },
+        {
+          "x": 187,
+          "y": 51
+        },
+        {
+          "x": 204,
+          "y": 51
+        },
+        {
+          "x": 221,
+          "y": 51
+        }
+      ]
+    },
+    "slimeKing": {
+      "src": "0x72/muddy",
+      "note": "金（原为 ×3）",
+      "drawScale": 2,
+      "atlas": "monsters",
+      "frame": {
+        "w": 16,
+        "h": 16
+      },
+      "idle": [
+        {
+          "x": 238,
+          "y": 51
+        },
+        {
+          "x": 255,
+          "y": 51
+        },
+        {
+          "x": 272,
+          "y": 51
+        },
+        {
+          "x": 289,
+          "y": 51
+        }
+      ],
+      "run": [
+        {
+          "x": 306,
+          "y": 51
+        },
+        {
+          "x": 323,
+          "y": 51
+        },
+        {
+          "x": 340,
+          "y": 51
+        },
+        {
+          "x": 357,
+          "y": 51
+        }
+      ]
+    },
+    "juniorMage": {
+      "src": "0x72/wizzard_m",
+      "note": "蓝袍",
+      "drawScale": 2,
+      "atlas": "monsters",
+      "frame": {
+        "w": 16,
+        "h": 16
+      },
+      "idle": [
+        {
+          "x": 374,
+          "y": 51
+        },
+        {
+          "x": 391,
+          "y": 51
+        },
+        {
+          "x": 408,
+          "y": 51
+        },
+        {
+          "x": 425,
+          "y": 51
+        }
+      ],
+      "run": [
+        {
+          "x": 442,
+          "y": 51
+        },
+        {
+          "x": 459,
+          "y": 51
+        },
+        {
+          "x": 476,
+          "y": 51
+        },
+        {
+          "x": 493,
+          "y": 51
+        }
+      ]
+    },
+    "seniorMage": {
+      "src": "0x72/wizzard_m",
+      "note": "紫袍",
+      "drawScale": 2,
+      "atlas": "monsters",
+      "frame": {
+        "w": 16,
+        "h": 16
+      },
+      "idle": [
+        {
+          "x": 0,
+          "y": 68
+        },
+        {
+          "x": 17,
+          "y": 68
+        },
+        {
+          "x": 34,
+          "y": 68
+        },
+        {
+          "x": 51,
+          "y": 68
+        }
+      ],
+      "run": [
+        {
+          "x": 68,
+          "y": 68
+        },
+        {
+          "x": 85,
+          "y": 68
+        },
+        {
+          "x": 102,
+          "y": 68
+        },
+        {
+          "x": 119,
+          "y": 68
+        }
+      ]
+    },
+    "juniorWizard": {
+      "src": "0x72/wizzard_f",
+      "note": "蓝袍",
+      "drawScale": 2,
+      "atlas": "monsters",
+      "frame": {
+        "w": 16,
+        "h": 16
+      },
+      "idle": [
+        {
+          "x": 136,
+          "y": 68
+        },
+        {
+          "x": 153,
+          "y": 68
+        },
+        {
+          "x": 170,
+          "y": 68
+        },
+        {
+          "x": 187,
+          "y": 68
+        }
+      ],
+      "run": [
+        {
+          "x": 204,
+          "y": 68
+        },
+        {
+          "x": 221,
+          "y": 68
+        },
+        {
+          "x": 238,
+          "y": 68
+        },
+        {
+          "x": 255,
+          "y": 68
+        }
+      ]
+    },
+    "seniorWizard": {
+      "src": "0x72/wizzard_f",
+      "note": "紫袍",
+      "drawScale": 2,
+      "atlas": "monsters",
+      "frame": {
+        "w": 16,
+        "h": 16
+      },
+      "idle": [
+        {
+          "x": 272,
+          "y": 68
+        },
+        {
+          "x": 289,
+          "y": 68
+        },
+        {
+          "x": 306,
+          "y": 68
+        },
+        {
+          "x": 323,
+          "y": 68
+        }
+      ],
+      "run": [
+        {
+          "x": 340,
+          "y": 68
+        },
+        {
+          "x": 357,
+          "y": 68
+        },
+        {
+          "x": 374,
+          "y": 68
+        },
+        {
+          "x": 391,
+          "y": 68
+        }
+      ]
+    },
+    "archmage": {
+      "src": "0x72/orc_shaman",
+      "note": "金袍",
+      "drawScale": 2,
+      "atlas": "monsters",
+      "frame": {
+        "w": 16,
+        "h": 16
+      },
+      "idle": [
+        {
+          "x": 408,
+          "y": 68
+        },
+        {
+          "x": 425,
+          "y": 68
+        },
+        {
+          "x": 442,
+          "y": 68
+        },
+        {
+          "x": 459,
+          "y": 68
+        }
+      ],
+      "run": [
+        {
+          "x": 476,
+          "y": 68
+        },
+        {
+          "x": 493,
+          "y": 68
+        },
+        {
+          "x": 0,
+          "y": 85
+        },
+        {
+          "x": 17,
+          "y": 85
+        }
+      ]
+    },
+    "magicGuard": {
+      "src": "0x72/necromancer",
+      "note": "青，魔卫",
+      "drawScale": 2,
+      "atlas": "monsters",
+      "frame": {
+        "w": 16,
+        "h": 16
+      },
+      "idle": [
+        {
+          "x": 34,
+          "y": 85
+        },
+        {
+          "x": 51,
+          "y": 85
+        },
+        {
+          "x": 68,
+          "y": 85
+        },
+        {
+          "x": 85,
+          "y": 85
+        }
+      ],
+      "run": [
+        {
+          "x": 102,
+          "y": 85
+        },
+        {
+          "x": 119,
+          "y": 85
+        },
+        {
+          "x": 136,
+          "y": 85
+        },
+        {
+          "x": 153,
+          "y": 85
+        }
+      ]
+    },
+    "orc": {
+      "src": "0x72/orc_warrior",
+      "note": "原色",
+      "drawScale": 2,
+      "atlas": "monsters",
+      "frame": {
+        "w": 16,
+        "h": 16
+      },
+      "idle": [
+        {
+          "x": 170,
+          "y": 85
+        },
+        {
+          "x": 187,
+          "y": 85
+        },
+        {
+          "x": 204,
+          "y": 85
+        },
+        {
+          "x": 221,
+          "y": 85
+        }
+      ],
+      "run": [
+        {
+          "x": 238,
+          "y": 85
+        },
+        {
+          "x": 255,
+          "y": 85
+        },
+        {
+          "x": 272,
+          "y": 85
+        },
+        {
+          "x": 289,
+          "y": 85
+        }
+      ]
+    },
+    "orcWarrior": {
+      "src": "0x72/masked_orc",
+      "note": "深绿",
+      "drawScale": 2,
+      "atlas": "monsters",
+      "frame": {
+        "w": 16,
+        "h": 16
+      },
+      "idle": [
+        {
+          "x": 306,
+          "y": 85
+        },
+        {
+          "x": 323,
+          "y": 85
+        },
+        {
+          "x": 340,
+          "y": 85
+        },
+        {
+          "x": 357,
+          "y": 85
+        }
+      ],
+      "run": [
+        {
+          "x": 374,
+          "y": 85
+        },
+        {
+          "x": 391,
+          "y": 85
+        },
+        {
+          "x": 408,
+          "y": 85
+        },
+        {
+          "x": 425,
+          "y": 85
+        }
+      ]
+    },
+    "goblin": {
+      "src": "0x72/goblin",
+      "note": "原样",
+      "drawScale": 2,
+      "atlas": "monsters",
+      "frame": {
+        "w": 16,
+        "h": 16
+      },
+      "idle": [
+        {
+          "x": 442,
+          "y": 85
+        },
+        {
+          "x": 459,
+          "y": 85
+        },
+        {
+          "x": 476,
+          "y": 85
+        },
+        {
+          "x": 493,
+          "y": 85
+        }
+      ],
+      "run": [
+        {
+          "x": 0,
+          "y": 102
+        },
+        {
+          "x": 17,
+          "y": 102
+        },
+        {
+          "x": 34,
+          "y": 102
+        },
+        {
+          "x": 51,
+          "y": 102
+        }
+      ]
+    },
+    "juniorGuard": {
+      "src": "0x72/knight_m",
+      "note": "青铜",
+      "drawScale": 2,
+      "atlas": "monsters",
+      "frame": {
+        "w": 16,
+        "h": 16
+      },
+      "idle": [
+        {
+          "x": 68,
+          "y": 102
+        },
+        {
+          "x": 85,
+          "y": 102
+        },
+        {
+          "x": 102,
+          "y": 102
+        },
+        {
+          "x": 119,
+          "y": 102
+        }
+      ],
+      "run": [
+        {
+          "x": 136,
+          "y": 102
+        },
+        {
+          "x": 153,
+          "y": 102
+        },
+        {
+          "x": 170,
+          "y": 102
+        },
+        {
+          "x": 187,
+          "y": 102
+        }
+      ]
+    },
+    "midGuard": {
+      "src": "0x72/knight_m",
+      "note": "白银",
+      "drawScale": 2,
+      "atlas": "monsters",
+      "frame": {
+        "w": 16,
+        "h": 16
+      },
+      "idle": [
+        {
+          "x": 204,
+          "y": 102
+        },
+        {
+          "x": 221,
+          "y": 102
+        },
+        {
+          "x": 238,
+          "y": 102
+        },
+        {
+          "x": 255,
+          "y": 102
+        }
+      ],
+      "run": [
+        {
+          "x": 272,
+          "y": 102
+        },
+        {
+          "x": 289,
+          "y": 102
+        },
+        {
+          "x": 306,
+          "y": 102
+        },
+        {
+          "x": 323,
+          "y": 102
+        }
+      ]
+    },
+    "seniorGuard": {
+      "src": "0x72/knight_m",
+      "note": "黄金",
+      "drawScale": 2,
+      "atlas": "monsters",
+      "frame": {
+        "w": 16,
+        "h": 16
+      },
+      "idle": [
+        {
+          "x": 340,
+          "y": 102
+        },
+        {
+          "x": 357,
+          "y": 102
+        },
+        {
+          "x": 374,
+          "y": 102
+        },
+        {
+          "x": 391,
+          "y": 102
+        }
+      ],
+      "run": [
+        {
+          "x": 408,
+          "y": 102
+        },
+        {
+          "x": 425,
+          "y": 102
+        },
+        {
+          "x": 442,
+          "y": 102
+        },
+        {
+          "x": 459,
+          "y": 102
+        }
+      ]
+    },
+    "swordsman": {
+      "src": "0x72/elf_m",
+      "note": "红",
+      "drawScale": 2,
+      "atlas": "monsters",
+      "frame": {
+        "w": 16,
+        "h": 16
+      },
+      "idle": [
+        {
+          "x": 476,
+          "y": 102
+        },
+        {
+          "x": 493,
+          "y": 102
+        },
+        {
+          "x": 0,
+          "y": 119
+        },
+        {
+          "x": 17,
+          "y": 119
+        }
+      ],
+      "run": [
+        {
+          "x": 34,
+          "y": 119
+        },
+        {
+          "x": 51,
+          "y": 119
+        },
+        {
+          "x": 68,
+          "y": 119
+        },
+        {
+          "x": 85,
+          "y": 119
+        }
+      ]
+    },
+    "warrior": {
+      "src": "0x72/knight_f",
+      "note": "铁",
+      "drawScale": 2,
+      "atlas": "monsters",
+      "frame": {
+        "w": 16,
+        "h": 16
+      },
+      "idle": [
+        {
+          "x": 102,
+          "y": 119
+        },
+        {
+          "x": 119,
+          "y": 119
+        },
+        {
+          "x": 136,
+          "y": 119
+        },
+        {
+          "x": 153,
+          "y": 119
+        }
+      ],
+      "run": [
+        {
+          "x": 170,
+          "y": 119
+        },
+        {
+          "x": 187,
+          "y": 119
+        },
+        {
+          "x": 204,
+          "y": 119
+        },
+        {
+          "x": 221,
+          "y": 119
+        }
+      ]
+    },
+    "knight": {
+      "src": "0x72/knight_m",
+      "note": "蓝甲",
+      "drawScale": 2,
+      "atlas": "monsters",
+      "frame": {
+        "w": 16,
+        "h": 16
+      },
+      "idle": [
+        {
+          "x": 238,
+          "y": 119
+        },
+        {
+          "x": 255,
+          "y": 119
+        },
+        {
+          "x": 272,
+          "y": 119
+        },
+        {
+          "x": 289,
+          "y": 119
+        }
+      ],
+      "run": [
+        {
+          "x": 306,
+          "y": 119
+        },
+        {
+          "x": 323,
+          "y": 119
+        },
+        {
+          "x": 340,
+          "y": 119
+        },
+        {
+          "x": 357,
+          "y": 119
+        }
+      ]
+    },
+    "knightCaptain": {
+      "src": "0x72/knight_f",
+      "note": "白银",
+      "drawScale": 2,
+      "atlas": "monsters",
+      "frame": {
+        "w": 16,
+        "h": 16
+      },
+      "idle": [
+        {
+          "x": 374,
+          "y": 119
+        },
+        {
+          "x": 391,
+          "y": 119
+        },
+        {
+          "x": 408,
+          "y": 119
+        },
+        {
+          "x": 425,
+          "y": 119
+        }
+      ],
+      "run": [
+        {
+          "x": 442,
+          "y": 119
+        },
+        {
+          "x": 459,
+          "y": 119
+        },
+        {
+          "x": 476,
+          "y": 119
+        },
+        {
+          "x": 493,
+          "y": 119
+        }
+      ]
+    },
+    "darkKnight": {
+      "src": "0x72/knight_m",
+      "note": "近黑",
+      "drawScale": 2,
+      "atlas": "monsters",
+      "frame": {
+        "w": 16,
+        "h": 16
+      },
+      "idle": [
+        {
+          "x": 0,
+          "y": 136
+        },
+        {
+          "x": 17,
+          "y": 136
+        },
+        {
+          "x": 34,
+          "y": 136
+        },
+        {
+          "x": 51,
+          "y": 136
+        }
+      ],
+      "run": [
+        {
+          "x": 68,
+          "y": 136
+        },
+        {
+          "x": 85,
+          "y": 136
+        },
+        {
+          "x": 102,
+          "y": 136
+        },
+        {
+          "x": 119,
+          "y": 136
+        }
+      ]
+    },
+    "stoneGolem": {
+      "src": "0x72/ogre",
+      "note": "石色（原为 ×3，实测越出格子 7px）",
+      "drawScale": 2,
+      "atlas": "monsters",
+      "frame": {
+        "w": 16,
+        "h": 16
+      },
+      "idle": [
+        {
+          "x": 136,
+          "y": 136
+        },
+        {
+          "x": 153,
+          "y": 136
+        },
+        {
+          "x": 170,
+          "y": 136
+        },
+        {
+          "x": 187,
+          "y": 136
+        }
+      ],
+      "run": [
+        {
+          "x": 204,
+          "y": 136
+        },
+        {
+          "x": 221,
+          "y": 136
+        },
+        {
+          "x": 238,
+          "y": 136
+        },
+        {
+          "x": 255,
+          "y": 136
+        }
+      ]
+    },
+    "dragon": {
+      "src": "0x72/chort",
+      "note": "赤红，放大",
+      "drawScale": 3,
+      "atlas": "monsters",
+      "frame": {
+        "w": 16,
+        "h": 16
+      },
+      "idle": [
+        {
+          "x": 272,
+          "y": 136
+        },
+        {
+          "x": 289,
+          "y": 136
+        },
+        {
+          "x": 306,
+          "y": 136
+        },
+        {
+          "x": 323,
+          "y": 136
+        }
+      ],
+      "run": [
+        {
+          "x": 340,
+          "y": 136
+        },
+        {
+          "x": 357,
+          "y": 136
+        },
+        {
+          "x": 374,
+          "y": 136
+        },
+        {
+          "x": 391,
+          "y": 136
+        }
+      ]
+    },
+    "kraken": {
+      "src": "0x72/swampy",
+      "note": "深紫，放大",
+      "drawScale": 3,
+      "atlas": "monsters",
+      "frame": {
+        "w": 16,
+        "h": 16
+      },
+      "idle": [
+        {
+          "x": 408,
+          "y": 136
+        },
+        {
+          "x": 425,
+          "y": 136
+        },
+        {
+          "x": 442,
+          "y": 136
+        },
+        {
+          "x": 459,
+          "y": 136
+        }
+      ],
+      "run": [
+        {
+          "x": 476,
+          "y": 136
+        },
+        {
+          "x": 493,
+          "y": 136
+        },
+        {
+          "x": 0,
+          "y": 153
+        },
+        {
+          "x": 17,
+          "y": 153
+        }
+      ]
+    },
+    "demonKing": {
+      "src": "0x72/big_demon",
+      "note": "源为 32×32，归一化到 16 后放大，与巨龙同级",
+      "drawScale": 3,
+      "atlas": "monsters",
+      "frame": {
+        "w": 16,
+        "h": 16
+      },
+      "idle": [
+        {
+          "x": 34,
+          "y": 153
+        },
+        {
+          "x": 51,
+          "y": 153
+        },
+        {
+          "x": 68,
+          "y": 153
+        },
+        {
+          "x": 85,
+          "y": 153
+        }
+      ],
+      "run": [
+        {
+          "x": 102,
+          "y": 153
+        },
+        {
+          "x": 119,
+          "y": 153
+        },
+        {
+          "x": 136,
+          "y": 153
+        },
+        {
+          "x": 153,
+          "y": 153
+        }
+      ]
+    },
+    "demonKingTrue": {
+      "src": "0x72/big_demon",
+      "note": "猩红真身",
+      "drawScale": 3,
+      "atlas": "monsters",
+      "frame": {
+        "w": 16,
+        "h": 16
+      },
+      "idle": [
+        {
+          "x": 170,
+          "y": 153
+        },
+        {
+          "x": 187,
+          "y": 153
+        },
+        {
+          "x": 204,
+          "y": 153
+        },
+        {
+          "x": 221,
+          "y": 153
+        }
+      ],
+      "run": [
+        {
+          "x": 238,
+          "y": 153
+        },
+        {
+          "x": 255,
+          "y": 153
+        },
+        {
+          "x": 272,
+          "y": 153
+        },
+        {
+          "x": 289,
+          "y": 153
+        }
+      ]
+    }
+  },
+  "items": {
+    "redGem": {
+      "atlas": "items",
+      "x": 0,
+      "y": 0,
+      "w": 16,
+      "h": 16,
+      "drawScale": 2,
+      "src": "程序化生成（0x72/Kenney 均无宝石）"
+    },
+    "blueGem": {
+      "atlas": "items",
+      "x": 17,
+      "y": 0,
+      "w": 16,
+      "h": 16,
+      "drawScale": 2,
+      "src": "程序化生成（0x72/Kenney 均无宝石）"
+    },
+    "redPotion": {
+      "atlas": "items",
+      "x": 34,
+      "y": 0,
+      "w": 16,
+      "h": 16,
+      "drawScale": 2,
+      "src": "0x72/flask_red"
+    },
+    "bluePotion": {
+      "atlas": "items",
+      "x": 51,
+      "y": 0,
+      "w": 16,
+      "h": 16,
+      "drawScale": 2,
+      "src": "0x72/flask_blue"
+    },
+    "holyWater": {
+      "atlas": "items",
+      "x": 68,
+      "y": 0,
+      "w": 16,
+      "h": 16,
+      "drawScale": 2,
+      "src": "0x72/flask_big_blue"
+    },
+    "yellowKey": {
+      "atlas": "items",
+      "x": 85,
+      "y": 0,
+      "w": 16,
+      "h": 16,
+      "drawScale": 2,
+      "src": "Kenney #126 @ 匙身重染为金"
+    },
+    "blueKey": {
+      "atlas": "items",
+      "x": 102,
+      "y": 0,
+      "w": 16,
+      "h": 16,
+      "drawScale": 2,
+      "src": "Kenney #126 @ 匙身重染为蓝"
+    },
+    "redKey": {
+      "atlas": "items",
+      "x": 119,
+      "y": 0,
+      "w": 16,
+      "h": 16,
+      "drawScale": 2,
+      "src": "Kenney #126 @ 匙身重染为红"
+    },
+    "goldenKey": {
+      "atlas": "items",
+      "x": 136,
+      "y": 0,
+      "w": 16,
+      "h": 16,
+      "drawScale": 2,
+      "src": "Kenney #129 @ 整把黄金渐变"
+    },
+    "ironSword": {
+      "atlas": "items",
+      "x": 0,
+      "y": 17,
+      "w": 10,
+      "h": 21,
+      "drawScale": 2,
+      "src": "0x72/weapon_rusty_sword"
+    },
+    "silverSword": {
+      "atlas": "items",
+      "x": 11,
+      "y": 17,
+      "w": 10,
+      "h": 21,
+      "drawScale": 2,
+      "src": "0x72/weapon_regular_sword"
+    },
+    "knightSword": {
+      "atlas": "items",
+      "x": 0,
+      "y": 39,
+      "w": 10,
+      "h": 29,
+      "drawScale": 2,
+      "src": "0x72/weapon_knight_sword"
+    },
+    "holySword": {
+      "atlas": "items",
+      "x": 11,
+      "y": 39,
+      "w": 10,
+      "h": 22,
+      "drawScale": 2,
+      "src": "0x72/weapon_golden_sword"
+    },
+    "sacredSword": {
+      "atlas": "items",
+      "x": 0,
+      "y": 69,
+      "w": 10,
+      "h": 30,
+      "drawScale": 2,
+      "src": "0x72/weapon_lavish_sword"
+    },
+    "dragonSlayer": {
+      "atlas": "items",
+      "x": 11,
+      "y": 69,
+      "w": 10,
+      "h": 21,
+      "drawScale": 2,
+      "src": "0x72/weapon_red_gem_sword"
+    },
+    "ironShield": {
+      "atlas": "items",
+      "x": 22,
+      "y": 69,
+      "w": 16,
+      "h": 16,
+      "drawScale": 2,
+      "src": "Kenney #102 @ 铁渐变"
+    },
+    "silverShield": {
+      "atlas": "items",
+      "x": 39,
+      "y": 69,
+      "w": 16,
+      "h": 16,
+      "drawScale": 2,
+      "src": "Kenney #102 @ 银渐变"
+    },
+    "knightShield": {
+      "atlas": "items",
+      "x": 56,
+      "y": 69,
+      "w": 16,
+      "h": 16,
+      "drawScale": 2,
+      "src": "Kenney #102 @ 蓝钢渐变"
+    },
+    "holyShield": {
+      "atlas": "items",
+      "x": 73,
+      "y": 69,
+      "w": 16,
+      "h": 16,
+      "drawScale": 2,
+      "src": "Kenney #102 @ 黄金渐变"
+    },
+    "sacredShield": {
+      "atlas": "items",
+      "x": 90,
+      "y": 69,
+      "w": 16,
+      "h": 16,
+      "drawScale": 2,
+      "src": "Kenney #102 @ 圣红渐变"
+    },
+    "shovel": {
+      "atlas": "items",
+      "x": 107,
+      "y": 69,
+      "w": 16,
+      "h": 16,
+      "drawScale": 2,
+      "src": "0x72 图集 r12c5（镐）"
+    },
+    "bomb": {
+      "atlas": "items",
+      "x": 124,
+      "y": 69,
+      "w": 16,
+      "h": 16,
+      "drawScale": 2,
+      "src": "程序化生成"
+    },
+    "cross": {
+      "atlas": "items",
+      "x": 141,
+      "y": 69,
+      "w": 16,
+      "h": 16,
+      "drawScale": 2,
+      "src": "程序化生成"
+    },
+    "snowflake": {
+      "atlas": "items",
+      "x": 158,
+      "y": 69,
+      "w": 16,
+      "h": 16,
+      "drawScale": 2,
+      "src": "程序化生成"
+    },
+    "quakeScroll": {
+      "atlas": "items",
+      "x": 175,
+      "y": 69,
+      "w": 16,
+      "h": 16,
+      "drawScale": 2,
+      "src": "程序化生成"
+    },
+    "monsterBook": {
+      "atlas": "items",
+      "x": 192,
+      "y": 69,
+      "w": 16,
+      "h": 16,
+      "drawScale": 2,
+      "src": "程序化生成"
+    },
+    "notebook": {
+      "atlas": "items",
+      "x": 209,
+      "y": 69,
+      "w": 16,
+      "h": 16,
+      "drawScale": 2,
+      "src": "程序化生成"
+    },
+    "mirrorFlyer": {
+      "atlas": "items",
+      "x": 226,
+      "y": 69,
+      "w": 16,
+      "h": 16,
+      "drawScale": 2,
+      "src": "程序化生成"
+    },
+    "upFlyer": {
+      "atlas": "items",
+      "x": 243,
+      "y": 69,
+      "w": 16,
+      "h": 16,
+      "drawScale": 2,
+      "src": "程序化生成"
+    },
+    "downFlyer": {
+      "atlas": "items",
+      "x": 260,
+      "y": 69,
+      "w": 16,
+      "h": 16,
+      "drawScale": 2,
+      "src": "程序化生成"
+    },
+    "floorTeleporter": {
+      "atlas": "items",
+      "x": 277,
+      "y": 69,
+      "w": 16,
+      "h": 16,
+      "drawScale": 2,
+      "src": "程序化生成"
+    },
+    "bigGold": {
+      "atlas": "items",
+      "x": 294,
+      "y": 69,
+      "w": 8,
+      "h": 8,
+      "drawScale": 2,
+      "src": "0x72/coin_anim_f0"
+    }
+  },
+  "actors": {
+    "hero": {
+      "atlas": "actors",
+      "drawScale": 2,
+      "walk": {
+        "down": [
+          {
+            "x": 0,
+            "y": 0,
+            "w": 16,
+            "h": 26
+          },
+          {
+            "x": 17,
+            "y": 0,
+            "w": 16,
+            "h": 26
+          },
+          {
+            "x": 34,
+            "y": 0,
+            "w": 16,
+            "h": 26
+          },
+          {
+            "x": 51,
+            "y": 0,
+            "w": 16,
+            "h": 26
+          }
+        ],
+        "left": [
+          {
+            "x": 68,
+            "y": 0,
+            "w": 16,
+            "h": 26
+          },
+          {
+            "x": 85,
+            "y": 0,
+            "w": 16,
+            "h": 26
+          },
+          {
+            "x": 102,
+            "y": 0,
+            "w": 16,
+            "h": 26
+          },
+          {
+            "x": 119,
+            "y": 0,
+            "w": 16,
+            "h": 26
+          }
+        ],
+        "up": [
+          {
+            "x": 136,
+            "y": 0,
+            "w": 16,
+            "h": 26
+          },
+          {
+            "x": 153,
+            "y": 0,
+            "w": 16,
+            "h": 26
+          },
+          {
+            "x": 170,
+            "y": 0,
+            "w": 16,
+            "h": 26
+          },
+          {
+            "x": 187,
+            "y": 0,
+            "w": 16,
+            "h": 26
+          }
+        ],
+        "right": [
+          {
+            "x": 204,
+            "y": 0,
+            "w": 16,
+            "h": 26
+          },
+          {
+            "x": 221,
+            "y": 0,
+            "w": 16,
+            "h": 26
+          },
+          {
+            "x": 238,
+            "y": 0,
+            "w": 16,
+            "h": 26
+          },
+          {
+            "x": 255,
+            "y": 0,
+            "w": 16,
+            "h": 26
+          }
+        ]
+      },
+      "attack": {
+        "down": [
+          {
+            "x": 272,
+            "y": 0,
+            "w": 20,
+            "h": 26
+          },
+          {
+            "x": 293,
+            "y": 0,
+            "w": 20,
+            "h": 26
+          },
+          {
+            "x": 314,
+            "y": 0,
+            "w": 20,
+            "h": 26
+          },
+          {
+            "x": 335,
+            "y": 0,
+            "w": 20,
+            "h": 26
+          }
+        ],
+        "left": [
+          {
+            "x": 356,
+            "y": 0,
+            "w": 20,
+            "h": 26
+          },
+          {
+            "x": 377,
+            "y": 0,
+            "w": 20,
+            "h": 26
+          },
+          {
+            "x": 398,
+            "y": 0,
+            "w": 20,
+            "h": 26
+          },
+          {
+            "x": 419,
+            "y": 0,
+            "w": 20,
+            "h": 26
+          }
+        ],
+        "up": [
+          {
+            "x": 440,
+            "y": 0,
+            "w": 20,
+            "h": 26
+          },
+          {
+            "x": 461,
+            "y": 0,
+            "w": 20,
+            "h": 26
+          },
+          {
+            "x": 482,
+            "y": 0,
+            "w": 20,
+            "h": 26
+          },
+          {
+            "x": 0,
+            "y": 27,
+            "w": 20,
+            "h": 26
+          }
+        ],
+        "right": [
+          {
+            "x": 21,
+            "y": 27,
+            "w": 20,
+            "h": 26
+          },
+          {
+            "x": 42,
+            "y": 27,
+            "w": 20,
+            "h": 26
+          },
+          {
+            "x": 63,
+            "y": 27,
+            "w": 20,
+            "h": 26
+          },
+          {
+            "x": 84,
+            "y": 27,
+            "w": 20,
+            "h": 26
+          }
+        ]
+      },
+      "src": "ArMM1998 / Zelda-like tilesets and sprites — character.png",
+      "dirOrder": [
+        "down",
+        "left",
+        "up",
+        "right"
+      ]
+    },
+    "npcs": {
+      "sage": {
+        "atlas": "actors",
+        "drawScale": 2,
+        "walk": {
+          "down": [
+            {
+              "x": 105,
+              "y": 27,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 122,
+              "y": 27,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 139,
+              "y": 27,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 156,
+              "y": 27,
+              "w": 16,
+              "h": 26
+            }
+          ],
+          "left": [
+            {
+              "x": 173,
+              "y": 27,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 190,
+              "y": 27,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 207,
+              "y": 27,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 224,
+              "y": 27,
+              "w": 16,
+              "h": 26
+            }
+          ],
+          "up": [
+            {
+              "x": 241,
+              "y": 27,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 258,
+              "y": 27,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 275,
+              "y": 27,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 292,
+              "y": 27,
+              "w": 16,
+              "h": 26
+            }
+          ],
+          "right": [
+            {
+              "x": 309,
+              "y": 27,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 326,
+              "y": 27,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 343,
+              "y": 27,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 360,
+              "y": 27,
+              "w": 16,
+              "h": 26
+            }
+          ]
+        },
+        "src": "ArMM1998 / Zelda-like — NPC_test.png @ ((88, 84, 78), (238, 234, 222))"
+      },
+      "merchant": {
+        "atlas": "actors",
+        "drawScale": 2,
+        "walk": {
+          "down": [
+            {
+              "x": 377,
+              "y": 27,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 394,
+              "y": 27,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 411,
+              "y": 27,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 428,
+              "y": 27,
+              "w": 16,
+              "h": 26
+            }
+          ],
+          "left": [
+            {
+              "x": 445,
+              "y": 27,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 462,
+              "y": 27,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 479,
+              "y": 27,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 496,
+              "y": 27,
+              "w": 16,
+              "h": 26
+            }
+          ],
+          "up": [
+            {
+              "x": 0,
+              "y": 54,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 17,
+              "y": 54,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 34,
+              "y": 54,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 51,
+              "y": 54,
+              "w": 16,
+              "h": 26
+            }
+          ],
+          "right": [
+            {
+              "x": 68,
+              "y": 54,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 85,
+              "y": 54,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 102,
+              "y": 54,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 119,
+              "y": 54,
+              "w": 16,
+              "h": 26
+            }
+          ]
+        },
+        "src": "ArMM1998 / Zelda-like — NPC_test.png @ ((92, 56, 22), (226, 176, 108))"
+      },
+      "thief": {
+        "atlas": "actors",
+        "drawScale": 2,
+        "walk": {
+          "down": [
+            {
+              "x": 136,
+              "y": 54,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 153,
+              "y": 54,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 170,
+              "y": 54,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 187,
+              "y": 54,
+              "w": 16,
+              "h": 26
+            }
+          ],
+          "left": [
+            {
+              "x": 204,
+              "y": 54,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 221,
+              "y": 54,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 238,
+              "y": 54,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 255,
+              "y": 54,
+              "w": 16,
+              "h": 26
+            }
+          ],
+          "up": [
+            {
+              "x": 272,
+              "y": 54,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 289,
+              "y": 54,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 306,
+              "y": 54,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 323,
+              "y": 54,
+              "w": 16,
+              "h": 26
+            }
+          ],
+          "right": [
+            {
+              "x": 340,
+              "y": 54,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 357,
+              "y": 54,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 374,
+              "y": 54,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 391,
+              "y": 54,
+              "w": 16,
+              "h": 26
+            }
+          ]
+        },
+        "src": "ArMM1998 / Zelda-like — NPC_test.png @ ((28, 26, 42), (128, 124, 156))"
+      },
+      "fairy": {
+        "atlas": "actors",
+        "drawScale": 2,
+        "walk": {
+          "down": [
+            {
+              "x": 408,
+              "y": 54,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 425,
+              "y": 54,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 442,
+              "y": 54,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 459,
+              "y": 54,
+              "w": 16,
+              "h": 26
+            }
+          ],
+          "left": [
+            {
+              "x": 476,
+              "y": 54,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 493,
+              "y": 54,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 0,
+              "y": 81,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 17,
+              "y": 81,
+              "w": 16,
+              "h": 26
+            }
+          ],
+          "up": [
+            {
+              "x": 34,
+              "y": 81,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 51,
+              "y": 81,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 68,
+              "y": 81,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 85,
+              "y": 81,
+              "w": 16,
+              "h": 26
+            }
+          ],
+          "right": [
+            {
+              "x": 102,
+              "y": 81,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 119,
+              "y": 81,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 136,
+              "y": 81,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 153,
+              "y": 81,
+              "w": 16,
+              "h": 26
+            }
+          ]
+        },
+        "src": "ArMM1998 / Zelda-like — NPC_test.png @ ((72, 120, 132), (186, 240, 236))"
+      },
+      "princess": {
+        "atlas": "actors",
+        "drawScale": 2,
+        "walk": {
+          "down": [
+            {
+              "x": 170,
+              "y": 81,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 187,
+              "y": 81,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 204,
+              "y": 81,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 221,
+              "y": 81,
+              "w": 16,
+              "h": 26
+            }
+          ],
+          "left": [
+            {
+              "x": 238,
+              "y": 81,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 255,
+              "y": 81,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 272,
+              "y": 81,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 289,
+              "y": 81,
+              "w": 16,
+              "h": 26
+            }
+          ],
+          "up": [
+            {
+              "x": 306,
+              "y": 81,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 323,
+              "y": 81,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 340,
+              "y": 81,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 357,
+              "y": 81,
+              "w": 16,
+              "h": 26
+            }
+          ],
+          "right": [
+            {
+              "x": 374,
+              "y": 81,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 391,
+              "y": 81,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 408,
+              "y": 81,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 425,
+              "y": 81,
+              "w": 16,
+              "h": 26
+            }
+          ]
+        },
+        "src": "ArMM1998 / Zelda-like — NPC_test.png @ ((122, 46, 96), (248, 190, 224))"
+      },
+      "shop": {
+        "atlas": "actors",
+        "drawScale": 2,
+        "walk": {
+          "down": [
+            {
+              "x": 442,
+              "y": 81,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 459,
+              "y": 81,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 476,
+              "y": 81,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 493,
+              "y": 81,
+              "w": 16,
+              "h": 26
+            }
+          ],
+          "left": [
+            {
+              "x": 0,
+              "y": 108,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 17,
+              "y": 108,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 34,
+              "y": 108,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 51,
+              "y": 108,
+              "w": 16,
+              "h": 26
+            }
+          ],
+          "up": [
+            {
+              "x": 68,
+              "y": 108,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 85,
+              "y": 108,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 102,
+              "y": 108,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 119,
+              "y": 108,
+              "w": 16,
+              "h": 26
+            }
+          ],
+          "right": [
+            {
+              "x": 136,
+              "y": 108,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 153,
+              "y": 108,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 170,
+              "y": 108,
+              "w": 16,
+              "h": 26
+            },
+            {
+              "x": 187,
+              "y": 108,
+              "w": 16,
+              "h": 26
+            }
+          ]
+        },
+        "src": "ArMM1998 / Zelda-like — NPC_test.png @ ((30, 78, 48), (142, 218, 148))"
+      }
+    }
+  },
+  "atlases": {}
+}

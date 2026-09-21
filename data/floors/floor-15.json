@@ -1,0 +1,190 @@
+{
+ "id": "floor-15",
+ "index": 15,
+ "title": "主塔 15 层",
+ "size": {
+  "cols": 11,
+  "rows": 11
+ },
+ "terrain": [
+  "...y.^.w...",
+  "...#...#...",
+  "...##a####y",
+  "y###...#...",
+  ".#.#...#...",
+  ".#.#...#y#.",
+  ".#.#...#.#.",
+  ".#.#...#.#.",
+  ".y.##.##y##",
+  ".#.#...#...",
+  "...#.v.y..."
+ ],
+ "stairs": {
+  "up": [
+   {
+    "x": 5,
+    "y": 0,
+    "to": 16,
+    "arrive": {
+     "x": 5,
+     "y": 0
+    }
+   }
+  ],
+  "down": [
+   {
+    "x": 5,
+    "y": 10,
+    "to": 14,
+    "arrive": {
+     "x": 5,
+     "y": 10
+    }
+   }
+  ]
+ },
+ "doors": {
+  "yellow": 7,
+  "blue": 0,
+  "red": 0
+ },
+ "entities": [
+  {
+   "type": "item",
+   "id": "blueGem",
+   "x": 0,
+   "y": 0
+  },
+  {
+   "type": "monster",
+   "id": "orcWarrior",
+   "x": 1,
+   "y": 0
+  },
+  {
+   "type": "npc",
+   "id": "sage",
+   "x": 8,
+   "y": 0
+  },
+  {
+   "type": "monster",
+   "id": "orc",
+   "x": 0,
+   "y": 1
+  },
+  {
+   "type": "monster",
+   "id": "bigSlime",
+   "x": 10,
+   "y": 1
+  },
+  {
+   "type": "monster",
+   "id": "bigSlime",
+   "x": 2,
+   "y": 2
+  },
+  {
+   "type": "monster",
+   "id": "bigBat",
+   "x": 8,
+   "y": 3
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 2,
+   "y": 4
+  },
+  {
+   "type": "monster",
+   "id": "kraken",
+   "x": 5,
+   "y": 4
+  },
+  {
+   "type": "item",
+   "id": "shovel",
+   "x": 5,
+   "y": 4
+  },
+  {
+   "type": "monster",
+   "id": "bigBat",
+   "x": 9,
+   "y": 4
+  },
+  {
+   "type": "item",
+   "id": "blueKey",
+   "x": 2,
+   "y": 5
+  },
+  {
+   "type": "monster",
+   "id": "seniorMage",
+   "x": 10,
+   "y": 5
+  },
+  {
+   "type": "monster",
+   "id": "bigSlime",
+   "x": 0,
+   "y": 6
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 2,
+   "y": 6
+  },
+  {
+   "type": "item",
+   "id": "bluePotion",
+   "x": 10,
+   "y": 7
+  },
+  {
+   "type": "monster",
+   "id": "bigBat",
+   "x": 0,
+   "y": 9
+  },
+  {
+   "type": "monster",
+   "id": "bigBat",
+   "x": 2,
+   "y": 9
+  },
+  {
+   "type": "monster",
+   "id": "bat",
+   "x": 9,
+   "y": 9
+  },
+  {
+   "type": "monster",
+   "id": "seniorMage",
+   "x": 1,
+   "y": 10
+  },
+  {
+   "type": "monster",
+   "id": "bat",
+   "x": 8,
+   "y": 10
+  },
+  {
+   "type": "npc",
+   "id": "merchant",
+   "x": 10,
+   "y": 10
+  }
+ ],
+ "notes": {
+  "title": "铁锹层",
+  "note": "大乌贼守着铁锹。铁锹用于破坏勇者四周紧邻的墙，是打开隐藏区域的三种方式之一（另两种是地震卷轴与撞假墙）。",
+  "evidence": "攻略「上15层杀大乌贼不耗血取锄头P」；本层数据中 kraken 与 shovel 同格 (5,4)"
+ }
+}

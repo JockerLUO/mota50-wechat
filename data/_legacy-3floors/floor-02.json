@@ -1,0 +1,37 @@
+{
+  "id": "floor-02",
+  "name": "第二层 · 黄门",
+  "cols": 13,
+  "rows": 13,
+  "bgm": "bgm_tower_1",
+  "start": { "x": 11, "y": 1 },
+  "terrain": [
+    "#############",
+    "#.....#.....#",
+    "#.....#.....#",
+    "#.....#.....#",
+    "#.....#.....#",
+    "#.....#.....#",
+    "##.#######.##",
+    "#...........#",
+    "#.....#.....#",
+    "#.....#.....#",
+    "#.....#.....#",
+    "#.....#.....#",
+    "#############"
+  ],
+  "entities": [
+    { "x": 11, "y": 1, "type": "stair", "id": "up", "target": "floor-01" },
+    { "x": 1, "y": 11, "type": "stair", "id": "down", "target": "floor-03" },
+    { "x": 8, "y": 2, "type": "item", "id": "yellowKey" },
+    { "x": 9, "y": 4, "type": "item", "id": "redGem" },
+    { "x": 10, "y": 6, "type": "door", "id": "yellowDoor" },
+    { "x": 6, "y": 7, "type": "monster", "id": "orc" },
+    { "x": 2, "y": 6, "type": "monster", "id": "skeleton" },
+    { "x": 1, "y": 2, "type": "item", "id": "blueGem" },
+    { "x": 3, "y": 3, "type": "item", "id": "redPotion" },
+    { "x": 5, "y": 10, "type": "item", "id": "goldPile" },
+    { "x": 11, "y": 9, "type": "monster", "id": "orc" },
+    { "x": 11, "y": 10, "type": "item", "id": "redPotion" }
+  ]
+}

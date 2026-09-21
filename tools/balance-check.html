@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>魔塔50层 · 数值校验台</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --panel: #ffffff;
+    --line: #e3e6eb;
+    --text: #1f2328;
+    --muted: #6b7280;
+    --accent: #2f6feb;
+    --ok: #1a7f37;
+    --warn: #9a6700;
+    --danger: #cf222e;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px;
+    background: var(--bg); color: var(--text);
+    font: 14px/1.6 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  h2 { font-size: 15px; margin: 0 0 12px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+  .sub { color: var(--muted); font-size: 12px; margin-bottom: 20px; }
+  .panel {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 16px 18px; margin-bottom: 16px;
+  }
+  .row { display: flex; flex-wrap: wrap; gap: 18px; align-items: flex-end; }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field label { font-size: 12px; color: var(--muted); }
+  input[type=number] {
+    width: 104px; padding: 6px 8px; font: inherit;
+    border: 1px solid var(--line); border-radius: 6px; background: #fff; color: var(--text);
+  }
+  .checks { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; }
+  .checks label { display: flex; align-items: center; gap: 5px; font-size: 13px; cursor: pointer; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 6px 8px; text-align: right; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { font-weight: 600; color: var(--muted); font-size: 12px; background: #fafbfc; position: sticky; top: 0; }
+  th:first-child, td:first-child { text-align: left; }
+  td.name { font-weight: 500; }
+  tbody tr:hover { background: #f3f6fb; }
+  .tag { display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 11px; line-height: 18px; }
+  .t-easy { background: #e6f4ea; color: var(--ok); }
+  .t-ok { background: #eef2f7; color: var(--muted); }
+  .t-high { background: #fff4d6; color: var(--warn); }
+  .t-danger { background: #ffe2e0; color: var(--danger); }
+  .t-fatal { background: #cf222e; color: #fff; }
+  .t-blocked { background: #eaecef; color: #57606a; }
+  .t-execute { background: #e7e0ff; color: #5b3fd6; }
+  .bar { display: inline-block; height: 8px; border-radius: 4px; background: var(--accent); vertical-align: middle; }
+  .scroll { max-height: 560px; overflow: auto; }
+  .stat { display: inline-block; margin-right: 18px; }
+  .stat b { font-size: 15px; }
+  .ok { color: var(--ok); } .bad { color: var(--danger); }
+  code { background: #f0f2f5; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+  .note { color: var(--muted); font-size: 12px; margin-top: 10px; }
+  .warnbox { background: #fff8e5; border: 1px solid #f0e0b0; border-radius: 8px; padding: 10px 12px; font-size: 13px; }
+</style>
+</head>
+<body>
+
+<h1>魔塔50层 · 数值校验台</h1>
+<div class="sub">
+  数值取自原版《魔塔50层》源码与社区基准帖。本页由
+  <code>tools/build-balance-check.mjs</code> 从 <code>data/*.json</code> 自动生成，内联数据与数据源一致。
+</div>
+
+<div class="panel">
+  <h2>一、勇者属性与持有道具</h2>
+  <div class="row">
+    <div class="field"><label>生命 HP</label><input type="number" id="hp" value="1000"></div>
+    <div class="field"><label>攻击 ATK</label><input type="number" id="atk" value="10"></div>
+    <div class="field"><label>防御 DEF</label><input type="number" id="def" value="10"></div>
+    <div class="field"><label>所在楼层</label><input type="number" id="floor" value="1" min="0" max="50"></div>
+    <div class="field"><label>已购买次数 n</label><input type="number" id="buys" value="1" min="1"></div>
+  </div>
+  <div class="checks" style="margin-top:14px">
+    <label><input type="checkbox" id="cross"> 十字架（克兽人/兽人武士/吸血鬼）</label>
+    <label><input type="checkbox" id="dragonSlayer"> 屠龙剑（克魔龙）</label>
+    <label><input type="checkbox" id="sacredShield"> 神圣盾（免疫领域）</label>
+    <label><input type="checkbox" id="onlyReachable"> 只看「能打赢」的</label>
+    <label><input type="checkbox" id="onlyFloor"> 只看当前楼层会遇到</label>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>二、怪物战斗预览</h2>
+  <div id="summary" style="margin-bottom:12px"></div>
+  <div class="scroll">
+    <table>
+      <thead><tr>
+        <th>怪物</th><th>出现层</th><th>HP</th><th>ATK</th><th>DEF</th>
+        <th>回合</th><th>每回合</th><th>总损失</th><th>占生命</th><th>评级</th>
+        <th>击破需 ATK</th><th>零损需 ATK</th>
+      </tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+  <div class="note">
+    损失 = (回合数 − 1) × 每回合伤害，回合数 = ⌈怪HP / (勇者ATK − 怪DEF)⌉。
+    勇者先手，所以怪物只完整出手「回合数 − 1」次。
+  </div>
+</div>
+
+<div class="panel">
+  <h2>三、商店计算器</h2>
+  <div class="row">
+    <div class="field"><label>当前金币</label><input type="number" id="gold" value="500"></div>
+  </div>
+  <div id="shop" style="margin-top:14px"></div>
+  <div class="note">
+    价格 = 10n(n−1) + 20，n 为已购买次数；收益 = 基础值 × (⌊楼层/10⌋ + 1)。
+    增量随楼层放大、价格却只与购买次数挂钩 —— 这是原版「前期不买、留到后面买」策略的数学来源。
+  </div>
+</div>
+
+<div class="panel">
+  <h2>四、公式自检</h2>
+  <div id="selftest"></div>
+  <div class="note">
+    用 data/combat-cases.json 的黄金用例验证本页的战斗与商店公式实现。
+    其中大多数用例的期望值取自公开攻略里玩家实测的扣血量，属独立第三方数据。
+  </div>
+</div>
+
+<script type="application/json" id="hero">{"hp":1000,"atk":10,"def":10,"gold":0,"yellowKey":0,"blueKey":0,"redKey":0,"startFloor":1,"startPos":{"x":5,"y":10},"startPosNote":"0 基坐标。参考源码用 1 基坐标（mota50-action.js:42 `(player.y-1)*11+player.x-1`），player 初值为 (x:6, y:11) → 索引 115 → 本项目的 (x:5, y:10)。转换前该字段直接抄了 1 基值，y=11 在 11×11 网格中越界。","startFace":"up"}</script>
+<script type="application/json" id="monsters">{"skeleton":{"roleId":1,"name":"骷髅人","hp":50,"atk":42,"def":6,"gold":6,"exp":0,"traits":[],"sprite":"mon_skeleton"},"skeletonSoldier":{"roleId":2,"name":"骷髅士兵","hp":55,"atk":52,"def":12,"gold":8,"exp":0,"traits":[],"sprite":"mon_skeleton_soldier"},"skeletonCaptain":{"roleId":3,"name":"骷髅队长","hp":100,"atk":65,"def":15,"gold":30,"exp":0,"traits":[],"boss":true,"sprite":"mon_skeleton_captain"},"ghostWarrior":{"roleId":4,"name":"鬼战士","hp":220,"atk":180,"def":30,"gold":35,"exp":0,"traits":[],"sprite":"mon_ghost_warrior"},"bat":{"roleId":5,"name":"小蝙蝠","hp":35,"atk":38,"def":3,"gold":3,"exp":0,"traits":[],"sprite":"mon_bat"},"bigBat":{"roleId":6,"name":"大蝙蝠","hp":60,"atk":100,"def":8,"gold":12,"exp":0,"traits":[],"sprite":"mon_big_bat"},"vampireBat":{"roleId":7,"name":"吸血蝙蝠","hp":200,"atk":390,"def":90,"gold":50,"exp":0,"traits":[],"sprite":"mon_vampire_bat"},"vampire":{"roleId":8,"name":"吸血鬼","hp":444,"atk":199,"def":66,"gold":144,"exp":0,"traits":["crossVulnerable","undead"],"boss":true,"note":"十字架克制。攻略实测：攻72/防84 时耗血 575，公式为 (444/(144−66)→6回合) 计 5×115=575 —— 若不翻倍则为 8395，相差 14 倍。参考源码只对这一只实现了翻倍。","sprite":"mon_vampire"},"greenSlime":{"roleId":9,"name":"绿史莱姆","hp":35,"atk":18,"def":1,"gold":1,"exp":0,"traits":[],"sprite":"mon_green_slime"},"redSlime":{"roleId":10,"name":"红史莱姆","hp":45,"atk":20,"def":2,"gold":2,"exp":0,"traits":[],"sprite":"mon_red_slime"},"bigSlime":{"roleId":11,"name":"大史莱姆","hp":130,"atk":60,"def":3,"gold":8,"exp":0,"traits":[],"sprite":"mon_big_slime"},"slimeKing":{"roleId":12,"name":"史莱姆王","hp":360,"atk":310,"def":20,"gold":40,"exp":0,"traits":[],"sprite":"mon_slime_king"},"juniorMage":{"roleId":13,"name":"初级法师","hp":60,"atk":32,"def":8,"gold":5,"exp":0,"traits":[],"sprite":"mon_junior_mage"},"seniorMage":{"roleId":14,"name":"高级法师","hp":100,"atk":95,"def":30,"gold":22,"exp":0,"traits":[],"sprite":"mon_senior_mage"},"juniorWizard":{"roleId":15,"name":"初级巫师","hp":220,"atk":370,"def":110,"gold":80,"exp":0,"traits":[{"type":"aura","range":1,"damage":100}],"note":"领域：勇者每次移动后，若与它上下左右相邻则扣 100 HP。持神圣盾完全免疫。","sprite":"mon_junior_wizard"},"seniorWizard":{"roleId":16,"name":"高级巫师","hp":200,"atk":380,"def":130,"gold":90,"exp":0,"traits":[{"type":"aura","range":1,"damage":200},{"type":"flank","chance":0.5}],"note":"领域伤害 200。部分个体带阻击（先制攻击），见 h5mota 基准数值帖。","sprite":"mon_senior_wizard"},"orc":{"roleId":17,"name":"兽人","hp":260,"atk":85,"def":5,"gold":18,"exp":0,"traits":["crossVulnerable"],"note":"十字架克制。攻略实测：持十字架后攻70/防82 耗血 3 = (140−5)=135 → 2 回合、1×3；不翻倍则为 3 回合、9 血。","sprite":"mon_orc"},"orcWarrior":{"roleId":18,"name":"兽人武士","hp":320,"atk":120,"def":15,"gold":30,"exp":0,"traits":["crossVulnerable"],"note":"十字架克制，且是「拿到十字架前后」的最佳对照证据：攻62/防76（未持）耗血 264 = 6×(120−76)；攻70/防82（持）耗血 76 = 2×(120−82)。两组数字只有在对兽人也翻倍时才同时成立。","sprite":"mon_orc_warrior"},"stoneGolem":{"roleId":19,"name":"石头人","hp":20,"atk":100,"def":68,"gold":28,"exp":0,"traits":[],"note":"高防低血：典型的「攻击力门槛」怪。攻击力不足时完全无法击破。","sprite":"mon_stone_golem"},"phantom":{"roleId":20,"name":"幽灵","hp":320,"atk":140,"def":20,"gold":30,"exp":0,"traits":[],"sprite":"mon_phantom"},"juniorGuard":{"roleId":21,"name":"初级卫兵","hp":50,"atk":48,"def":22,"gold":12,"exp":0,"traits":[],"sprite":"mon_junior_guard"},"midGuard":{"roleId":22,"name":"中级卫兵","hp":100,"atk":180,"def":110,"gold":50,"exp":0,"traits":[],"note":"第2层把守牢门，击败后开启牢门（源码：event.js eventHappened[0]）","sprite":"mon_mid_guard"},"seniorGuard":{"roleId":23,"name":"高级卫兵","hp":180,"atk":460,"def":360,"gold":200,"exp":0,"traits":[],"sprite":"mon_senior_guard"},"swordsman":{"roleId":24,"name":"双手剑士","hp":100,"atk":680,"def":50,"gold":55,"exp":0,"traits":[{"type":"execute","stat":"atk","threshold":150,"damage":0}],"note":"勇者攻击力 ≥ 150 时零损失秒杀（源码：fight.js 中 enm.id===24 分支）。这是原版最著名的隐藏机制。","sprite":"mon_swordsman"},"demonKing":{"roleId":25,"name":"魔王（封印前）","hp":8000,"atk":5000,"def":1000,"gold":5000,"exp":0,"traits":[],"boss":true,"note":"即社区所称「假魔王」，封印解除前属性。","sprite":"mon_demon_king_sealed"},"magicGuard":{"roleId":26,"name":"魔法警卫","hp":230,"atk":450,"def":100,"gold":100,"exp":0,"traits":[{"type":"flank","chance":0.5}],"note":"夹击(50%)：战斗时怪物先制攻击一次。参考实现 m8705 未实现此特性，本项目保留为数据。","sprite":"mon_magic_guard"},"archmage":{"roleId":27,"name":"大法师","hp":4500,"atk":560,"def":310,"gold":1000,"exp":0,"traits":[],"boss":true,"sprite":"mon_archmage"},"warrior":{"roleId":28,"name":"战士","hp":210,"atk":200,"def":65,"gold":45,"exp":0,"traits":[],"sprite":"mon_warrior"},"knightCaptain":{"roleId":29,"name":"骑士队长","hp":120,"atk":150,"def":50,"gold":100,"exp":0,"traits":[],"boss":true,"sprite":"mon_knight_captain"},"knight":{"roleId":30,"name":"骑士","hp":160,"atk":230,"def":105,"gold":65,"exp":0,"traits":[],"sprite":"mon_knight"},"darkKnight":{"roleId":31,"name":"黑暗骑士","hp":180,"atk":430,"def":210,"gold":120,"exp":0,"traits":[],"sprite":"mon_dark_knight"},"dragon":{"roleId":37,"name":"魔龙","hp":1500,"atk":600,"def":250,"gold":800,"exp":0,"traits":["dragon"],"boss":true,"note":"持有屠龙剑时对其攻击力翻倍（源码：fight.js 中 enm.id===32 分支）","sprite":"mon_dragon"},"kraken":{"roleId":38,"name":"大乌贼","hp":1200,"atk":180,"def":20,"gold":100,"exp":0,"traits":[],"boss":true,"sprite":"mon_kraken"},"demonKingTrue":{"name":"真魔王","hp":5000,"atk":1580,"def":190,"gold":500,"exp":0,"traits":[],"boss":true,"note":"最终 BOSS。属性来自 h5mota 基准数值帖；参考实现 m8705 未单独建模该阶段。","sprite":"mon_demon_king_true"}}</script>
+<script type="application/json" id="items">{"redGem":{"sourceId":1,"name":"红宝石","kind":"pickup","effects":[{"op":"addStat","stat":"atk","value":2}],"note":"原版为 +2 而非 +1"},"blueGem":{"sourceId":2,"name":"蓝宝石","kind":"pickup","effects":[{"op":"addStat","stat":"def","value":2}]},"redPotion":{"sourceId":3,"name":"红药水","kind":"pickup","effects":[{"op":"addStat","stat":"hp","value":50}]},"bluePotion":{"sourceId":4,"name":"蓝药水","kind":"pickup","effects":[{"op":"addStat","stat":"hp","value":200}]},"holyWater":{"sourceId":5,"name":"圣水","kind":"usable","effects":[{"op":"mulStat","stat":"hp","value":2}],"note":"不是「回满血」——是当前 HP 翻倍。越晚用收益越大，是原版最重要的资源决策点。"},"yellowKey":{"sourceId":6,"name":"黄钥匙","kind":"pickup","effects":[{"op":"addKey","key":"yellowKey","value":1}]},"blueKey":{"sourceId":7,"name":"蓝钥匙","kind":"pickup","effects":[{"op":"addKey","key":"blueKey","value":1}]},"redKey":{"sourceId":8,"name":"红钥匙","kind":"pickup","effects":[{"op":"addKey","key":"redKey","value":1}]},"goldenKey":{"sourceId":9,"name":"金钥匙","kind":"usable","effects":[{"op":"clearTerrain","terrain":7,"scope":"currentFloor"}],"note":"不是万能钥匙。使用后一次性清除当前楼层所有黄门，是原版的「楼层解谜钥匙」。"},"monsterBook":{"sourceId":10,"name":"怪物书","kind":"usable","effects":[{"op":"toggleUi","ui":"monsterBook"}],"note":"第3层智慧老人赠与"},"notebook":{"sourceId":11,"name":"记事本","kind":"usable","effects":[{"op":"toggleUi","ui":"notebook"}],"note":"第5层拾取后自动开启系统"},"bigGold":{"sourceId":12,"name":"大金币","kind":"passive","effects":[{"op":"mulGoldGain","value":2}],"note":"地下室获取。持有即生效，此后所有击杀金币翻倍——所以「拿到它之后再回头清怪」是原版核心策略。"},"shovel":{"sourceId":13,"name":"铁锹","kind":"usable","effects":[{"op":"breakWall","scope":"adjacent4"}],"note":"挖掉勇者上下左右紧邻的墙（仅墙，不含假墙）"},"snowflake":{"sourceId":14,"name":"雪花","kind":"usable","effects":[{"op":"clearTerrain","terrain":5,"scope":"currentFloor"}],"note":"清除当前楼层全部岩浆"},"quakeScroll":{"sourceId":15,"name":"地震卷轴","kind":"usable","effects":[{"op":"clearTerrain","terrain":1,"scope":"currentFloor"}],"note":"清除当前楼层全部墙体。原版最强的地形改造道具，用于 37 层取钥匙等关键路线。"},"mirrorFlyer":{"sourceId":16,"name":"对称飞行器","kind":"usable","effects":[{"op":"teleportSymmetric"}],"note":"传送到本层中心对称点 (x,y) → (12−x, 12−y)，要求目标格完全为空"},"downFlyer":{"sourceId":17,"name":"向下飞行器","kind":"usable","effects":[{"op":"changeFloor","delta":-1}]},"upFlyer":{"sourceId":18,"name":"向上飞行器","kind":"usable","effects":[{"op":"changeFloor","delta":1}]},"cross":{"sourceId":19,"name":"十字架","kind":"passive","effects":[{"op":"traitCounter","trait":"crossVulnerable","stat":"atk","mul":2}],"note":"对兽人、兽人武士、吸血鬼的攻击力翻倍（参考源码只实现了吸血鬼，见 monsters.json 的 traitsReference）。第19层隐形墙内获得。攻略原话：「十字架杀兽人和吸血鬼攻击加倍」。"},"bomb":{"sourceId":20,"name":"炸药","kind":"usable","effects":[{"op":"bomb","scope":"adjacent4","exclude":{"roleIds":[3,8,25,27,29],"roleIdAtLeast":32}}],"note":"清除相邻非 BOSS 怪物。精确规则见 effectOps.bomb（按 roleId 白名单排除，非「所有 BOSS」）。"},"dragonSlayer":{"sourceId":21,"name":"屠龙剑","kind":"passive","effects":[{"op":"traitCounter","trait":"dragon","stat":"atk","mul":2}],"note":"仅对魔龙生效，攻击力翻倍"},"ironSword":{"sourceId":22,"name":"铁剑","kind":"pickup","effects":[{"op":"addStat","stat":"atk","value":10}]},"silverSword":{"sourceId":23,"name":"银剑","kind":"pickup","effects":[{"op":"addStat","stat":"atk","value":20}]},"knightSword":{"sourceId":24,"name":"骑士剑","kind":"pickup","effects":[{"op":"addStat","stat":"atk","value":40}]},"holySword":{"sourceId":25,"name":"圣剑","kind":"pickup","effects":[{"op":"addStat","stat":"atk","value":50}]},"sacredSword":{"sourceId":26,"name":"神圣剑","kind":"pickup","effects":[{"op":"addStat","stat":"atk","value":100}]},"ironShield":{"sourceId":27,"name":"铁盾","kind":"pickup","effects":[{"op":"addStat","stat":"def","value":10}]},"silverShield":{"sourceId":28,"name":"银盾","kind":"pickup","effects":[{"op":"addStat","stat":"def","value":20}]},"knightShield":{"sourceId":29,"name":"骑士盾","kind":"pickup","effects":[{"op":"addStat","stat":"def","value":40}]},"holyShield":{"sourceId":30,"name":"圣盾","kind":"pickup","effects":[{"op":"addStat","stat":"def","value":50}]},"sacredShield":{"sourceId":31,"name":"神圣盾","kind":"pickup","effects":[{"op":"addStat","stat":"def","value":100},{"op":"immune","to":"aura"}],"note":"额外的隐藏价值：持有后完全免疫巫师领域伤害（源码：event.js 中 player.shield !== 5 判定）"},"floorTeleporter":{"sourceId":32,"name":"楼层传送器","kind":"usable","effects":[{"op":"openFloorSelect","range":[1,49]}]}}</script>
+<script type="application/json" id="cases">[{"name":"开局打绿史莱姆","hero":{"hp":1000,"atk":10,"def":10},"monster":{"name":"绿史莱姆","hp":35,"atk":18,"def":1},"expected":{"rounds":4,"enemyAttacks":3,"perRound":8,"loss":24,"canWin":true},"sourceNote":"攻略原文：「杀绿色史莱姆耗血24」。勇者属性为开局值（1~9层未购买属性，见攻略「开始：血1000，攻击10，防御10」）。"},{"name":"开局打红史莱姆","hero":{"hp":1000,"atk":10,"def":10},"monster":{"name":"红史莱姆","hp":45,"atk":20,"def":2},"expected":{"rounds":6,"enemyAttacks":5,"perRound":10,"loss":50,"canWin":true},"sourceNote":"攻略原文：「杀红色史莱姆耗血50」"},{"name":"拿铁剑前打小蝙蝠（成对）","hero":{"hp":698,"atk":20,"def":14},"monster":{"name":"小蝙蝠","hp":35,"atk":38,"def":3},"expected":{"rounds":3,"enemyAttacks":2,"perRound":24,"loss":48,"canWin":true},"sourceNote":"攻略原文：「下01层开黄门杀两个小蝙蝠耗血共96」→ 单只 48。勇者属性为攻略中该时点的 20/14。"},{"name":"打初级法师","hero":{"hp":698,"atk":20,"def":14},"monster":{"name":"初级法师","hp":60,"atk":32,"def":8},"expected":{"rounds":5,"enemyAttacks":4,"perRound":18,"loss":72,"canWin":true},"sourceNote":"攻略原文：「初级法师耗血72」"},{"name":"取红宝石后打小蝙蝠","hero":{"hp":757,"atk":21,"def":15},"monster":{"name":"小蝙蝠","hp":35,"atk":38,"def":3},"expected":{"rounds":2,"enemyAttacks":1,"perRound":23,"loss":23,"canWin":true},"sourceNote":"攻略原文：「开黄门杀小蝙蝠耗血23」。攻击力 21 后回合数从 3 降到 2，损失从 48 降到 23 —— 临界值效应。"},{"name":"打骷髅人","hero":{"hp":757,"atk":21,"def":15},"monster":{"name":"骷髅人","hp":50,"atk":42,"def":6},"expected":{"rounds":4,"enemyAttacks":3,"perRound":27,"loss":81,"canWin":true},"sourceNote":"攻略原文：「杀骷髅人耗血81」"},{"name":"攻击力 +1 后打骷髅士兵","hero":{"hp":713,"atk":22,"def":15},"monster":{"name":"骷髅士兵","hp":55,"atk":52,"def":12},"expected":{"rounds":6,"enemyAttacks":5,"perRound":37,"loss":185,"canWin":true},"sourceNote":"攻略原文：「杀骷髅人耗血81和骷髅士兵耗血185」"},{"name":"攻击力 +2 后打骷髅士兵","hero":{"hp":1000,"atk":23,"def":15},"monster":{"name":"骷髅士兵","hp":55,"atk":52,"def":12},"expected":{"rounds":5,"enemyAttacks":4,"perRound":37,"loss":148,"canWin":true},"sourceNote":"攻略原文：「杀骷髅士兵耗血148」。与上一条对照：攻击力 22→23 使损失 185→148。"},{"name":"打骷髅人（第10层红门内，6只）","hero":{"hp":533,"atk":27,"def":31},"monster":{"name":"骷髅人","hp":50,"atk":42,"def":6},"expected":{"rounds":3,"enemyAttacks":2,"perRound":11,"loss":22,"canWin":true},"sourceNote":"攻略原文：「开红门杀两个骷髅士兵耗血共126、六个骷髅人耗血共132」→ 骷髅人单只 22、骷髅士兵单只 63"},{"name":"打骷髅队长（第10层 BOSS）","hero":{"hp":533,"atk":27,"def":31},"monster":{"name":"骷髅队长","hp":100,"atk":65,"def":15},"expected":{"rounds":9,"enemyAttacks":8,"perRound":34,"loss":272,"canWin":true},"sourceNote":"攻略原文：「骷髅队长耗血272」，且「若攻击/防御能力在27/31，血>530，就可开红门杀敌过关」——血 > 272 的门槛与「血533」吻合"},{"name":"打石头人（攻击力刚好够）","hero":{"hp":1000,"atk":70,"def":82},"monster":{"name":"石头人","hp":20,"atk":100,"def":68},"expected":{"rounds":10,"enemyAttacks":9,"perRound":18,"loss":162,"canWin":true},"sourceNote":"攻略原文：「杀石头人耗血162」。石头人 def 68、HP 仅 20：攻击力 69 时每回合只造成 1 点伤害、要打 20 回合、损失 342；攻击力 70 时伤害翻倍成 2、10 回合、损失 162。这是原版最典型的「攻击力门槛」。"},{"name":"打兽人武士（未持十字架）","hero":{"hp":1162,"atk":62,"def":76},"monster":{"name":"兽人武士","hp":320,"atk":120,"def":15},"expected":{"rounds":7,"enemyAttacks":6,"perRound":44,"loss":264,"canWin":true},"sourceNote":"攻略原文：「杀两个兽人武士耗血共528」→ 单只 264。此战发生在取得十字架之前。"},{"name":"打兽人武士（持十字架）","hero":{"hp":1000,"atk":70,"def":82},"monster":{"name":"兽人武士","hp":320,"atk":120,"def":15,"traits":["crossVulnerable"]},"counters":[{"trait":"crossVulnerable","stat":"atk","mul":2}],"expected":{"effectiveAtk":140,"rounds":3,"enemyAttacks":2,"perRound":38,"loss":76,"canWin":true},"sourceNote":"攻略原文：「杀兽人武士耗血76」。这一条是十字架真实生效范围的判定性证据：勇者攻击力仅从 62 升到 70（+8），若十字架不生效，回合数仍为 7、损失 190；只有对兽人也翻倍（70→140）才得到 76。参考源码 m8705/fight.js 只对吸血鬼翻倍，属不完整实现。"},{"name":"打兽人（持十字架）","hero":{"hp":1000,"atk":70,"def":82},"monster":{"name":"兽人","hp":260,"atk":85,"def":5,"traits":["crossVulnerable"]},"counters":[{"trait":"crossVulnerable","stat":"atk","mul":2}],"expected":{"effectiveAtk":140,"rounds":2,"enemyAttacks":1,"perRound":3,"loss":3,"canWin":true},"sourceNote":"攻略原文：「杀兽人耗血3」。不翻倍则为 3 回合、9 血。与上一条同属十字架范围证据。"},{"name":"打吸血鬼（持十字架）","hero":{"hp":1000,"atk":72,"def":84},"monster":{"name":"吸血鬼","hp":444,"atk":199,"def":66,"traits":["crossVulnerable","undead"]},"counters":[{"trait":"crossVulnerable","stat":"atk","mul":2}],"expected":{"effectiveAtk":144,"rounds":6,"enemyAttacks":5,"perRound":115,"loss":575,"canWin":true},"sourceNote":"攻略原文：「杀八个大蝙蝠变成的吸血鬼耗血575……因为有十字架，若攻击/防御能力在72/84，血>575就可开红门杀吸血鬼过关」。不翻倍则损失 8395，相差 14 倍。"},{"name":"打吸血鬼（无十字架）","hero":{"hp":10000,"atk":72,"def":84},"monster":{"name":"吸血鬼","hp":444,"atk":199,"def":66,"traits":["crossVulnerable","undead"]},"expected":{"effectiveAtk":72,"rounds":74,"enemyAttacks":73,"perRound":115,"loss":8395,"canWin":true},"sourceNote":"攻略原文也说「在没有十字架的情况下你不可能打败吸血鬼」——实际上不是打不过，而是损失高到不可接受。575 与 8395 的对比正是这句攻略的数学含义。"},{"name":"攻击力不足（石头人）","hero":{"hp":1000,"atk":10,"def":10},"monster":{"name":"石头人","hp":20,"atk":100,"def":68},"expected":{"rounds":null,"loss":null,"canWin":false,"reason":"unpierceable"},"sourceNote":"攻击力 ≤ 怪防时完全无法击破，损失记为 Infinity。攻略中老人提示「在这区域不多次提升攻击力，就不能打败石头人」"},{"name":"双手剑士斩杀（攻击150）","hero":{"hp":1422,"atk":150,"def":98},"monster":{"name":"双手剑士","hp":100,"atk":680,"def":50,"traits":[{"type":"execute","stat":"atk","threshold":150,"damage":0}]},"expected":{"rounds":1,"enemyAttacks":0,"loss":0,"canWin":true,"execute":true},"sourceNote":"源码：fight.js 中 enm.id===24 分支，player.att>=150 时零损失。攻略反复出现「打双手剑士[不伤]」，验证了这一点。"},{"name":"双手剑士差 1 点攻击力","hero":{"hp":1422,"atk":149,"def":98},"monster":{"name":"双手剑士","hp":100,"atk":680,"def":50,"traits":[{"type":"execute","stat":"atk","threshold":150,"damage":0}]},"expected":{"rounds":2,"enemyAttacks":1,"perRound":582,"loss":582,"canWin":true,"execute":false},"sourceNote":"攻略中老人提示「双手剑士的攻击力太高了，你最好到能对他一击必杀时再与他战斗」。149 与 150 之间是整局最陡的一道坎：损失从 582 跳到 0。"},{"name":"魔法警卫（夹击 50%，期望值）","hero":{"hp":5000,"atk":200,"def":10},"monster":{"name":"魔法警卫","hp":230,"atk":450,"def":100,"traits":[{"type":"flank","chance":0.5}]},"expected":{"rounds":3,"enemyAttacks":2,"perRound":440,"loss":1100,"hpLossMin":880,"hpLossMax":1320,"flanked":true,"canWin":true},"sourceNote":"攻略原文：「在2个魔法警卫间通过会使你的生命减少一半」，且 41 层建议「用对称飞行器避开两个高级巫师夹击」。夹击是概率性的，预览必须同时给出最坏值 —— 只给期望值会让玩家在实战中被打死。"},{"name":"魔王（封印前）攻击力门槛","hero":{"hp":99999,"atk":1000,"def":500},"monster":{"name":"魔王（封印前）","hp":8000,"atk":5000,"def":1000},"expected":{"rounds":null,"loss":null,"canWin":false,"reason":"unpierceable"},"sourceNote":"魔王 def 1000，攻击力必须 ≥ 1001。攻略：「上49层杀八个魔法警卫（先杀四周中间的四个将魔王的魔法封印），接着…和魔王不耗血」—— 必须先解封印，不能硬打。"}]</script>
+<script type="application/json" id="shopCases">[{"name":"第1次购买价格","n":1,"expected":20,"sourceNote":"攻略原文：「开蓝门买防守(钱20)+4=14」→ 花 20 钱、防御 +4"},{"name":"第2次购买价格","n":2,"expected":40},{"name":"第3次购买价格","n":3,"expected":80},{"name":"第4次购买价格","n":4,"expected":140},{"name":"前17次累计花费","n":17,"expected":16660},{"name":"前18次累计花费","n":18,"expected":19740,"sourceNote":"超过全游戏总金币 18145 —— 所以整局最多买 17 次"},{"name":"1~9层买防御的收益","floor":5,"stat":"def","expected":4,"sourceNote":"攻略 12 层原文：「买防守(钱40+80=120)+16=50」→ 两次购买使防御 +16，每次 +8，与 floor(12/10)+1=2 倍率吻合"},{"name":"40~49层买防御的收益","floor":45,"stat":"def","expected":20},{"name":"50层买攻击的收益","floor":50,"stat":"atk","expected":12}]</script>
+<script type="application/json" id="placement">{"bat":{"name":"小蝙蝠","count":31,"floors":[1,3,4,5,6,7,8,9,11,12,15,19,20,34]},"greenSlime":{"name":"绿史莱姆","count":27,"floors":[1,3,4,5,6,7,8,9,30,34]},"skeleton":{"name":"骷髅人","count":23,"floors":[1,3,4,6,7,8,9,10,46]},"redSlime":{"name":"红史莱姆","count":21,"floors":[1,3,4,5,6,7,8,9,30,34,46]},"juniorMage":{"name":"初级法师","count":17,"floors":[1,3,4,5,6,7,8,9,10]},"skeletonSoldier":{"name":"骷髅士兵","count":16,"floors":[1,4,5,6,7,8,9,10]},"midGuard":{"name":"中级卫兵","count":6,"floors":[2,32,38]},"juniorGuard":{"name":"初级卫兵","count":6,"floors":[8,17]},"skeletonCaptain":{"name":"骷髅队长","count":1,"floors":[10]},"bigBat":{"name":"大蝙蝠","count":40,"floors":[11,12,14,15,16,17,18,19,20,46]},"bigSlime":{"name":"大史莱姆","count":27,"floors":[11,12,14,15,16,17,18,19,30,34]},"seniorMage":{"name":"高级法师","count":20,"floors":[11,12,14,15,16,17,18,19,20]},"orc":{"name":"兽人","count":18,"floors":[11,12,14,15,16,17,18,19,46]},"orcWarrior":{"name":"兽人武士","count":24,"floors":[14,15,16,17,18,19,31,33,36,38]},"stoneGolem":{"name":"石头人","count":9,"floors":[14,16,18,19,20]},"kraken":{"name":"大乌贼","count":1,"floors":[15]},"phantom":{"name":"幽灵","count":21,"floors":[16,31,32,33,34,36,38,39,40]},"archmage":{"name":"大法师","count":1,"floors":[25]},"ghostWarrior":{"name":"鬼战士","count":26,"floors":[31,32,33,34,36,37,38,39,40]},"warrior":{"name":"战士","count":23,"floors":[31,32,33,34,36,37,38,39,40,46]},"knight":{"name":"骑士","count":19,"floors":[31,32,34,36,37,38,39,40,46]},"swordsman":{"name":"双手剑士","count":17,"floors":[31,33,34,36,37,38,39,40,46]},"dragon":{"name":"魔龙","count":1,"floors":[35]},"knightCaptain":{"name":"骑士队长","count":2,"floors":[40,42]},"juniorWizard":{"name":"初级巫师","count":16,"floors":[41,42,43,45,46,47,48]},"seniorWizard":{"name":"高级巫师","count":14,"floors":[41,42,43,45,46,47,48,49]},"vampireBat":{"name":"吸血蝙蝠","count":13,"floors":[41,42,43,45,46,47,48]},"slimeKing":{"name":"史莱姆王","count":13,"floors":[41,42,43,45,46,47,48]},"magicGuard":{"name":"魔法警卫","count":11,"floors":[41,42,43,45,48]},"darkKnight":{"name":"黑暗骑士","count":12,"floors":[42,43,45,48,49]},"seniorGuard":{"name":"高级卫兵","count":2,"floors":[44]},"demonKing":{"name":"魔王（封印前）","count":1,"floors":[50]}}</script>
+<script type="application/json" id="shopConfig">{"costFormula":"10 * n * (n - 1) + 20","nMeaning":"已购买次数，全局共享，初值为 1（不是 0）","nStartsAt":1,"globalCounter":true,"scopeNote":"参考实现中 buyTimes 是全局变量：在任何商店购买都会推高后续所有商店的价格。原版各层商店定价是否独立，参考资料不足，暂按全局建模。","gains":{"hp":"100 * tierMul","atk":"2 * tierMul","def":"4 * tierMul","tierMulFormula":"floor(floorIndex / 10) + 1"},"tiers":[{"floorFrom":1,"floorTo":9,"mul":1,"hp":100,"atk":2,"def":4},{"floorFrom":10,"floorTo":19,"mul":2,"hp":200,"atk":4,"def":8},{"floorFrom":20,"floorTo":29,"mul":3,"hp":300,"atk":6,"def":12},{"floorFrom":30,"floorTo":39,"mul":4,"hp":400,"atk":8,"def":16},{"floorFrom":40,"floorTo":49,"mul":5,"hp":500,"atk":10,"def":20},{"floorFrom":50,"floorTo":50,"mul":6,"hp":600,"atk":12,"def":24}],"resultingDesignInsight":"增量随楼层 ×1~×5 放大，但价格只与总购买次数有关而与楼层无关 —— 这直接推出原版最优策略「前期不买、把钱留到高楼层再买」。1~9 层买一次攻只 +2，40~49 层同样花钱却 +10。攻略中「1-10层不需进商店买攻防，省钱以后可多买」正是这个结论。"}</script>
+<script type="application/json" id="economy">{"totalGoldInGame":18145,"totalGoldNote":"来自 h5mota 基准帖的累计总金币序列末值（社区实测）。各段累计值逐项加和自洽，可信度高。","maxPurchasesIfAllGoldSpent":17,"cumulativeCostFormula":"10 * n * (n + 1) * (n - 1) / 3 + 20 * n","cumulativeCostSample":[20,60,140,280,500,820,1260,1840,2580,3500,4620,5960,7540,9380,11500,13920,16660,19740],"maxPurchasesNote":"用 18145 金币，按公式最多购买 17 次（累计 16660），第 18 次要 19740 已超预算。整局 50 层只有约 17 次属性购买 —— 这就是原版魔塔「极致紧张」的数学根源，也是复刻时必须守住的手感。"}</script>
+
+<script>
+const J = (id) => JSON.parse(document.getElementById(id).textContent);
+const HERO_INIT = J('hero');
+const MONSTERS = J('monsters');
+const ITEMS = J('items');
+const CASES = J('cases');
+const SHOP_CASES = J('shopCases');
+const PLACEMENT = J('placement');
+const SHOP_CFG = J('shopConfig');
+const ECONOMY = J('economy');
+
+/* ─── 战斗公式：与 core/combat.mjs 保持一致 ─── */
+function normalizeTraits(raw) {
+  const flags = new Set(), auras = [], flanks = [], executes = [];
+  for (const t of raw || []) {
+    if (typeof t === 'string') { flags.add(t); continue; }
+    if (t && typeof t === 'object') {
+      if (t.type === 'aura') auras.push(t);
+      else if (t.type === 'flank') flanks.push(t);
+      else if (t.type === 'execute') executes.push(t);
+    }
+  }
+  return { flags, auras, flanks, executes };
+}
+
+function simulateBattle(hero, mon, counters) {
+  const t = normalizeTraits(mon.traits);
+  for (const e of t.executes) {
+    if (typeof hero[e.stat] === 'number' && hero[e.stat] >= e.threshold) {
+      return { execute: true, rounds: 1, enemyAttacks: 0, perRound: Math.max(0, mon.atk - hero.def),
+               hpLoss: 0, hpLossMin: 0, hpLossMax: 0, effectiveAtk: hero.atk, canWin: true };
+    }
+  }
+  let atk = hero.atk;
+  for (const c of counters) if (t.flags.has(c.trait) && c.stat === 'atk') atk = Math.floor(atk * c.mul);
+  const perHit = atk - mon.def;
+  if (perHit <= 0) {
+    return { execute: false, effectiveAtk: atk, perHit, rounds: null, enemyAttacks: null,
+             perRound: Math.max(0, mon.atk - hero.def), hpLoss: Infinity,
+             hpLossMin: Infinity, hpLossMax: Infinity, canWin: false, reason: 'unpierceable' };
+  }
+  const rounds = Math.ceil(mon.hp / perHit);
+  const perRound = Math.max(0, mon.atk - hero.def);
+  const flank = t.flanks.length ? t.flanks.reduce((m, f) => Math.max(m, f.chance || 1), 0) : 0;
+  const base = rounds - 1;
+  const hpLossMin = base * perRound;
+  const hpLossMax = (base + (flank > 0 ? 1 : 0)) * perRound;
+  const hpLoss = perRound === 0 ? 0 : Math.round(hpLossMin * (1 - flank) + hpLossMax * flank);
+  const dead = hpLoss >= hero.hp;
+  return { execute: false, effectiveAtk: atk, perHit, rounds, enemyAttacks: base,
+           perRound, flanked: flank > 0, hpLoss, hpLossMin, hpLossMax,
+           canWin: !dead, reason: dead ? 'heroDies' : null };
+}
+
+/* ─── 商店公式 ─── */
+const shopCost = (n) => 10 * n * (n - 1) + 20;
+const cumulativeCost = (n) => n <= 0 ? 0 : (10 * n * (n + 1) * (n - 1)) / 3 + 20 * n;
+const tierMul = (f) => Math.floor(f / 10) + 1;
+const shopGain = (f, stat) => ({ hp: 100, atk: 2, def: 4 })[stat] * tierMul(f);
+const maxPurchases = (gold) => { let n = 0; while (cumulativeCost(n + 1) <= gold) n++; return n; };
+
+/* ─── 状态 ─── */
+const $ = (id) => document.getElementById(id);
+const countersOf = () => {
+  const out = [];
+  if ($('cross').checked) out.push({ trait: 'crossVulnerable', stat: 'atk', mul: 2 });
+  if ($('dragonSlayer').checked) out.push({ trait: 'dragon', stat: 'atk', mul: 2 });
+  return out;
+};
+const heroOf = () => ({ hp: +$('hp').value || 0, atk: +$('atk').value || 0, def: +$('def').value || 0 });
+
+function gradeOf(pv, hero) {
+  if (pv.reason === 'unpierceable') return ['blocked', '打不动'];
+  if (pv.reason === 'heroDies') return ['fatal', '必死'];
+  if (pv.execute) return ['execute', '零损秒杀'];
+  const r = pv.hpLoss / hero.hp;
+  if (r > 0.3) return ['danger', '危险 ' + (r * 100).toFixed(1) + '%'];
+  if (r > 0.15) return ['high', '偏高 ' + (r * 100).toFixed(1) + '%'];
+  if (r >= 0.05) return ['ok', '合适 ' + (r * 100).toFixed(1) + '%'];
+  return ['easy', '轻松 ' + (r * 100).toFixed(1) + '%'];
+}
+
+function render() {
+  const hero = heroOf();
+  const counters = countersOf();
+  const onFloor = +$('floor').value || 0;
+  const onlyWin = $('onlyReachable').checked;
+  const onlyHere = $('onlyFloor').checked;
+
+  const rows = [];
+  let wins = 0, blocked = 0, fatal = 0, totalLoss = 0;
+
+  for (const [id, m] of Object.entries(MONSTERS)) {
+    const pv = simulateBattle(hero, m, counters);
+    const place = PLACEMENT[id];
+    if (onlyHere && place && !place.floors.includes(onFloor)) continue;
+    if (onlyWin && !pv.canWin) continue;
+    if (pv.canWin) { wins++; totalLoss += pv.hpLoss; } else if (pv.reason === 'unpierceable') blocked++; else fatal++;
+
+    const [cls, label] = gradeOf(pv, hero);
+    const ratio = pv.hpLoss === Infinity ? Infinity : pv.hpLoss / hero.hp;
+    const barW = ratio === Infinity ? 100 : Math.min(100, ratio * 100 / 0.5 * 100 / 100);
+    const floorText = place ? (place.floors.length > 4
+      ? place.floors[0] + '~' + place.floors[place.floors.length - 1] + ' (' + place.count + '只)'
+      : place.floors.join(',') + ' (' + place.count + '只)') : '未使用';
+
+    rows.push(`<tr>
+      <td class="name">${m.name}${m.boss ? ' <span class="tag t-danger">BOSS</span>' : ''}</td>
+      <td>${floorText}</td>
+      <td>${m.hp}</td><td>${m.atk}</td><td>${m.def}</td>
+      <td>${pv.rounds ?? '—'}</td>
+      <td>${pv.perRound}</td>
+      <td>${pv.hpLoss === Infinity ? '∞' : pv.hpLoss}${pv.flanked ? ' <span class="tag t-high">夹击</span>' : ''}</td>
+      <td>${ratio === Infinity ? '∞' : (ratio * 100).toFixed(1) + '%'}
+          <span class="bar" style="width:${barW}px;background:${cls === 'fatal' ? '#cf222e' : cls === 'danger' ? '#e5534b' : cls === 'high' ? '#d4a72c' : '#2f6feb'}"></span></td>
+      <td><span class="tag t-${cls}">${label}</span></td>
+      <td>${m.def + 1}</td>
+      <td>${m.def + m.hp}</td>
+    </tr>`);
+  }
+
+  $('rows').innerHTML = rows.join('');
+  $('summary').innerHTML =
+    `<span class="stat">能打赢 <b class="ok">${wins}</b> 只</span>` +
+    `<span class="stat">打不动 <b>${blocked}</b> 只</span>` +
+    `<span class="stat">会致死 <b class="bad">${fatal}</b> 只</span>` +
+    `<span class="stat">全清损失合计 <b>${totalLoss.toLocaleString()}</b> / 生命 ${hero.hp.toLocaleString()}
+       = <b class="${totalLoss > hero.hp ? 'bad' : 'ok'}">${(totalLoss / hero.hp * 100).toFixed(0)}%</b></span>`;
+
+  renderShop();
+}
+
+function renderShop() {
+  const floor = +$('floor').value || 1;
+  const gold = +$('gold').value || 0;
+  let n = Math.max(1, +$('buys').value || 1);
+  const mul = tierMul(floor);
+  const rows = [];
+  let left = gold, count = 0, spent = 0;
+
+  while (shopCost(n) <= left && count < 20) {
+    const c = shopCost(n);
+    rows.push(`<tr>
+      <td>第 ${n} 次</td><td>${c}</td>
+      <td>+${shopGain(floor, 'hp')}</td><td>+${shopGain(floor, 'atk')}</td><td>+${shopGain(floor, 'def')}</td>
+      <td>${(c / shopGain(floor, 'atk')).toFixed(1)}</td>
+      <td>${(c / shopGain(floor, 'def')).toFixed(1)}</td>
+    </tr>`);
+    left -= c; spent += c; count++; n++;
+  }
+
+  const goldPerAtk = (shopCost(n) / shopGain(floor, 'atk')).toFixed(1);
+  const goldPerDef = (shopCost(n) / shopGain(floor, 'def')).toFixed(1);
+  const nextAtFloor1 = (shopCost(n) / (2 * tierMul(1))).toFixed(1);
+  const nextAtFloor50 = (shopCost(n) / (2 * tierMul(50))).toFixed(1);
+
+  $('shop').innerHTML = `
+    <div style="margin-bottom:10px">
+      <span class="stat">第 ${floor} 层倍率 <b>×${mul}</b></span>
+      <span class="stat">本次金币可买 <b>${count}</b> 次</span>
+      <span class="stat">花掉 <b>${spent}</b>，剩余 <b>${left}</b></span>
+    </div>
+    ${rows.length ? `<table>
+      <thead><tr><th>次数</th><th>价格</th><th>生命</th><th>攻击</th><th>防御</th>
+      <th>每点攻击价</th><th>每点防御价</th></tr></thead>
+      <tbody>${rows.join('')}</tbody></table>` : '<div class="warnbox">金币不足以再购买一次 —— 第 ' + n + ' 次需要 ' + shopCost(n) + ' 金币。</div>'}
+    <div class="note">
+      全游戏总金币 ${ECONOMY.totalGoldInGame.toLocaleString()}，按公式最多购买
+      <b>${ECONOMY.maxPurchasesIfAllGoldSpent}</b> 次属性（累计 ${cumulativeCost(ECONOMY.maxPurchasesIfAllGoldSpent).toLocaleString()}）。
+      下一次购买每点攻击要 ${goldPerAtk} 金币、每点防御 ${goldPerDef} 金币；
+      同样的钱若等到第 50 层买，每点攻击只要 ${nextAtFloor50} 金币，而在第 1 层买要 ${nextAtFloor1} 金币 ——
+      相差约 ${(nextAtFloor1 / nextAtFloor50).toFixed(1)} 倍。
+    </div>`;
+}
+
+function selfTest() {
+  const results = [];
+  let pass = 0, failCount = 0;
+
+  for (const c of CASES) {
+    const pv = simulateBattle(c.hero, c.monster, c.counters || []);
+    const e = c.expected;
+    const diffs = [];
+    const chk = (k, got, want) => { if (want !== undefined && got !== want) diffs.push(k + ' ' + got + '≠' + want); };
+    chk('回合', pv.rounds, e.rounds);
+    chk('出手', pv.enemyAttacks, e.enemyAttacks);
+    chk('每回合', pv.perRound, e.perRound);
+    chk('可胜', pv.canWin, e.canWin);
+    chk('原因', pv.reason || undefined, e.reason);
+    chk('斩杀', pv.execute, e.execute);
+    chk('有效ATK', pv.effectiveAtk, e.effectiveAtk);
+    chk('夹击', pv.flanked, e.flanked);
+    chk('最小损失', pv.hpLossMin, e.hpLossMin);
+    chk('最大损失', pv.hpLossMax, e.hpLossMax);
+    if (e.loss === null) { if (pv.hpLoss !== Infinity) diffs.push('损失应为∞'); }
+    else chk('损失', pv.hpLoss, e.loss);
+    if (diffs.length) { failCount++; results.push(['bad', c.name + ' → ' + diffs.join('，')]); }
+    else { pass++; results.push(['ok', c.name + ' → 通过']); }
+  }
+
+  for (const c of SHOP_CASES) {
+    const got = c.n !== undefined
+      ? (c.name.indexOf('累计') >= 0 ? cumulativeCost(c.n) : shopCost(c.n))
+      : shopGain(c.floor, c.stat);
+    if (got !== c.expected) { failCount++; results.push(['bad', c.name + ' → ' + got + '≠' + c.expected]); }
+    else { pass++; results.push(['ok', c.name + ' → 通过']); }
+  }
+
+  $('selftest').innerHTML =
+    `<div style="margin-bottom:10px"><span class="stat">通过 <b class="${failCount ? '' : 'ok'}">${pass}</b></span>
+     <span class="stat">失败 <b class="${failCount ? 'bad' : ''}">${failCount}</b></span>
+     <span class="stat">共 ${pass + failCount} 条</span></div>` +
+    `<div class="scroll" style="max-height:220px"><table><tbody>` +
+    results.map(([k, t]) => `<tr><td class="name ${k === 'ok' ? 'ok' : 'bad'}">${t}</td></tr>`).join('') +
+    `</tbody></table></div>` +
+    (failCount ? '<div class="warnbox" style="margin-top:10px">自检失败：本页公式实现已与数据漂移，请重新运行 tools/build-balance-check.mjs。</div>'
+               : '<div class="note">✓ 本页公式实现与黄金用例完全一致。</div>');
+}
+
+document.querySelectorAll('input').forEach((el) => {
+  el.addEventListener('input', render);
+  el.addEventListener('change', render);
+});
+render();
+selfTest();
+</script>
+</body>
+</html>

@@ -1,0 +1,234 @@
+{
+ "id": "floor-41",
+ "index": 41,
+ "title": "主塔 41 层",
+ "size": {
+  "cols": 11,
+  "rows": 11
+ },
+ "terrain": [
+  ".#..#v#..#.",
+  "y...#.#..#y",
+  "y#.##.##.#y",
+  "y#y#...#y#y",
+  "...##.##...",
+  "....b.b....",
+  "....#y#....",
+  "y##y#y#y##y",
+  "y#..#y#..#y",
+  "y#..#.#..#y",
+  ".#..#^#..#."
+ ],
+ "stairs": {
+  "up": [
+   {
+    "x": 5,
+    "y": 10,
+    "to": 42,
+    "arrive": {
+     "x": 5,
+     "y": 10
+    }
+   }
+  ],
+  "down": [
+   {
+    "x": 5,
+    "y": 0,
+    "to": 40,
+    "arrive": {
+     "x": 5,
+     "y": 0
+    }
+   }
+  ]
+ },
+ "doors": {
+  "yellow": 19,
+  "blue": 2,
+  "red": 0
+ },
+ "entities": [
+  {
+   "type": "item",
+   "id": "redPotion",
+   "x": 0,
+   "y": 0
+  },
+  {
+   "type": "item",
+   "id": "blueKey",
+   "x": 3,
+   "y": 0
+  },
+  {
+   "type": "item",
+   "id": "blueKey",
+   "x": 7,
+   "y": 0
+  },
+  {
+   "type": "item",
+   "id": "redPotion",
+   "x": 10,
+   "y": 0
+  },
+  {
+   "type": "monster",
+   "id": "seniorWizard",
+   "x": 1,
+   "y": 1
+  },
+  {
+   "type": "item",
+   "id": "downFlyer",
+   "x": 9,
+   "y": 1,
+   "hidden": true,
+   "hiddenIn": "墙"
+  },
+  {
+   "type": "monster",
+   "id": "magicGuard",
+   "x": 4,
+   "y": 3
+  },
+  {
+   "type": "monster",
+   "id": "magicGuard",
+   "x": 6,
+   "y": 3
+  },
+  {
+   "type": "monster",
+   "id": "juniorWizard",
+   "x": 2,
+   "y": 4
+  },
+  {
+   "type": "monster",
+   "id": "juniorWizard",
+   "x": 8,
+   "y": 4
+  },
+  {
+   "type": "monster",
+   "id": "vampireBat",
+   "x": 0,
+   "y": 5
+  },
+  {
+   "type": "npc",
+   "id": "sage",
+   "x": 5,
+   "y": 5
+  },
+  {
+   "type": "monster",
+   "id": "vampireBat",
+   "x": 10,
+   "y": 5
+  },
+  {
+   "type": "monster",
+   "id": "vampireBat",
+   "x": 1,
+   "y": 6
+  },
+  {
+   "type": "monster",
+   "id": "slimeKing",
+   "x": 3,
+   "y": 6
+  },
+  {
+   "type": "monster",
+   "id": "slimeKing",
+   "x": 7,
+   "y": 6
+  },
+  {
+   "type": "monster",
+   "id": "vampireBat",
+   "x": 9,
+   "y": 6
+  },
+  {
+   "type": "item",
+   "id": "redPotion",
+   "x": 2,
+   "y": 8
+  },
+  {
+   "type": "item",
+   "id": "redPotion",
+   "x": 8,
+   "y": 8
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 2,
+   "y": 9
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 3,
+   "y": 9
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 7,
+   "y": 9
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 8,
+   "y": 9
+  },
+  {
+   "type": "item",
+   "id": "bluePotion",
+   "x": 0,
+   "y": 10
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 2,
+   "y": 10
+  },
+  {
+   "type": "item",
+   "id": "redGem",
+   "x": 3,
+   "y": 10
+  },
+  {
+   "type": "item",
+   "id": "blueGem",
+   "x": 7,
+   "y": 10
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 8,
+   "y": 10
+  },
+  {
+   "type": "item",
+   "id": "bluePotion",
+   "x": 10,
+   "y": 10
+  }
+ ],
+ "notes": {
+  "title": "下楼器层",
+  "note": "打死两个高级巫师后出现下楼器（数据中位于 (9,1)，在墙内，需铁锹或地震卷轴才能取）。本层左右对称，攻略建议用对称飞行器飞到对称楼梯口，以避开两侧巫师的领域伤害。",
+  "evidence": "飞行器说明文「下楼器在41层打死两个高级巫师后出现」；攻略「41楼：用同层飞行器飞到下方楼梯口上楼」"
+ }
+}

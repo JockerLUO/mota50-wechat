@@ -1,0 +1,352 @@
+{
+  "$license": "原版《魔塔50层》全局常量。派生自 GPL-3.0 作品 m8705/MAGIC-TOWER-JS。数值与地图数据经转换/交叉核对而来，「转成另一种格式」不构成独立创作，按 GPL-3.0 通例应同样以 GPL-3.0 分发。详见 reference/mota50/ATTRIBUTION.md §3（含闭源发布的替代路径）。",
+  "$comment": "原版《魔塔50层》全局常量。所有数值均来自参考源码与社区基准帖，交叉核对记录见 reference/mota50/ATTRIBUTION.md。",
+  "source": {
+    "heroInit": "reference/mota50/source/mota50-data.js:var player",
+    "combatFormula": "motajs/mota-js libs/enemys.js:calDamage（BSD-3），与 reference/mota50/source/mota50-fight.js 对照",
+    "shopFormula": "reference/mota50/source/mota50-event.js:195-230（mousedown 商店分支）",
+    "zoneBaseline": "https://h5mota.com/bbs/thread/?tid=1551 原版50层基准数值帖",
+    "verifiedAt": "2026-09-20"
+  },
+  "hero": {
+    "hp": 1000,
+    "atk": 10,
+    "def": 10,
+    "gold": 0,
+    "yellowKey": 0,
+    "blueKey": 0,
+    "redKey": 0,
+    "startFloor": 1,
+    "startPos": {
+      "x": 5,
+      "y": 10
+    },
+    "startPosNote": "0 基坐标。参考源码用 1 基坐标（mota50-action.js:42 `(player.y-1)*11+player.x-1`），player 初值为 (x:6, y:11) → 索引 115 → 本项目的 (x:5, y:10)。转换前该字段直接抄了 1 基值，y=11 在 11×11 网格中越界。",
+    "startFace": "up"
+  },
+  "progression": {
+    "hasExperience": false,
+    "hasLevel": false,
+    "note": "原版50层没有经验值与等级系统。三处独立来源一致：参考源码 player 对象无 exp/level 字段、fight.js 只累加 coin、h5mota 基准数值帖中全部怪物经验值为 0。勇者成长只有三条途径：商店购买、宝石、剑盾。"
+  },
+  "combat": {
+    "heroStrikesFirst": true,
+    "roundsFormula": "ceil(mon.hp / (hero.atk - mon.def))",
+    "roundsFormulaNote": "等价于标准引擎写法 parseInt((mon.hp - 1) / (hero.atk - mon.def)) + 1",
+    "perRoundFormula": "max(0, mon.atk - hero.def)",
+    "lossFormula": "(rounds - 1) * perRound",
+    "lossFormulaNote": "勇者先手，故怪物只能完整出手 rounds-1 次。标准引擎源码：ans = initDamage + turn * per_damage，其中 turn = parseInt((mon_hp-1)/(hero_atk-mon_def))。",
+    "unbeatableCondition": "hero.atk <= mon.def 时无法击破，损失记为 Infinity",
+    "lethalCondition": "loss >= hero.hp 时不可战斗",
+    "knownBadImplementation": {
+      "where": "reference/mota50/source/mota50-fight.js（m8705/MAGIC-TOWER-JS）",
+      "problem": "该实现只扣一回合伤害（player.hp -= perRound 后直接返回），完全没有计算回合数。用它做数值预期会系统性低估损失。原版复刻可以，数值参考不可用。"
+    }
+  },
+  "shop": {
+    "costFormula": "10 * n * (n - 1) + 20",
+    "nMeaning": "已购买次数，全局共享，初值为 1（不是 0）",
+    "nStartsAt": 1,
+    "globalCounter": true,
+    "scopeNote": "参考实现中 buyTimes 是全局变量：在任何商店购买都会推高后续所有商店的价格。原版各层商店定价是否独立，参考资料不足，暂按全局建模。",
+    "gains": {
+      "hp": "100 * tierMul",
+      "atk": "2 * tierMul",
+      "def": "4 * tierMul",
+      "tierMulFormula": "floor(floorIndex / 10) + 1"
+    },
+    "tiers": [
+      {
+        "floorFrom": 1,
+        "floorTo": 9,
+        "mul": 1,
+        "hp": 100,
+        "atk": 2,
+        "def": 4
+      },
+      {
+        "floorFrom": 10,
+        "floorTo": 19,
+        "mul": 2,
+        "hp": 200,
+        "atk": 4,
+        "def": 8
+      },
+      {
+        "floorFrom": 20,
+        "floorTo": 29,
+        "mul": 3,
+        "hp": 300,
+        "atk": 6,
+        "def": 12
+      },
+      {
+        "floorFrom": 30,
+        "floorTo": 39,
+        "mul": 4,
+        "hp": 400,
+        "atk": 8,
+        "def": 16
+      },
+      {
+        "floorFrom": 40,
+        "floorTo": 49,
+        "mul": 5,
+        "hp": 500,
+        "atk": 10,
+        "def": 20
+      },
+      {
+        "floorFrom": 50,
+        "floorTo": 50,
+        "mul": 6,
+        "hp": 600,
+        "atk": 12,
+        "def": 24
+      }
+    ],
+    "resultingDesignInsight": "增量随楼层 ×1~×5 放大，但价格只与总购买次数有关而与楼层无关 —— 这直接推出原版最优策略「前期不买、把钱留到高楼层再买」。1~9 层买一次攻只 +2，40~49 层同样花钱却 +10。攻略中「1-10层不需进商店买攻防，省钱以后可多买」正是这个结论。"
+  },
+  "economy": {
+    "totalGoldInGame": 18145,
+    "totalGoldNote": "来自 h5mota 基准帖的累计总金币序列末值（社区实测）。各段累计值逐项加和自洽，可信度高。",
+    "maxPurchasesIfAllGoldSpent": 17,
+    "cumulativeCostFormula": "10 * n * (n + 1) * (n - 1) / 3 + 20 * n",
+    "cumulativeCostSample": [
+      20,
+      60,
+      140,
+      280,
+      500,
+      820,
+      1260,
+      1840,
+      2580,
+      3500,
+      4620,
+      5960,
+      7540,
+      9380,
+      11500,
+      13920,
+      16660,
+      19740
+    ],
+    "maxPurchasesNote": "用 18145 金币，按公式最多购买 17 次（累计 16660），第 18 次要 19740 已超预算。整局 50 层只有约 17 次属性购买 —— 这就是原版魔塔「极致紧张」的数学根源，也是复刻时必须守住的手感。"
+  },
+  "zoneBaseline": {
+    "$comment": "社区基准帖原始数据。带 +N 的写法表示「另有 N 个在特定条件下才计入」，本表原样保留以便对照。",
+    "regions": [
+      {
+        "id": "zone1",
+        "name": "一区",
+        "floorFrom": 1,
+        "floorTo": 10
+      },
+      {
+        "id": "zone2",
+        "name": "二区",
+        "floorFrom": 11,
+        "floorTo": 20
+      },
+      {
+        "id": "zone3",
+        "name": "三区",
+        "floorFrom": 21,
+        "floorTo": 30,
+        "note": "基准帖未给出该区钥匙数据"
+      },
+      {
+        "id": "zone4",
+        "name": "四区",
+        "floorFrom": 31,
+        "floorTo": 40
+      },
+      {
+        "id": "zone5",
+        "name": "五区",
+        "floorFrom": 41,
+        "floorTo": 49
+      },
+      {
+        "id": "top",
+        "name": "顶层",
+        "floorFrom": 50,
+        "floorTo": 50
+      }
+    ],
+    "yellowKeys": [
+      {
+        "region": "zone1",
+        "nodeKeys": 55,
+        "merchantKeys": 5,
+        "totalKeys": 60,
+        "totalDoors": 64
+      },
+      {
+        "region": "zone2",
+        "nodeKeys": 47,
+        "merchantKeys": 0,
+        "totalKeys": 47,
+        "totalDoors": 58
+      },
+      {
+        "region": "zone4",
+        "nodeKeys": "41+3",
+        "merchantKeys": 7,
+        "totalKeys": "48+3",
+        "totalDoors": 53
+      },
+      {
+        "region": "zone5",
+        "nodeKeys": 26,
+        "merchantKeys": 0,
+        "totalKeys": 26,
+        "totalDoors": "37+19"
+      },
+      {
+        "region": "quakeMax",
+        "name": "地震拿满",
+        "nodeKeys": 9,
+        "merchantKeys": 0,
+        "totalKeys": 9,
+        "totalDoors": 0
+      }
+    ],
+    "blueKeys": [
+      {
+        "region": "zone1",
+        "nodeKeys": 3,
+        "merchantKeys": 1,
+        "totalKeys": 4,
+        "totalDoors": 5
+      },
+      {
+        "region": "zone2",
+        "nodeKeys": 5,
+        "merchantKeys": 1,
+        "totalKeys": 6,
+        "totalDoors": 8
+      },
+      {
+        "region": "zone4",
+        "nodeKeys": 3,
+        "merchantKeys": 4,
+        "totalKeys": 7,
+        "totalDoors": "9+1"
+      },
+      {
+        "region": "zone5",
+        "nodeKeys": 6,
+        "merchantKeys": 0,
+        "totalKeys": 6,
+        "totalDoors": 13
+      },
+      {
+        "region": "quakeMax",
+        "name": "地震拿满",
+        "nodeKeys": 2,
+        "merchantKeys": 0,
+        "totalKeys": 2,
+        "totalDoors": 0
+      }
+    ],
+    "gold": [
+      {
+        "segment": "10层前",
+        "minGoldPerFoe": 1,
+        "maxGoldPerFoe": 12,
+        "foeCount": 109,
+        "segmentGold": 431,
+        "cumulativeGold": 431
+      },
+      {
+        "segment": "10层后",
+        "maxGoldPerFoe": 30,
+        "foeCount": 8,
+        "segmentGold": 82,
+        "cumulativeGold": 513
+      },
+      {
+        "segment": "20层前",
+        "minGoldPerFoe": 3,
+        "maxGoldPerFoe": 30,
+        "foeCount": 134,
+        "segmentGold": 2156,
+        "cumulativeGold": 2669
+      },
+      {
+        "segment": "20层后",
+        "maxGoldPerFoe": 144,
+        "foeCount": 0,
+        "segmentGold": 144,
+        "cumulativeGold": 2813
+      },
+      {
+        "segment": "三区",
+        "minGoldPerFoe": 1,
+        "maxGoldPerFoe": 8,
+        "foeCount": 6,
+        "segmentGold": 22,
+        "cumulativeGold": 2835
+      },
+      {
+        "segment": "40层前",
+        "minGoldPerFoe": 1,
+        "maxGoldPerFoe": 65,
+        "foeCount": 107,
+        "segmentGold": "4487+100",
+        "cumulativeGold": 7422
+      },
+      {
+        "segment": "40层后",
+        "maxGoldPerFoe": 100,
+        "foeCount": 12,
+        "segmentGold": 700,
+        "cumulativeGold": 8122
+      },
+      {
+        "segment": "49层前",
+        "minGoldPerFoe": 2,
+        "maxGoldPerFoe": 120,
+        "foeCount": 86,
+        "segmentGold": "6423+100",
+        "cumulativeGold": 14645
+      },
+      {
+        "segment": "49层后",
+        "maxGoldPerFoe": 500,
+        "foeCount": 8,
+        "segmentGold": 1300,
+        "cumulativeGold": 15945
+      },
+      {
+        "segment": "神圣剑盾",
+        "minGoldPerFoe": 200,
+        "maxGoldPerFoe": 200,
+        "foeCount": 2,
+        "segmentGold": 1200,
+        "cumulativeGold": 17145
+      },
+      {
+        "segment": "大法师",
+        "maxGoldPerFoe": 1000,
+        "foeCount": 0,
+        "segmentGold": 1000,
+        "cumulativeGold": 18145
+      }
+    ],
+    "keyEconomyNote": "注意每一区的总钥匙数都小于总门数（一区黄钥匙 60 对黄门 64，蓝钥匙 4 对蓝门 5；五区蓝钥匙 6 对蓝门 13）。原版刻意不让你开完所有的门 —— 必须做「哪扇门值得开」的判断。这是原版关卡设计的硬约束，复刻时不要「好心」把钥匙给够。"
+  },
+  "designTargets": {
+    "lossRatioPerFloor": [
+      0.05,
+      0.15
+    ],
+    "lossRatioPerFloorNote": "这是通用魔塔手感区间，非原版硬指标。原版实际更激进（后期单怪可占 30%+），使用 tools/balance-check.html 观察实际曲线。",
+    "requiredAtkForStoneGolem": "参考：石头人 def 68，勇者攻击力必须 > 68 才能击破。这类「攻击力门槛怪」是原版控制节奏的主要手段。"
+  },
+  "regions": {
+    "note": "区域划分见 zoneBaseline.regions，用于分区统计钥匙收支与金币预算。"
+  }
+}

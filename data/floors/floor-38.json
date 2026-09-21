@@ -1,0 +1,215 @@
+{
+ "id": "floor-38",
+ "index": 38,
+ "title": "主塔 38 层",
+ "size": {
+  "cols": 11,
+  "rows": 11
+ },
+ "terrain": [
+  "v.r.....y.^",
+  "..#.....#..",
+  ".#####y###y",
+  ".....#.#.#.",
+  "####b#.#.#.",
+  "...bb#.#.#.",
+  "...###.#...",
+  "...#...###y",
+  "#a######...",
+  "...#...#...",
+  "...y...y..."
+ ],
+ "stairs": {
+  "up": [
+   {
+    "x": 10,
+    "y": 0,
+    "to": 39,
+    "arrive": {
+     "x": 10,
+     "y": 0
+    }
+   }
+  ],
+  "down": [
+   {
+    "x": 0,
+    "y": 0,
+    "to": 37,
+    "arrive": {
+     "x": 0,
+     "y": 0
+    }
+   }
+  ]
+ },
+ "doors": {
+  "yellow": 6,
+  "blue": 3,
+  "red": 1
+ },
+ "entities": [
+  {
+   "type": "monster",
+   "id": "phantom",
+   "x": 3,
+   "y": 0
+  },
+  {
+   "type": "monster",
+   "id": "phantom",
+   "x": 7,
+   "y": 0
+  },
+  {
+   "type": "npc",
+   "id": "sage",
+   "x": 3,
+   "y": 1
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 4,
+   "y": 1
+  },
+  {
+   "type": "npc",
+   "id": "merchant",
+   "x": 5,
+   "y": 1
+  },
+  {
+   "type": "monster",
+   "id": "ghostWarrior",
+   "x": 0,
+   "y": 2
+  },
+  {
+   "type": "monster",
+   "id": "warrior",
+   "x": 2,
+   "y": 3
+  },
+  {
+   "type": "monster",
+   "id": "warrior",
+   "x": 3,
+   "y": 3
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 8,
+   "y": 3
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 8,
+   "y": 4
+  },
+  {
+   "type": "monster",
+   "id": "ghostWarrior",
+   "x": 6,
+   "y": 5
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 8,
+   "y": 5
+  },
+  {
+   "type": "monster",
+   "id": "ghostWarrior",
+   "x": 10,
+   "y": 5
+  },
+  {
+   "type": "item",
+   "id": "knightShield",
+   "x": 1,
+   "y": 6
+  },
+  {
+   "type": "monster",
+   "id": "swordsman",
+   "x": 6,
+   "y": 6
+  },
+  {
+   "type": "monster",
+   "id": "knight",
+   "x": 9,
+   "y": 6
+  },
+  {
+   "type": "item",
+   "id": "blueGem",
+   "x": 4,
+   "y": 7
+  },
+  {
+   "type": "item",
+   "id": "redPotion",
+   "x": 5,
+   "y": 7
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 8,
+   "y": 8
+  },
+  {
+   "type": "monster",
+   "id": "ghostWarrior",
+   "x": 10,
+   "y": 8
+  },
+  {
+   "type": "monster",
+   "id": "midGuard",
+   "x": 0,
+   "y": 9
+  },
+  {
+   "type": "monster",
+   "id": "midGuard",
+   "x": 2,
+   "y": 9
+  },
+  {
+   "type": "monster",
+   "id": "knight",
+   "x": 9,
+   "y": 9
+  },
+  {
+   "type": "monster",
+   "id": "swordsman",
+   "x": 4,
+   "y": 10
+  },
+  {
+   "type": "monster",
+   "id": "orcWarrior",
+   "x": 6,
+   "y": 10
+  },
+  {
+   "type": "monster",
+   "id": "warrior",
+   "x": 8,
+   "y": 10
+  },
+  {
+   "type": "item",
+   "id": "bluePotion",
+   "x": 10,
+   "y": 10
+  }
+ ]
+}

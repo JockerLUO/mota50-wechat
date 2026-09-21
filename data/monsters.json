@@ -1,0 +1,289 @@
+{
+  "$license": "怪物表。派生自 GPL-3.0 作品 m8705/MAGIC-TOWER-JS。数值与地图数据经转换/交叉核对而来，「转成另一种格式」不构成独立创作，按 GPL-3.0 通例应同样以 GPL-3.0 分发。详见 reference/mota50/ATTRIBUTION.md §3（含闭源发布的替代路径）。",
+  "$comment": "原版《魔塔50层》怪物表。roleId 对应参考源码 moth50-data.js 中 role 层的取值（见 reference/mota50/source/mota50-role.js）。数值来源为原版游戏，已与 h5mota 基准数值帖、百度百科《魔塔50层》三处交叉核对一致。",
+  "source": {
+    "primary": "reference/mota50/source/mota50-role.js",
+    "crossChecked": [
+      "https://h5mota.com/bbs/thread/?tid=1551 （原版50层基准数值）",
+      "百度百科：魔塔50层（h5mota 帖子与百度百科数值逐条一致）"
+    ],
+    "verifiedAt": "2026-09-20",
+    "expNote": "全部怪物经验值为 0 —— 原版50层不存在经验/等级系统，见 docs/mota50-numeric-system.md"
+  },
+  "monsters": {
+    "skeleton": {
+      "roleId": 1,
+      "name": "骷髅人",
+      "hp": 50, "atk": 42, "def": 6, "gold": 6, "exp": 0,
+      "traits": [],
+      "sprite": "mon_skeleton"
+    },
+    "skeletonSoldier": {
+      "roleId": 2,
+      "name": "骷髅士兵",
+      "hp": 55, "atk": 52, "def": 12, "gold": 8, "exp": 0,
+      "traits": [],
+      "sprite": "mon_skeleton_soldier"
+    },
+    "skeletonCaptain": {
+      "roleId": 3,
+      "name": "骷髅队长",
+      "hp": 100, "atk": 65, "def": 15, "gold": 30, "exp": 0,
+      "traits": [],
+      "boss": true,
+      "sprite": "mon_skeleton_captain"
+    },
+    "ghostWarrior": {
+      "roleId": 4,
+      "name": "鬼战士",
+      "hp": 220, "atk": 180, "def": 30, "gold": 35, "exp": 0,
+      "traits": [],
+      "sprite": "mon_ghost_warrior"
+    },
+    "bat": {
+      "roleId": 5,
+      "name": "小蝙蝠",
+      "hp": 35, "atk": 38, "def": 3, "gold": 3, "exp": 0,
+      "traits": [],
+      "sprite": "mon_bat"
+    },
+    "bigBat": {
+      "roleId": 6,
+      "name": "大蝙蝠",
+      "hp": 60, "atk": 100, "def": 8, "gold": 12, "exp": 0,
+      "traits": [],
+      "sprite": "mon_big_bat"
+    },
+    "vampireBat": {
+      "roleId": 7,
+      "name": "吸血蝙蝠",
+      "hp": 200, "atk": 390, "def": 90, "gold": 50, "exp": 0,
+      "traits": [],
+      "sprite": "mon_vampire_bat"
+    },
+    "vampire": {
+      "roleId": 8,
+      "name": "吸血鬼",
+      "hp": 444, "atk": 199, "def": 66, "gold": 144, "exp": 0,
+      "traits": ["crossVulnerable", "undead"],
+      "boss": true,
+      "note": "十字架克制。攻略实测：攻72/防84 时耗血 575，公式为 (444/(144−66)→6回合) 计 5×115=575 —— 若不翻倍则为 8395，相差 14 倍。参考源码只对这一只实现了翻倍。",
+      "sprite": "mon_vampire"
+    },
+    "greenSlime": {
+      "roleId": 9,
+      "name": "绿史莱姆",
+      "hp": 35, "atk": 18, "def": 1, "gold": 1, "exp": 0,
+      "traits": [],
+      "sprite": "mon_green_slime"
+    },
+    "redSlime": {
+      "roleId": 10,
+      "name": "红史莱姆",
+      "hp": 45, "atk": 20, "def": 2, "gold": 2, "exp": 0,
+      "traits": [],
+      "sprite": "mon_red_slime"
+    },
+    "bigSlime": {
+      "roleId": 11,
+      "name": "大史莱姆",
+      "hp": 130, "atk": 60, "def": 3, "gold": 8, "exp": 0,
+      "traits": [],
+      "sprite": "mon_big_slime"
+    },
+    "slimeKing": {
+      "roleId": 12,
+      "name": "史莱姆王",
+      "hp": 360, "atk": 310, "def": 20, "gold": 40, "exp": 0,
+      "traits": [],
+      "sprite": "mon_slime_king"
+    },
+    "juniorMage": {
+      "roleId": 13,
+      "name": "初级法师",
+      "hp": 60, "atk": 32, "def": 8, "gold": 5, "exp": 0,
+      "traits": [],
+      "sprite": "mon_junior_mage"
+    },
+    "seniorMage": {
+      "roleId": 14,
+      "name": "高级法师",
+      "hp": 100, "atk": 95, "def": 30, "gold": 22, "exp": 0,
+      "traits": [],
+      "sprite": "mon_senior_mage"
+    },
+    "juniorWizard": {
+      "roleId": 15,
+      "name": "初级巫师",
+      "hp": 220, "atk": 370, "def": 110, "gold": 80, "exp": 0,
+      "traits": [
+        { "type": "aura", "range": 1, "damage": 100 }
+      ],
+      "note": "领域：勇者每次移动后，若与它上下左右相邻则扣 100 HP。持神圣盾完全免疫。",
+      "sprite": "mon_junior_wizard"
+    },
+    "seniorWizard": {
+      "roleId": 16,
+      "name": "高级巫师",
+      "hp": 200, "atk": 380, "def": 130, "gold": 90, "exp": 0,
+      "traits": [
+        { "type": "aura", "range": 1, "damage": 200 },
+        { "type": "flank", "chance": 0.5 }
+      ],
+      "note": "领域伤害 200。部分个体带阻击（先制攻击），见 h5mota 基准数值帖。",
+      "sprite": "mon_senior_wizard"
+    },
+    "orc": {
+      "roleId": 17,
+      "name": "兽人",
+      "hp": 260, "atk": 85, "def": 5, "gold": 18, "exp": 0,
+      "traits": ["crossVulnerable"],
+      "note": "十字架克制。攻略实测：持十字架后攻70/防82 耗血 3 = (140−5)=135 → 2 回合、1×3；不翻倍则为 3 回合、9 血。",
+      "sprite": "mon_orc"
+    },
+    "orcWarrior": {
+      "roleId": 18,
+      "name": "兽人武士",
+      "hp": 320, "atk": 120, "def": 15, "gold": 30, "exp": 0,
+      "traits": ["crossVulnerable"],
+      "note": "十字架克制，且是「拿到十字架前后」的最佳对照证据：攻62/防76（未持）耗血 264 = 6×(120−76)；攻70/防82（持）耗血 76 = 2×(120−82)。两组数字只有在对兽人也翻倍时才同时成立。",
+      "sprite": "mon_orc_warrior"
+    },
+    "stoneGolem": {
+      "roleId": 19,
+      "name": "石头人",
+      "hp": 20, "atk": 100, "def": 68, "gold": 28, "exp": 0,
+      "traits": [],
+      "note": "高防低血：典型的「攻击力门槛」怪。攻击力不足时完全无法击破。",
+      "sprite": "mon_stone_golem"
+    },
+    "phantom": {
+      "roleId": 20,
+      "name": "幽灵",
+      "hp": 320, "atk": 140, "def": 20, "gold": 30, "exp": 0,
+      "traits": [],
+      "sprite": "mon_phantom"
+    },
+    "juniorGuard": {
+      "roleId": 21,
+      "name": "初级卫兵",
+      "hp": 50, "atk": 48, "def": 22, "gold": 12, "exp": 0,
+      "traits": [],
+      "sprite": "mon_junior_guard"
+    },
+    "midGuard": {
+      "roleId": 22,
+      "name": "中级卫兵",
+      "hp": 100, "atk": 180, "def": 110, "gold": 50, "exp": 0,
+      "traits": [],
+      "note": "第2层把守牢门，击败后开启牢门（源码：event.js eventHappened[0]）",
+      "sprite": "mon_mid_guard"
+    },
+    "seniorGuard": {
+      "roleId": 23,
+      "name": "高级卫兵",
+      "hp": 180, "atk": 460, "def": 360, "gold": 200, "exp": 0,
+      "traits": [],
+      "sprite": "mon_senior_guard"
+    },
+    "swordsman": {
+      "roleId": 24,
+      "name": "双手剑士",
+      "hp": 100, "atk": 680, "def": 50, "gold": 55, "exp": 0,
+      "traits": [
+        { "type": "execute", "stat": "atk", "threshold": 150, "damage": 0 }
+      ],
+      "note": "勇者攻击力 ≥ 150 时零损失秒杀（源码：fight.js 中 enm.id===24 分支）。这是原版最著名的隐藏机制。",
+      "sprite": "mon_swordsman"
+    },
+    "demonKing": {
+      "roleId": 25,
+      "name": "魔王（封印前）",
+      "hp": 8000, "atk": 5000, "def": 1000, "gold": 5000, "exp": 0,
+      "traits": [],
+      "boss": true,
+      "note": "即社区所称「假魔王」，封印解除前属性。",
+      "sprite": "mon_demon_king_sealed"
+    },
+    "magicGuard": {
+      "roleId": 26,
+      "name": "魔法警卫",
+      "hp": 230, "atk": 450, "def": 100, "gold": 100, "exp": 0,
+      "traits": [
+        { "type": "flank", "chance": 0.5 }
+      ],
+      "note": "夹击(50%)：战斗时怪物先制攻击一次。参考实现 m8705 未实现此特性，本项目保留为数据。",
+      "sprite": "mon_magic_guard"
+    },
+    "archmage": {
+      "roleId": 27,
+      "name": "大法师",
+      "hp": 4500, "atk": 560, "def": 310, "gold": 1000, "exp": 0,
+      "traits": [],
+      "boss": true,
+      "sprite": "mon_archmage"
+    },
+    "warrior": {
+      "roleId": 28,
+      "name": "战士",
+      "hp": 210, "atk": 200, "def": 65, "gold": 45, "exp": 0,
+      "traits": [],
+      "sprite": "mon_warrior"
+    },
+    "knightCaptain": {
+      "roleId": 29,
+      "name": "骑士队长",
+      "hp": 120, "atk": 150, "def": 50, "gold": 100, "exp": 0,
+      "traits": [],
+      "boss": true,
+      "sprite": "mon_knight_captain"
+    },
+    "knight": {
+      "roleId": 30,
+      "name": "骑士",
+      "hp": 160, "atk": 230, "def": 105, "gold": 65, "exp": 0,
+      "traits": [],
+      "sprite": "mon_knight"
+    },
+    "darkKnight": {
+      "roleId": 31,
+      "name": "黑暗骑士",
+      "hp": 180, "atk": 430, "def": 210, "gold": 120, "exp": 0,
+      "traits": [],
+      "sprite": "mon_dark_knight"
+    },
+    "dragon": {
+      "roleId": 37,
+      "name": "魔龙",
+      "hp": 1500, "atk": 600, "def": 250, "gold": 800, "exp": 0,
+      "traits": ["dragon"],
+      "boss": true,
+      "note": "持有屠龙剑时对其攻击力翻倍（源码：fight.js 中 enm.id===32 分支）",
+      "sprite": "mon_dragon"
+    },
+    "kraken": {
+      "roleId": 38,
+      "name": "大乌贼",
+      "hp": 1200, "atk": 180, "def": 20, "gold": 100, "exp": 0,
+      "traits": [],
+      "boss": true,
+      "sprite": "mon_kraken"
+    },
+    "demonKingTrue": {
+      "name": "真魔王",
+      "hp": 5000, "atk": 1580, "def": 190, "gold": 500, "exp": 0,
+      "traits": [],
+      "boss": true,
+      "note": "最终 BOSS。属性来自 h5mota 基准数值帖；参考实现 m8705 未单独建模该阶段。",
+      "sprite": "mon_demon_king_true"
+    }
+  },
+  "traitsReference": {
+    "crossVulnerable": "十字架克制。持十字架时对其攻击力翻倍。已确认的成员：兽人、兽人武士、吸血鬼。注意参考源码 m8705/fight.js 只实现了吸血鬼一个（enm.id===8），对兽人系的翻倍是缺失的 —— 但攻略实测数字要求这个翻倍存在，否则对不上。",
+    "undead": "亡灵系，crossVulnerable 的子集（吸血鬼）。保留此标记便于表达剧情与美术上的「不死」概念。",
+    "dragon": "龙系。持有屠龙剑时对其伤害翻倍。",
+    "aura": "领域。勇者每次移动后，若与其相邻则扣固定 HP；持神圣盾免疫。",
+    "flank": "夹击。战斗开始时怪物先制攻击一次。",
+    "execute": "斩杀。勇者某项属性达到阈值时，战斗损失归零。"
+  }
+}

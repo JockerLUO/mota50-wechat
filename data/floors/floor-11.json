@@ -1,0 +1,221 @@
+{
+ "id": "floor-11",
+ "index": 11,
+ "title": "主塔 11 层",
+ "size": {
+  "cols": 11,
+  "rows": 11
+ },
+ "terrain": [
+  "...#..y.#..",
+  "...#..#.#..",
+  "...#y##.y..",
+  "#a##..####.",
+  "...#..y..#.",
+  "...####..#.",
+  "......y..#.",
+  "#b########.",
+  "....y......",
+  "....#.##y#.",
+  "....#v#..#^"
+ ],
+ "stairs": {
+  "up": [
+   {
+    "x": 10,
+    "y": 10,
+    "to": 12,
+    "arrive": {
+     "x": 10,
+     "y": 10
+    }
+   }
+  ],
+  "down": [
+   {
+    "x": 5,
+    "y": 10,
+    "to": 10,
+    "arrive": {
+     "x": 5,
+     "y": 10
+    }
+   }
+  ]
+ },
+ "doors": {
+  "yellow": 7,
+  "blue": 1,
+  "red": 0
+ },
+ "entities": [
+  {
+   "type": "item",
+   "id": "redGem",
+   "x": 4,
+   "y": 0
+  },
+  {
+   "type": "item",
+   "id": "redPotion",
+   "x": 9,
+   "y": 0
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 10,
+   "y": 0
+  },
+  {
+   "type": "item",
+   "id": "silverShield",
+   "x": 1,
+   "y": 1
+  },
+  {
+   "type": "monster",
+   "id": "bat",
+   "x": 5,
+   "y": 1
+  },
+  {
+   "type": "monster",
+   "id": "orc",
+   "x": 7,
+   "y": 1
+  },
+  {
+   "type": "monster",
+   "id": "bigBat",
+   "x": 5,
+   "y": 3
+  },
+  {
+   "type": "monster",
+   "id": "bigSlime",
+   "x": 10,
+   "y": 3
+  },
+  {
+   "type": "monster",
+   "id": "seniorMage",
+   "x": 0,
+   "y": 4
+  },
+  {
+   "type": "monster",
+   "id": "seniorMage",
+   "x": 2,
+   "y": 4
+  },
+  {
+   "type": "monster",
+   "id": "orc",
+   "x": 4,
+   "y": 4
+  },
+  {
+   "type": "monster",
+   "id": "seniorMage",
+   "x": 7,
+   "y": 4
+  },
+  {
+   "type": "item",
+   "id": "redPotion",
+   "x": 8,
+   "y": 5
+  },
+  {
+   "type": "item",
+   "id": "bluePotion",
+   "x": 0,
+   "y": 6
+  },
+  {
+   "type": "monster",
+   "id": "bigBat",
+   "x": 3,
+   "y": 6
+  },
+  {
+   "type": "monster",
+   "id": "bigSlime",
+   "x": 7,
+   "y": 6
+  },
+  {
+   "type": "monster",
+   "id": "bigBat",
+   "x": 10,
+   "y": 7
+  },
+  {
+   "type": "monster",
+   "id": "bigBat",
+   "x": 1,
+   "y": 8
+  },
+  {
+   "type": "monster",
+   "id": "bigSlime",
+   "x": 3,
+   "y": 8
+  },
+  {
+   "type": "npc",
+   "id": "sage",
+   "x": 6,
+   "y": 8
+  },
+  {
+   "type": "monster",
+   "id": "bat",
+   "x": 9,
+   "y": 8
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 0,
+   "y": 9
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 0,
+   "y": 10
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 1,
+   "y": 10
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 2,
+   "y": 10
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 3,
+   "y": 10
+  },
+  {
+   "type": "item",
+   "id": "bluePotion",
+   "x": 7,
+   "y": 10
+  },
+  {
+   "type": "monster",
+   "id": "bigBat",
+   "x": 8,
+   "y": 10
+  }
+ ]
+}

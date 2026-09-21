@@ -1,0 +1,172 @@
+{
+ "id": "floor-10",
+ "index": 10,
+ "title": "主塔 10 层",
+ "size": {
+  "cols": 11,
+  "rows": 11
+ },
+ "terrain": [
+  "...........",
+  "####...####",
+  "...##.##...",
+  "...a...a...",
+  "####...####",
+  "...#...#...",
+  "...##.##...",
+  "...##.##...",
+  "y#y##r##y#y",
+  ".#.#...#.#.",
+  "v#.......#."
+ ],
+ "stairs": {
+  "up": [],
+  "down": [
+   {
+    "x": 0,
+    "y": 10,
+    "to": 9,
+    "arrive": {
+     "x": 0,
+     "y": 10
+    }
+   }
+  ]
+ },
+ "doors": {
+  "yellow": 4,
+  "blue": 0,
+  "red": 1
+ },
+ "entities": [
+  {
+   "type": "monster",
+   "id": "skeleton",
+   "x": 0,
+   "y": 2
+  },
+  {
+   "type": "monster",
+   "id": "skeleton",
+   "x": 1,
+   "y": 2
+  },
+  {
+   "type": "monster",
+   "id": "skeleton",
+   "x": 2,
+   "y": 2
+  },
+  {
+   "type": "monster",
+   "id": "skeleton",
+   "x": 8,
+   "y": 2
+  },
+  {
+   "type": "monster",
+   "id": "skeleton",
+   "x": 9,
+   "y": 2
+  },
+  {
+   "type": "monster",
+   "id": "skeleton",
+   "x": 10,
+   "y": 2
+  },
+  {
+   "type": "monster",
+   "id": "skeletonSoldier",
+   "x": 1,
+   "y": 3
+  },
+  {
+   "type": "monster",
+   "id": "skeletonCaptain",
+   "x": 5,
+   "y": 3
+  },
+  {
+   "type": "monster",
+   "id": "skeletonSoldier",
+   "x": 9,
+   "y": 3
+  },
+  {
+   "type": "monster",
+   "id": "skeleton",
+   "x": 0,
+   "y": 5
+  },
+  {
+   "type": "item",
+   "id": "blueGem",
+   "x": 1,
+   "y": 5
+  },
+  {
+   "type": "monster",
+   "id": "skeleton",
+   "x": 2,
+   "y": 5
+  },
+  {
+   "type": "monster",
+   "id": "skeleton",
+   "x": 8,
+   "y": 5
+  },
+  {
+   "type": "item",
+   "id": "redGem",
+   "x": 9,
+   "y": 5
+  },
+  {
+   "type": "monster",
+   "id": "skeleton",
+   "x": 10,
+   "y": 5
+  },
+  {
+   "type": "monster",
+   "id": "skeletonSoldier",
+   "x": 1,
+   "y": 6
+  },
+  {
+   "type": "monster",
+   "id": "skeletonSoldier",
+   "x": 9,
+   "y": 6
+  },
+  {
+   "type": "monster",
+   "id": "juniorMage",
+   "x": 3,
+   "y": 10
+  },
+  {
+   "type": "monster",
+   "id": "juniorMage",
+   "x": 7,
+   "y": 10
+  },
+  {
+   "type": "item",
+   "id": "bluePotion",
+   "x": 10,
+   "y": 10
+  }
+ ],
+ "notes": {
+  "title": "第一区 BOSS 层",
+  "exit": {
+   "method": "event",
+   "note": "上楼梯由剧情事件生成，不在初始地图数据里"
+  },
+  "note": "击败骷髅队长后，事件在 (5,10) 生成上楼梯。源码依据：event.js 中 eventHappened[7] 分支执行 floor[10][115]=4，而 115 = 10×11+5。同一段事件还会清掉初期的假地形并把本层填满追兵。",
+  "evidence": "reference/mota50/source/mota50-event.js:floor[10][115]=4"
+ }
+}

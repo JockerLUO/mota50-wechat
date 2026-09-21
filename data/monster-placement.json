@@ -1,0 +1,415 @@
+{
+  "$comment": "由 tools/import-mota50.mjs 自动生成，请勿手改。记录每只怪物在哪些楼层出现。",
+  "$license": "本文件派生自 GPL-3.0 作品 m8705/MAGIC-TOWER-JS，「转成另一种格式」不构成独立创作，按 GPL-3.0 通例应同样以 GPL-3.0 分发。详见 reference/mota50/ATTRIBUTION.md §3（含闭源发布的替代路径）。",
+  "generatedFrom": "reference/mota50/source/mota50-data.js",
+  "placement": {
+    "bat": {
+      "name": "小蝙蝠",
+      "count": 31,
+      "floors": [
+        1,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        11,
+        12,
+        15,
+        19,
+        20,
+        34
+      ]
+    },
+    "greenSlime": {
+      "name": "绿史莱姆",
+      "count": 27,
+      "floors": [
+        1,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        30,
+        34
+      ]
+    },
+    "skeleton": {
+      "name": "骷髅人",
+      "count": 23,
+      "floors": [
+        1,
+        3,
+        4,
+        6,
+        7,
+        8,
+        9,
+        10,
+        46
+      ]
+    },
+    "redSlime": {
+      "name": "红史莱姆",
+      "count": 21,
+      "floors": [
+        1,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        30,
+        34,
+        46
+      ]
+    },
+    "juniorMage": {
+      "name": "初级法师",
+      "count": 17,
+      "floors": [
+        1,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10
+      ]
+    },
+    "skeletonSoldier": {
+      "name": "骷髅士兵",
+      "count": 16,
+      "floors": [
+        1,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10
+      ]
+    },
+    "midGuard": {
+      "name": "中级卫兵",
+      "count": 6,
+      "floors": [
+        2,
+        32,
+        38
+      ]
+    },
+    "juniorGuard": {
+      "name": "初级卫兵",
+      "count": 6,
+      "floors": [
+        8,
+        17
+      ]
+    },
+    "skeletonCaptain": {
+      "name": "骷髅队长",
+      "count": 1,
+      "floors": [
+        10
+      ]
+    },
+    "bigBat": {
+      "name": "大蝙蝠",
+      "count": 40,
+      "floors": [
+        11,
+        12,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        46
+      ]
+    },
+    "bigSlime": {
+      "name": "大史莱姆",
+      "count": 27,
+      "floors": [
+        11,
+        12,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        30,
+        34
+      ]
+    },
+    "seniorMage": {
+      "name": "高级法师",
+      "count": 20,
+      "floors": [
+        11,
+        12,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20
+      ]
+    },
+    "orc": {
+      "name": "兽人",
+      "count": 18,
+      "floors": [
+        11,
+        12,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        46
+      ]
+    },
+    "orcWarrior": {
+      "name": "兽人武士",
+      "count": 24,
+      "floors": [
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        31,
+        33,
+        36,
+        38
+      ]
+    },
+    "stoneGolem": {
+      "name": "石头人",
+      "count": 9,
+      "floors": [
+        14,
+        16,
+        18,
+        19,
+        20
+      ]
+    },
+    "kraken": {
+      "name": "大乌贼",
+      "count": 1,
+      "floors": [
+        15
+      ]
+    },
+    "phantom": {
+      "name": "幽灵",
+      "count": 21,
+      "floors": [
+        16,
+        31,
+        32,
+        33,
+        34,
+        36,
+        38,
+        39,
+        40
+      ]
+    },
+    "archmage": {
+      "name": "大法师",
+      "count": 1,
+      "floors": [
+        25
+      ]
+    },
+    "ghostWarrior": {
+      "name": "鬼战士",
+      "count": 26,
+      "floors": [
+        31,
+        32,
+        33,
+        34,
+        36,
+        37,
+        38,
+        39,
+        40
+      ]
+    },
+    "warrior": {
+      "name": "战士",
+      "count": 23,
+      "floors": [
+        31,
+        32,
+        33,
+        34,
+        36,
+        37,
+        38,
+        39,
+        40,
+        46
+      ]
+    },
+    "knight": {
+      "name": "骑士",
+      "count": 19,
+      "floors": [
+        31,
+        32,
+        34,
+        36,
+        37,
+        38,
+        39,
+        40,
+        46
+      ]
+    },
+    "swordsman": {
+      "name": "双手剑士",
+      "count": 17,
+      "floors": [
+        31,
+        33,
+        34,
+        36,
+        37,
+        38,
+        39,
+        40,
+        46
+      ]
+    },
+    "dragon": {
+      "name": "魔龙",
+      "count": 1,
+      "floors": [
+        35
+      ]
+    },
+    "knightCaptain": {
+      "name": "骑士队长",
+      "count": 2,
+      "floors": [
+        40,
+        42
+      ]
+    },
+    "juniorWizard": {
+      "name": "初级巫师",
+      "count": 16,
+      "floors": [
+        41,
+        42,
+        43,
+        45,
+        46,
+        47,
+        48
+      ]
+    },
+    "seniorWizard": {
+      "name": "高级巫师",
+      "count": 14,
+      "floors": [
+        41,
+        42,
+        43,
+        45,
+        46,
+        47,
+        48,
+        49
+      ]
+    },
+    "vampireBat": {
+      "name": "吸血蝙蝠",
+      "count": 13,
+      "floors": [
+        41,
+        42,
+        43,
+        45,
+        46,
+        47,
+        48
+      ]
+    },
+    "slimeKing": {
+      "name": "史莱姆王",
+      "count": 13,
+      "floors": [
+        41,
+        42,
+        43,
+        45,
+        46,
+        47,
+        48
+      ]
+    },
+    "magicGuard": {
+      "name": "魔法警卫",
+      "count": 11,
+      "floors": [
+        41,
+        42,
+        43,
+        45,
+        48
+      ]
+    },
+    "darkKnight": {
+      "name": "黑暗骑士",
+      "count": 12,
+      "floors": [
+        42,
+        43,
+        45,
+        48,
+        49
+      ]
+    },
+    "seniorGuard": {
+      "name": "高级卫兵",
+      "count": 2,
+      "floors": [
+        44
+      ]
+    },
+    "demonKing": {
+      "name": "魔王（封印前）",
+      "count": 1,
+      "floors": [
+        50
+      ]
+    }
+  },
+  "neverPlaced": [
+    "vampire",
+    "demonKingTrue"
+  ]
+}

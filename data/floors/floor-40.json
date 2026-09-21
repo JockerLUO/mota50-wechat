@@ -1,0 +1,190 @@
+{
+ "id": "floor-40",
+ "index": 40,
+ "title": "主塔 40 层",
+ "size": {
+  "cols": 11,
+  "rows": 11
+ },
+ "terrain": [
+  "...........",
+  "...........",
+  "...........",
+  "...........",
+  "...........",
+  "###.....###",
+  "###.....###",
+  "#####r#####",
+  "...#...#...",
+  "...#...#...",
+  "...b...y..v"
+ ],
+ "stairs": {
+  "up": [],
+  "down": [
+   {
+    "x": 10,
+    "y": 10,
+    "to": 39,
+    "arrive": {
+     "x": 10,
+     "y": 10
+    }
+   }
+  ]
+ },
+ "doors": {
+  "yellow": 1,
+  "blue": 1,
+  "red": 1
+ },
+ "entities": [
+  {
+   "type": "monster",
+   "id": "knightCaptain",
+   "x": 5,
+   "y": 0
+  },
+  {
+   "type": "monster",
+   "id": "swordsman",
+   "x": 1,
+   "y": 1
+  },
+  {
+   "type": "monster",
+   "id": "swordsman",
+   "x": 2,
+   "y": 1
+  },
+  {
+   "type": "monster",
+   "id": "swordsman",
+   "x": 3,
+   "y": 1
+  },
+  {
+   "type": "monster",
+   "id": "knight",
+   "x": 7,
+   "y": 1
+  },
+  {
+   "type": "monster",
+   "id": "knight",
+   "x": 8,
+   "y": 1
+  },
+  {
+   "type": "monster",
+   "id": "knight",
+   "x": 9,
+   "y": 1
+  },
+  {
+   "type": "monster",
+   "id": "ghostWarrior",
+   "x": 2,
+   "y": 3
+  },
+  {
+   "type": "monster",
+   "id": "ghostWarrior",
+   "x": 3,
+   "y": 3
+  },
+  {
+   "type": "monster",
+   "id": "ghostWarrior",
+   "x": 4,
+   "y": 3
+  },
+  {
+   "type": "monster",
+   "id": "warrior",
+   "x": 6,
+   "y": 3
+  },
+  {
+   "type": "monster",
+   "id": "warrior",
+   "x": 7,
+   "y": 3
+  },
+  {
+   "type": "monster",
+   "id": "warrior",
+   "x": 8,
+   "y": 3
+  },
+  {
+   "type": "item",
+   "id": "blueGem",
+   "x": 0,
+   "y": 8
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 1,
+   "y": 8
+  },
+  {
+   "type": "monster",
+   "id": "phantom",
+   "x": 4,
+   "y": 8
+  },
+  {
+   "type": "monster",
+   "id": "phantom",
+   "x": 6,
+   "y": 8
+  },
+  {
+   "type": "item",
+   "id": "redPotion",
+   "x": 8,
+   "y": 8
+  },
+  {
+   "type": "monster",
+   "id": "swordsman",
+   "x": 9,
+   "y": 8
+  },
+  {
+   "type": "item",
+   "id": "bluePotion",
+   "x": 0,
+   "y": 9
+  },
+  {
+   "type": "monster",
+   "id": "warrior",
+   "x": 8,
+   "y": 9
+  },
+  {
+   "type": "item",
+   "id": "redGem",
+   "x": 0,
+   "y": 10
+  },
+  {
+   "type": "monster",
+   "id": "knight",
+   "x": 2,
+   "y": 10
+  }
+ ],
+ "notes": {
+  "title": "第三区 BOSS 层",
+  "exit": {
+   "method": "teleport",
+   "note": "本层没有上楼梯，属原版设定而非数据缺失"
+  },
+  "note": "原版第 40 层之后不再靠楼梯连续推进，必须使用传送类道具（楼层传送器／电梯）。攻略反复出现「上40层，目的是以后可用电梯直上」——先到该层登记，之后用电梯直接跳。",
+  "evidence": "攻略「上40层，目的是以后可用电梯直上」；中关村在线攻略「接着进入40层，使用飞行器直达上层…抵达41层」"
+ }
+}

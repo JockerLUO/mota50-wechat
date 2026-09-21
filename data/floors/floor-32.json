@@ -1,0 +1,193 @@
+{
+ "id": "floor-32",
+ "index": 32,
+ "title": "主塔 32 层",
+ "size": {
+  "cols": 11,
+  "rows": 11
+ },
+ "terrain": [
+  "..b.......^",
+  "..###.###..",
+  "y##.y.y.###",
+  "....#.#.#..",
+  "....#.#.y..",
+  "#####.#.###",
+  "....#.#.#..",
+  "....#.#.y..",
+  "#a###.#####",
+  "...........",
+  "....v.#...."
+ ],
+ "stairs": {
+  "up": [
+   {
+    "x": 10,
+    "y": 0,
+    "to": 33,
+    "arrive": {
+     "x": 10,
+     "y": 0
+    }
+   }
+  ],
+  "down": [
+   {
+    "x": 4,
+    "y": 10,
+    "to": 31,
+    "arrive": {
+     "x": 3,
+     "y": 10
+    },
+    "arriveAdjusted": true,
+    "arriveNote": "原坐标 (4,10) 在目标层是墙，已就近修正到可站立格"
+   }
+  ]
+ },
+ "doors": {
+  "yellow": 5,
+  "blue": 1,
+  "red": 0
+ },
+ "entities": [
+  {
+   "type": "item",
+   "id": "blueGem",
+   "x": 0,
+   "y": 0
+  },
+  {
+   "type": "item",
+   "id": "redGem",
+   "x": 1,
+   "y": 1
+  },
+  {
+   "type": "monster",
+   "id": "warrior",
+   "x": 0,
+   "y": 3
+  },
+  {
+   "type": "monster",
+   "id": "phantom",
+   "x": 2,
+   "y": 3
+  },
+  {
+   "type": "monster",
+   "id": "ghostWarrior",
+   "x": 7,
+   "y": 3
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 9,
+   "y": 3
+  },
+  {
+   "type": "item",
+   "id": "bluePotion",
+   "x": 10,
+   "y": 3
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 1,
+   "y": 4
+  },
+  {
+   "type": "monster",
+   "id": "phantom",
+   "x": 3,
+   "y": 4
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 10,
+   "y": 4
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 0,
+   "y": 6
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 1,
+   "y": 6
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 2,
+   "y": 6
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 3,
+   "y": 6
+  },
+  {
+   "type": "monster",
+   "id": "knight",
+   "x": 7,
+   "y": 6
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 9,
+   "y": 6
+  },
+  {
+   "type": "item",
+   "id": "blueKey",
+   "x": 10,
+   "y": 6
+  },
+  {
+   "type": "item",
+   "id": "blueKey",
+   "x": 3,
+   "y": 7
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 10,
+   "y": 7
+  },
+  {
+   "type": "monster",
+   "id": "midGuard",
+   "x": 0,
+   "y": 9
+  },
+  {
+   "type": "monster",
+   "id": "midGuard",
+   "x": 2,
+   "y": 9
+  },
+  {
+   "type": "npc",
+   "id": "shop",
+   "x": 9,
+   "y": 9
+  },
+  {
+   "type": "monster",
+   "id": "ghostWarrior",
+   "x": 7,
+   "y": 10
+  }
+ ]
+}

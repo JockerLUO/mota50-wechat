@@ -1,0 +1,239 @@
+{
+ "id": "floor-42",
+ "index": 42,
+ "title": "主塔 42 层",
+ "size": {
+  "cols": 11,
+  "rows": 11
+ },
+ "terrain": [
+  "^..#...#...",
+  "...#...#...",
+  "##y#...##.#",
+  "...##.##...",
+  "...y...y...",
+  "y####.##...",
+  "...#...##.#",
+  "##.#...#...",
+  "...##.###.#",
+  ".###...#...",
+  "...#.v.#..."
+ ],
+ "stairs": {
+  "up": [
+   {
+    "x": 0,
+    "y": 0,
+    "to": 43,
+    "arrive": {
+     "x": 0,
+     "y": 0
+    }
+   }
+  ],
+  "down": [
+   {
+    "x": 5,
+    "y": 10,
+    "to": 41,
+    "arrive": {
+     "x": 5,
+     "y": 10
+    }
+   }
+  ]
+ },
+ "doors": {
+  "yellow": 4,
+  "blue": 0,
+  "red": 0
+ },
+ "entities": [
+  {
+   "type": "item",
+   "id": "redKey",
+   "x": 6,
+   "y": 0
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 8,
+   "y": 0
+  },
+  {
+   "type": "item",
+   "id": "blueKey",
+   "x": 9,
+   "y": 0
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 10,
+   "y": 0
+  },
+  {
+   "type": "monster",
+   "id": "slimeKing",
+   "x": 2,
+   "y": 1
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 8,
+   "y": 1
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 9,
+   "y": 1
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 10,
+   "y": 1
+  },
+  {
+   "type": "npc",
+   "id": "sage",
+   "x": 0,
+   "y": 3
+  },
+  {
+   "type": "monster",
+   "id": "darkKnight",
+   "x": 5,
+   "y": 3
+  },
+  {
+   "type": "monster",
+   "id": "juniorWizard",
+   "x": 8,
+   "y": 3
+  },
+  {
+   "type": "monster",
+   "id": "seniorWizard",
+   "x": 10,
+   "y": 3
+  },
+  {
+   "type": "monster",
+   "id": "slimeKing",
+   "x": 2,
+   "y": 4
+  },
+  {
+   "type": "monster",
+   "id": "juniorWizard",
+   "x": 10,
+   "y": 5
+  },
+  {
+   "type": "monster",
+   "id": "vampireBat",
+   "x": 2,
+   "y": 7
+  },
+  {
+   "type": "monster",
+   "id": "magicGuard",
+   "x": 8,
+   "y": 7
+  },
+  {
+   "type": "monster",
+   "id": "magicGuard",
+   "x": 10,
+   "y": 7
+  },
+  {
+   "type": "item",
+   "id": "bluePotion",
+   "x": 0,
+   "y": 8
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 1,
+   "y": 8
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 2,
+   "y": 8
+  },
+  {
+   "type": "monster",
+   "id": "vampireBat",
+   "x": 0,
+   "y": 9
+  },
+  {
+   "type": "monster",
+   "id": "knightCaptain",
+   "x": 5,
+   "y": 9
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 8,
+   "y": 9
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 9,
+   "y": 9
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 10,
+   "y": 9
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 0,
+   "y": 10
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 1,
+   "y": 10
+  },
+  {
+   "type": "item",
+   "id": "blueGem",
+   "x": 2,
+   "y": 10
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 8,
+   "y": 10
+  },
+  {
+   "type": "item",
+   "id": "blueKey",
+   "x": 9,
+   "y": 10
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 10,
+   "y": 10
+  }
+ ]
+}

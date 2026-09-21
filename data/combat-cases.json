@@ -1,0 +1,184 @@
+{
+  "$license": "战斗黄金用例。派生自 GPL-3.0 作品 m8705/MAGIC-TOWER-JS。数值与地图数据经转换/交叉核对而来，「转成另一种格式」不构成独立创作，按 GPL-3.0 通例应同样以 GPL-3.0 分发。详见 reference/mota50/ATTRIBUTION.md §3（含闭源发布的替代路径）。",
+  "$comment": "战斗公式黄金用例。expected 值绝大多数来自公开攻略中玩家逐步记录的血量损耗，属独立于本项目实现的第三方数据 —— 用它们验证公式，比自证自算有意义得多。每条都注明了攻略原文与推导出的勇者属性。",
+  "source": {
+    "strategyGuide": "《魔塔50层》全攻略（小黑游戏转载版），含逐步血量与攻防记录",
+    "engineReference": "motajs/mota-js libs/enemys.js:calDamage（BSD-3）",
+    "secondaryGuide": "中关村在线《经典魔塔50层爆攻通关攻略》《极限通关攻略》",
+    "verifiedAt": "2026-09-20"
+  },
+  "passCriteria": "回合数、怪物出手次数、每回合伤害、总损失、可否战胜，全部逐位相等",
+  "howToRead": "loss = (rounds − 1) × perRound，且 rounds = ⌈怪HP / (勇者ATK − 怪DEF)⌉",
+
+  "cases": [
+    {
+      "name": "开局打绿史莱姆",
+      "hero": { "hp": 1000, "atk": 10, "def": 10 },
+      "monster": { "name": "绿史莱姆", "hp": 35, "atk": 18, "def": 1 },
+      "expected": { "rounds": 4, "enemyAttacks": 3, "perRound": 8, "loss": 24, "canWin": true },
+      "sourceNote": "攻略原文：「杀绿色史莱姆耗血24」。勇者属性为开局值（1~9层未购买属性，见攻略「开始：血1000，攻击10，防御10」）。"
+    },
+    {
+      "name": "开局打红史莱姆",
+      "hero": { "hp": 1000, "atk": 10, "def": 10 },
+      "monster": { "name": "红史莱姆", "hp": 45, "atk": 20, "def": 2 },
+      "expected": { "rounds": 6, "enemyAttacks": 5, "perRound": 10, "loss": 50, "canWin": true },
+      "sourceNote": "攻略原文：「杀红色史莱姆耗血50」"
+    },
+    {
+      "name": "拿铁剑前打小蝙蝠（成对）",
+      "hero": { "hp": 698, "atk": 20, "def": 14 },
+      "monster": { "name": "小蝙蝠", "hp": 35, "atk": 38, "def": 3 },
+      "expected": { "rounds": 3, "enemyAttacks": 2, "perRound": 24, "loss": 48, "canWin": true },
+      "sourceNote": "攻略原文：「下01层开黄门杀两个小蝙蝠耗血共96」→ 单只 48。勇者属性为攻略中该时点的 20/14。"
+    },
+    {
+      "name": "打初级法师",
+      "hero": { "hp": 698, "atk": 20, "def": 14 },
+      "monster": { "name": "初级法师", "hp": 60, "atk": 32, "def": 8 },
+      "expected": { "rounds": 5, "enemyAttacks": 4, "perRound": 18, "loss": 72, "canWin": true },
+      "sourceNote": "攻略原文：「初级法师耗血72」"
+    },
+    {
+      "name": "取红宝石后打小蝙蝠",
+      "hero": { "hp": 757, "atk": 21, "def": 15 },
+      "monster": { "name": "小蝙蝠", "hp": 35, "atk": 38, "def": 3 },
+      "expected": { "rounds": 2, "enemyAttacks": 1, "perRound": 23, "loss": 23, "canWin": true },
+      "sourceNote": "攻略原文：「开黄门杀小蝙蝠耗血23」。攻击力 21 后回合数从 3 降到 2，损失从 48 降到 23 —— 临界值效应。"
+    },
+    {
+      "name": "打骷髅人",
+      "hero": { "hp": 757, "atk": 21, "def": 15 },
+      "monster": { "name": "骷髅人", "hp": 50, "atk": 42, "def": 6 },
+      "expected": { "rounds": 4, "enemyAttacks": 3, "perRound": 27, "loss": 81, "canWin": true },
+      "sourceNote": "攻略原文：「杀骷髅人耗血81」"
+    },
+    {
+      "name": "攻击力 +1 后打骷髅士兵",
+      "hero": { "hp": 713, "atk": 22, "def": 15 },
+      "monster": { "name": "骷髅士兵", "hp": 55, "atk": 52, "def": 12 },
+      "expected": { "rounds": 6, "enemyAttacks": 5, "perRound": 37, "loss": 185, "canWin": true },
+      "sourceNote": "攻略原文：「杀骷髅人耗血81和骷髅士兵耗血185」"
+    },
+    {
+      "name": "攻击力 +2 后打骷髅士兵",
+      "hero": { "hp": 1000, "atk": 23, "def": 15 },
+      "monster": { "name": "骷髅士兵", "hp": 55, "atk": 52, "def": 12 },
+      "expected": { "rounds": 5, "enemyAttacks": 4, "perRound": 37, "loss": 148, "canWin": true },
+      "sourceNote": "攻略原文：「杀骷髅士兵耗血148」。与上一条对照：攻击力 22→23 使损失 185→148。"
+    },
+    {
+      "name": "打骷髅人（第10层红门内，6只）",
+      "hero": { "hp": 533, "atk": 27, "def": 31 },
+      "monster": { "name": "骷髅人", "hp": 50, "atk": 42, "def": 6 },
+      "expected": { "rounds": 3, "enemyAttacks": 2, "perRound": 11, "loss": 22, "canWin": true },
+      "sourceNote": "攻略原文：「开红门杀两个骷髅士兵耗血共126、六个骷髅人耗血共132」→ 骷髅人单只 22、骷髅士兵单只 63"
+    },
+    {
+      "name": "打骷髅队长（第10层 BOSS）",
+      "hero": { "hp": 533, "atk": 27, "def": 31 },
+      "monster": { "name": "骷髅队长", "hp": 100, "atk": 65, "def": 15 },
+      "expected": { "rounds": 9, "enemyAttacks": 8, "perRound": 34, "loss": 272, "canWin": true },
+      "sourceNote": "攻略原文：「骷髅队长耗血272」，且「若攻击/防御能力在27/31，血>530，就可开红门杀敌过关」——血 > 272 的门槛与「血533」吻合"
+    },
+    {
+      "name": "打石头人（攻击力刚好够）",
+      "hero": { "hp": 1000, "atk": 70, "def": 82 },
+      "monster": { "name": "石头人", "hp": 20, "atk": 100, "def": 68 },
+      "expected": { "rounds": 10, "enemyAttacks": 9, "perRound": 18, "loss": 162, "canWin": true },
+      "sourceNote": "攻略原文：「杀石头人耗血162」。石头人 def 68、HP 仅 20：攻击力 69 时每回合只造成 1 点伤害、要打 20 回合、损失 342；攻击力 70 时伤害翻倍成 2、10 回合、损失 162。这是原版最典型的「攻击力门槛」。"
+    },
+    {
+      "name": "打兽人武士（未持十字架）",
+      "hero": { "hp": 1162, "atk": 62, "def": 76 },
+      "monster": { "name": "兽人武士", "hp": 320, "atk": 120, "def": 15 },
+      "expected": { "rounds": 7, "enemyAttacks": 6, "perRound": 44, "loss": 264, "canWin": true },
+      "sourceNote": "攻略原文：「杀两个兽人武士耗血共528」→ 单只 264。此战发生在取得十字架之前。"
+    },
+    {
+      "name": "打兽人武士（持十字架）",
+      "hero": { "hp": 1000, "atk": 70, "def": 82 },
+      "monster": { "name": "兽人武士", "hp": 320, "atk": 120, "def": 15, "traits": ["crossVulnerable"] },
+      "counters": [{ "trait": "crossVulnerable", "stat": "atk", "mul": 2 }],
+      "expected": { "effectiveAtk": 140, "rounds": 3, "enemyAttacks": 2, "perRound": 38, "loss": 76, "canWin": true },
+      "sourceNote": "攻略原文：「杀兽人武士耗血76」。这一条是十字架真实生效范围的判定性证据：勇者攻击力仅从 62 升到 70（+8），若十字架不生效，回合数仍为 7、损失 190；只有对兽人也翻倍（70→140）才得到 76。参考源码 m8705/fight.js 只对吸血鬼翻倍，属不完整实现。"
+    },
+    {
+      "name": "打兽人（持十字架）",
+      "hero": { "hp": 1000, "atk": 70, "def": 82 },
+      "monster": { "name": "兽人", "hp": 260, "atk": 85, "def": 5, "traits": ["crossVulnerable"] },
+      "counters": [{ "trait": "crossVulnerable", "stat": "atk", "mul": 2 }],
+      "expected": { "effectiveAtk": 140, "rounds": 2, "enemyAttacks": 1, "perRound": 3, "loss": 3, "canWin": true },
+      "sourceNote": "攻略原文：「杀兽人耗血3」。不翻倍则为 3 回合、9 血。与上一条同属十字架范围证据。"
+    },
+    {
+      "name": "打吸血鬼（持十字架）",
+      "hero": { "hp": 1000, "atk": 72, "def": 84 },
+      "monster": { "name": "吸血鬼", "hp": 444, "atk": 199, "def": 66, "traits": ["crossVulnerable", "undead"] },
+      "counters": [{ "trait": "crossVulnerable", "stat": "atk", "mul": 2 }],
+      "expected": { "effectiveAtk": 144, "rounds": 6, "enemyAttacks": 5, "perRound": 115, "loss": 575, "canWin": true },
+      "sourceNote": "攻略原文：「杀八个大蝙蝠变成的吸血鬼耗血575……因为有十字架，若攻击/防御能力在72/84，血>575就可开红门杀吸血鬼过关」。不翻倍则损失 8395，相差 14 倍。"
+    },
+    {
+      "name": "打吸血鬼（无十字架）",
+      "hero": { "hp": 10000, "atk": 72, "def": 84 },
+      "monster": { "name": "吸血鬼", "hp": 444, "atk": 199, "def": 66, "traits": ["crossVulnerable", "undead"] },
+      "expected": { "effectiveAtk": 72, "rounds": 74, "enemyAttacks": 73, "perRound": 115, "loss": 8395, "canWin": true },
+      "sourceNote": "攻略原文也说「在没有十字架的情况下你不可能打败吸血鬼」——实际上不是打不过，而是损失高到不可接受。575 与 8395 的对比正是这句攻略的数学含义。"
+    },
+    {
+      "name": "攻击力不足（石头人）",
+      "hero": { "hp": 1000, "atk": 10, "def": 10 },
+      "monster": { "name": "石头人", "hp": 20, "atk": 100, "def": 68 },
+      "expected": { "rounds": null, "loss": null, "canWin": false, "reason": "unpierceable" },
+      "sourceNote": "攻击力 ≤ 怪防时完全无法击破，损失记为 Infinity。攻略中老人提示「在这区域不多次提升攻击力，就不能打败石头人」"
+    },
+    {
+      "name": "双手剑士斩杀（攻击150）",
+      "hero": { "hp": 1422, "atk": 150, "def": 98 },
+      "monster": { "name": "双手剑士", "hp": 100, "atk": 680, "def": 50, "traits": [{ "type": "execute", "stat": "atk", "threshold": 150, "damage": 0 }] },
+      "expected": { "rounds": 1, "enemyAttacks": 0, "loss": 0, "canWin": true, "execute": true },
+      "sourceNote": "源码：fight.js 中 enm.id===24 分支，player.att>=150 时零损失。攻略反复出现「打双手剑士[不伤]」，验证了这一点。"
+    },
+    {
+      "name": "双手剑士差 1 点攻击力",
+      "hero": { "hp": 1422, "atk": 149, "def": 98 },
+      "monster": { "name": "双手剑士", "hp": 100, "atk": 680, "def": 50, "traits": [{ "type": "execute", "stat": "atk", "threshold": 150, "damage": 0 }] },
+      "expected": { "rounds": 2, "enemyAttacks": 1, "perRound": 582, "loss": 582, "canWin": true, "execute": false },
+      "sourceNote": "攻略中老人提示「双手剑士的攻击力太高了，你最好到能对他一击必杀时再与他战斗」。149 与 150 之间是整局最陡的一道坎：损失从 582 跳到 0。"
+    },
+    {
+      "name": "魔法警卫（夹击 50%，期望值）",
+      "hero": { "hp": 5000, "atk": 200, "def": 10 },
+      "monster": { "name": "魔法警卫", "hp": 230, "atk": 450, "def": 100, "traits": [{ "type": "flank", "chance": 0.5 }] },
+      "expected": { "rounds": 3, "enemyAttacks": 2, "perRound": 440, "loss": 1100, "hpLossMin": 880, "hpLossMax": 1320, "flanked": true, "canWin": true },
+      "sourceNote": "攻略原文：「在2个魔法警卫间通过会使你的生命减少一半」，且 41 层建议「用对称飞行器避开两个高级巫师夹击」。夹击是概率性的，预览必须同时给出最坏值 —— 只给期望值会让玩家在实战中被打死。"
+    },
+    {
+      "name": "魔王（封印前）攻击力门槛",
+      "hero": { "hp": 99999, "atk": 1000, "def": 500 },
+      "monster": { "name": "魔王（封印前）", "hp": 8000, "atk": 5000, "def": 1000 },
+      "expected": { "rounds": null, "loss": null, "canWin": false, "reason": "unpierceable" },
+      "sourceNote": "魔王 def 1000，攻击力必须 ≥ 1001。攻略：「上49层杀八个魔法警卫（先杀四周中间的四个将魔王的魔法封印），接着…和魔王不耗血」—— 必须先解封印，不能硬打。"
+    }
+  ],
+
+  "auraCases": [
+    { "name": "初级巫师领域", "adjacent": [{ "traits": [{ "type": "aura", "range": 1, "damage": 100 }] }], "expected": 100, "sourceNote": "源码：event.js 中 p===15 分支" },
+    { "name": "高级巫师领域", "adjacent": [{ "traits": [{ "type": "aura", "range": 1, "damage": 200 }] }], "expected": 200, "sourceNote": "源码：event.js 中 p===16 分支" },
+    { "name": "初级+高级巫师叠加", "adjacent": [{ "traits": [{ "type": "aura", "range": 1, "damage": 100 }] }, { "traits": [{ "type": "aura", "range": 1, "damage": 200 }] }], "expected": 300, "sourceNote": "两侧同时被领域覆盖时叠加扣血。攻略中 42 层「穿过巫师耗血800」即多步穿越的累计结果。" },
+    { "name": "持神圣盾免疫领域", "adjacent": [{ "traits": [{ "type": "aura", "range": 1, "damage": 200 }] }], "auraImmune": true, "expected": 0, "sourceNote": "源码：player.shield !== 5 判定，神圣盾完全免疫" }
+  ],
+
+  "shopCases": [
+    { "name": "第1次购买价格", "n": 1, "expected": 20, "sourceNote": "攻略原文：「开蓝门买防守(钱20)+4=14」→ 花 20 钱、防御 +4" },
+    { "name": "第2次购买价格", "n": 2, "expected": 40 },
+    { "name": "第3次购买价格", "n": 3, "expected": 80 },
+    { "name": "第4次购买价格", "n": 4, "expected": 140 },
+    { "name": "前17次累计花费", "n": 17, "expected": 16660 },
+    { "name": "前18次累计花费", "n": 18, "expected": 19740, "sourceNote": "超过全游戏总金币 18145 —— 所以整局最多买 17 次" },
+    { "name": "1~9层买防御的收益", "floor": 5, "stat": "def", "expected": 4, "sourceNote": "攻略 12 层原文：「买防守(钱40+80=120)+16=50」→ 两次购买使防御 +16，每次 +8，与 floor(12/10)+1=2 倍率吻合" },
+    { "name": "40~49层买防御的收益", "floor": 45, "stat": "def", "expected": 20 },
+    { "name": "50层买攻击的收益", "floor": 50, "stat": "atk", "expected": 12 }
+  ]
+}

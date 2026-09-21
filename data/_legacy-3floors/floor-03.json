@@ -1,0 +1,39 @@
+{
+  "id": "floor-03",
+  "name": "第三层 · 蓝门与密室",
+  "cols": 13,
+  "rows": 13,
+  "bgm": "bgm_tower_2",
+  "start": { "x": 1, "y": 11 },
+  "terrain": [
+    "#############",
+    "#...........#",
+    "#.#.......#.#",
+    "#....#.#....#",
+    "#....#.#....#",
+    "#....#.#....#",
+    "#....#.#....#",
+    "#....###....#",
+    "#...........#",
+    "#.#.......#.#",
+    "#.........#.#",
+    "#.........#.#",
+    "#############"
+  ],
+  "entities": [
+    { "x": 1, "y": 11, "type": "stair", "id": "up", "target": "floor-02" },
+    { "x": 11, "y": 10, "type": "monster", "id": "mummy" },
+    { "x": 11, "y": 11, "type": "item", "id": "blueKey" },
+    { "x": 6, "y": 2, "type": "door", "id": "blueDoor" },
+    { "x": 6, "y": 4, "type": "item", "id": "redGem" },
+    { "x": 6, "y": 5, "type": "event", "id": "f03-holy-water" },
+    { "x": 6, "y": 6, "type": "stair", "id": "down", "target": "floor-04" },
+    { "x": 2, "y": 8, "type": "monster", "id": "skeleton" },
+    { "x": 9, "y": 8, "type": "monster", "id": "ghost" },
+    { "x": 1, "y": 1, "type": "item", "id": "redPotion" },
+    { "x": 5, "y": 1, "type": "monster", "id": "orc" },
+    { "x": 7, "y": 11, "type": "monster", "id": "mummy" },
+    { "x": 11, "y": 1, "type": "item", "id": "blueGem" },
+    { "x": 1, "y": 8, "type": "item", "id": "redPotion" }
+  ]
+}

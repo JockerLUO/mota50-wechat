@@ -1,0 +1,187 @@
+{
+ "id": "floor-01",
+ "index": 1,
+ "title": "主塔 1 层",
+ "size": {
+  "cols": 11,
+  "rows": 11
+ },
+ "terrain": [
+  "^..........",
+  "##########.",
+  "...y.#...#.",
+  "...#.#...#.",
+  "#y##.###y#.",
+  "...#.y...#.",
+  "...#.#####.",
+  "#y##.......",
+  "...##y###y#",
+  "...#...#...",
+  "...#...#..."
+ ],
+ "stairs": {
+  "up": [
+   {
+    "x": 0,
+    "y": 0,
+    "to": 2,
+    "arrive": {
+     "x": 0,
+     "y": 0
+    }
+   }
+  ],
+  "down": []
+ },
+ "doors": {
+  "yellow": 7,
+  "blue": 0,
+  "red": 0
+ },
+ "entities": [
+  {
+   "type": "monster",
+   "id": "greenSlime",
+   "x": 2,
+   "y": 0
+  },
+  {
+   "type": "monster",
+   "id": "redSlime",
+   "x": 3,
+   "y": 0
+  },
+  {
+   "type": "monster",
+   "id": "greenSlime",
+   "x": 4,
+   "y": 0
+  },
+  {
+   "type": "item",
+   "id": "redPotion",
+   "x": 0,
+   "y": 2
+  },
+  {
+   "type": "item",
+   "id": "redGem",
+   "x": 6,
+   "y": 2
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 7,
+   "y": 2
+  },
+  {
+   "type": "monster",
+   "id": "skeleton",
+   "x": 1,
+   "y": 3
+  },
+  {
+   "type": "item",
+   "id": "blueGem",
+   "x": 6,
+   "y": 3
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 7,
+   "y": 3
+  },
+  {
+   "type": "monster",
+   "id": "bat",
+   "x": 6,
+   "y": 5
+  },
+  {
+   "type": "monster",
+   "id": "juniorMage",
+   "x": 7,
+   "y": 5
+  },
+  {
+   "type": "monster",
+   "id": "bat",
+   "x": 8,
+   "y": 5
+  },
+  {
+   "type": "monster",
+   "id": "skeletonSoldier",
+   "x": 1,
+   "y": 6
+  },
+  {
+   "type": "item",
+   "id": "redPotion",
+   "x": 0,
+   "y": 9
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 2,
+   "y": 9
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 4,
+   "y": 9
+  },
+  {
+   "type": "npc",
+   "id": "sage",
+   "x": 6,
+   "y": 9
+  },
+  {
+   "type": "monster",
+   "id": "bat",
+   "x": 9,
+   "y": 9
+  },
+  {
+   "type": "item",
+   "id": "redPotion",
+   "x": 0,
+   "y": 10
+  },
+  {
+   "type": "item",
+   "id": "floorTeleporter",
+   "x": 1,
+   "y": 10
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 2,
+   "y": 10
+  },
+  {
+   "type": "monster",
+   "id": "greenSlime",
+   "x": 8,
+   "y": 10
+  },
+  {
+   "type": "item",
+   "id": "bluePotion",
+   "x": 9,
+   "y": 10
+  },
+  {
+   "type": "monster",
+   "id": "greenSlime",
+   "x": 10,
+   "y": 10
+  }
+ ]
+}

@@ -1,0 +1,477 @@
+{
+  "$license": "道具表。派生自 GPL-3.0 作品 m8705/MAGIC-TOWER-JS。数值与地图数据经转换/交叉核对而来，「转成另一种格式」不构成独立创作，按 GPL-3.0 通例应同样以 GPL-3.0 分发。详见 reference/mota50/ATTRIBUTION.md §3（含闭源发布的替代路径）。",
+  "$comment": "原版《魔塔50层》道具表。sourceId 对应参考源码 moth50-data.js 中 item 层的取值（图例见 reference/mota50/source/mota50-graph.js:19-121）。效果实现见 reference/mota50/source/mota50-action.js 与 mota50-event.js:function checkItem。",
+  "source": {
+    "legend": "reference/mota50/source/mota50-graph.js:19-121",
+    "pickupEffects": "reference/mota50/source/mota50-event.js:function checkItem",
+    "usableEffects": "reference/mota50/source/mota50-action.js:function use",
+    "verifiedAt": "2026-09-20"
+  },
+  "items": {
+    "redGem": {
+      "sourceId": 1,
+      "name": "红宝石",
+      "kind": "pickup",
+      "effects": [
+        {
+          "op": "addStat",
+          "stat": "atk",
+          "value": 2
+        }
+      ],
+      "note": "原版为 +2 而非 +1"
+    },
+    "blueGem": {
+      "sourceId": 2,
+      "name": "蓝宝石",
+      "kind": "pickup",
+      "effects": [
+        {
+          "op": "addStat",
+          "stat": "def",
+          "value": 2
+        }
+      ]
+    },
+    "redPotion": {
+      "sourceId": 3,
+      "name": "红药水",
+      "kind": "pickup",
+      "effects": [
+        {
+          "op": "addStat",
+          "stat": "hp",
+          "value": 50
+        }
+      ]
+    },
+    "bluePotion": {
+      "sourceId": 4,
+      "name": "蓝药水",
+      "kind": "pickup",
+      "effects": [
+        {
+          "op": "addStat",
+          "stat": "hp",
+          "value": 200
+        }
+      ]
+    },
+    "holyWater": {
+      "sourceId": 5,
+      "name": "圣水",
+      "kind": "usable",
+      "effects": [
+        {
+          "op": "mulStat",
+          "stat": "hp",
+          "value": 2
+        }
+      ],
+      "note": "不是「回满血」——是当前 HP 翻倍。越晚用收益越大，是原版最重要的资源决策点。"
+    },
+    "yellowKey": {
+      "sourceId": 6,
+      "name": "黄钥匙",
+      "kind": "pickup",
+      "effects": [
+        {
+          "op": "addKey",
+          "key": "yellowKey",
+          "value": 1
+        }
+      ]
+    },
+    "blueKey": {
+      "sourceId": 7,
+      "name": "蓝钥匙",
+      "kind": "pickup",
+      "effects": [
+        {
+          "op": "addKey",
+          "key": "blueKey",
+          "value": 1
+        }
+      ]
+    },
+    "redKey": {
+      "sourceId": 8,
+      "name": "红钥匙",
+      "kind": "pickup",
+      "effects": [
+        {
+          "op": "addKey",
+          "key": "redKey",
+          "value": 1
+        }
+      ]
+    },
+    "goldenKey": {
+      "sourceId": 9,
+      "name": "金钥匙",
+      "kind": "usable",
+      "effects": [
+        {
+          "op": "clearTerrain",
+          "terrain": 7,
+          "scope": "currentFloor"
+        }
+      ],
+      "note": "不是万能钥匙。使用后一次性清除当前楼层所有黄门，是原版的「楼层解谜钥匙」。"
+    },
+    "monsterBook": {
+      "sourceId": 10,
+      "name": "怪物书",
+      "kind": "usable",
+      "effects": [
+        {
+          "op": "toggleUi",
+          "ui": "monsterBook"
+        }
+      ],
+      "note": "第3层智慧老人赠与"
+    },
+    "notebook": {
+      "sourceId": 11,
+      "name": "记事本",
+      "kind": "usable",
+      "effects": [
+        {
+          "op": "toggleUi",
+          "ui": "notebook"
+        }
+      ],
+      "note": "第5层拾取后自动开启系统"
+    },
+    "bigGold": {
+      "sourceId": 12,
+      "name": "大金币",
+      "kind": "passive",
+      "effects": [
+        {
+          "op": "mulGoldGain",
+          "value": 2
+        }
+      ],
+      "note": "地下室获取。持有即生效，此后所有击杀金币翻倍——所以「拿到它之后再回头清怪」是原版核心策略。"
+    },
+    "shovel": {
+      "sourceId": 13,
+      "name": "铁锹",
+      "kind": "usable",
+      "effects": [
+        {
+          "op": "breakWall",
+          "scope": "adjacent4"
+        }
+      ],
+      "note": "挖掉勇者上下左右紧邻的墙（仅墙，不含假墙）"
+    },
+    "snowflake": {
+      "sourceId": 14,
+      "name": "雪花",
+      "kind": "usable",
+      "effects": [
+        {
+          "op": "clearTerrain",
+          "terrain": 5,
+          "scope": "currentFloor"
+        }
+      ],
+      "note": "清除当前楼层全部岩浆"
+    },
+    "quakeScroll": {
+      "sourceId": 15,
+      "name": "地震卷轴",
+      "kind": "usable",
+      "effects": [
+        {
+          "op": "clearTerrain",
+          "terrain": 1,
+          "scope": "currentFloor"
+        }
+      ],
+      "note": "清除当前楼层全部墙体。原版最强的地形改造道具，用于 37 层取钥匙等关键路线。"
+    },
+    "mirrorFlyer": {
+      "sourceId": 16,
+      "name": "对称飞行器",
+      "kind": "usable",
+      "effects": [
+        {
+          "op": "teleportSymmetric"
+        }
+      ],
+      "note": "传送到本层中心对称点 (x,y) → (12−x, 12−y)，要求目标格完全为空"
+    },
+    "downFlyer": {
+      "sourceId": 17,
+      "name": "向下飞行器",
+      "kind": "usable",
+      "effects": [
+        {
+          "op": "changeFloor",
+          "delta": -1
+        }
+      ]
+    },
+    "upFlyer": {
+      "sourceId": 18,
+      "name": "向上飞行器",
+      "kind": "usable",
+      "effects": [
+        {
+          "op": "changeFloor",
+          "delta": 1
+        }
+      ]
+    },
+    "cross": {
+      "sourceId": 19,
+      "name": "十字架",
+      "kind": "passive",
+      "effects": [
+        {
+          "op": "traitCounter",
+          "trait": "crossVulnerable",
+          "stat": "atk",
+          "mul": 2
+        }
+      ],
+      "note": "对兽人、兽人武士、吸血鬼的攻击力翻倍（参考源码只实现了吸血鬼，见 monsters.json 的 traitsReference）。第19层隐形墙内获得。攻略原话：「十字架杀兽人和吸血鬼攻击加倍」。"
+    },
+    "bomb": {
+      "sourceId": 20,
+      "name": "炸药",
+      "kind": "usable",
+      "effects": [
+        {
+          "op": "bomb",
+          "scope": "adjacent4",
+          "exclude": {
+            "roleIds": [
+              3,
+              8,
+              25,
+              27,
+              29
+            ],
+            "roleIdAtLeast": 32
+          }
+        }
+      ],
+      "note": "清除相邻非 BOSS 怪物。精确规则见 effectOps.bomb（按 roleId 白名单排除，非「所有 BOSS」）。"
+    },
+    "dragonSlayer": {
+      "sourceId": 21,
+      "name": "屠龙剑",
+      "kind": "passive",
+      "effects": [
+        {
+          "op": "traitCounter",
+          "trait": "dragon",
+          "stat": "atk",
+          "mul": 2
+        }
+      ],
+      "note": "仅对魔龙生效，攻击力翻倍"
+    },
+    "ironSword": {
+      "sourceId": 22,
+      "name": "铁剑",
+      "kind": "pickup",
+      "effects": [
+        {
+          "op": "addStat",
+          "stat": "atk",
+          "value": 10
+        }
+      ]
+    },
+    "silverSword": {
+      "sourceId": 23,
+      "name": "银剑",
+      "kind": "pickup",
+      "effects": [
+        {
+          "op": "addStat",
+          "stat": "atk",
+          "value": 20
+        }
+      ]
+    },
+    "knightSword": {
+      "sourceId": 24,
+      "name": "骑士剑",
+      "kind": "pickup",
+      "effects": [
+        {
+          "op": "addStat",
+          "stat": "atk",
+          "value": 40
+        }
+      ]
+    },
+    "holySword": {
+      "sourceId": 25,
+      "name": "圣剑",
+      "kind": "pickup",
+      "effects": [
+        {
+          "op": "addStat",
+          "stat": "atk",
+          "value": 50
+        }
+      ]
+    },
+    "sacredSword": {
+      "sourceId": 26,
+      "name": "神圣剑",
+      "kind": "pickup",
+      "effects": [
+        {
+          "op": "addStat",
+          "stat": "atk",
+          "value": 100
+        }
+      ]
+    },
+    "ironShield": {
+      "sourceId": 27,
+      "name": "铁盾",
+      "kind": "pickup",
+      "effects": [
+        {
+          "op": "addStat",
+          "stat": "def",
+          "value": 10
+        }
+      ]
+    },
+    "silverShield": {
+      "sourceId": 28,
+      "name": "银盾",
+      "kind": "pickup",
+      "effects": [
+        {
+          "op": "addStat",
+          "stat": "def",
+          "value": 20
+        }
+      ]
+    },
+    "knightShield": {
+      "sourceId": 29,
+      "name": "骑士盾",
+      "kind": "pickup",
+      "effects": [
+        {
+          "op": "addStat",
+          "stat": "def",
+          "value": 40
+        }
+      ]
+    },
+    "holyShield": {
+      "sourceId": 30,
+      "name": "圣盾",
+      "kind": "pickup",
+      "effects": [
+        {
+          "op": "addStat",
+          "stat": "def",
+          "value": 50
+        }
+      ]
+    },
+    "sacredShield": {
+      "sourceId": 31,
+      "name": "神圣盾",
+      "kind": "pickup",
+      "effects": [
+        {
+          "op": "addStat",
+          "stat": "def",
+          "value": 100
+        },
+        {
+          "op": "immune",
+          "to": "aura"
+        }
+      ],
+      "note": "额外的隐藏价值：持有后完全免疫巫师领域伤害（源码：event.js 中 player.shield !== 5 判定）"
+    },
+    "floorTeleporter": {
+      "sourceId": 32,
+      "name": "楼层传送器",
+      "kind": "usable",
+      "effects": [
+        {
+          "op": "openFloorSelect",
+          "range": [
+            1,
+            49
+          ]
+        }
+      ]
+    }
+  },
+  "summary": {
+    "pickup": [
+      "redGem",
+      "blueGem",
+      "redPotion",
+      "bluePotion",
+      "yellowKey",
+      "blueKey",
+      "redKey",
+      "ironSword",
+      "silverSword",
+      "knightSword",
+      "holySword",
+      "sacredSword",
+      "ironShield",
+      "silverShield",
+      "knightShield",
+      "holyShield",
+      "sacredShield"
+    ],
+    "usable": [
+      "holyWater",
+      "goldenKey",
+      "monsterBook",
+      "notebook",
+      "shovel",
+      "snowflake",
+      "quakeScroll",
+      "mirrorFlyer",
+      "downFlyer",
+      "upFlyer",
+      "bomb",
+      "floorTeleporter"
+    ],
+    "passive": [
+      "bigGold",
+      "cross",
+      "dragonSlayer"
+    ]
+  },
+  "effectOps": {
+    "addStat": "给勇者某属性加值。stat ∈ {hp, atk, def}",
+    "mulStat": "给勇者某属性乘值（圣水的 HP 翻倍）",
+    "addKey": "钥匙 +1。key ∈ {yellowKey, blueKey, redKey}",
+    "mulGoldGain": "此后击杀获得的金币倍率",
+    "traitCounter": "对具备某 trait 的怪物，战斗时临时给某属性乘值",
+    "immune": "免疫某类效果",
+    "clearTerrain": "清除范围内的某种地形。scope ∈ {currentFloor}",
+    "breakWall": "清除范围内可用铁锹破坏的墙。scope ∈ {adjacent4}",
+    "bomb": "清除相邻（上下左右）的角色，但按源码 canUseBomb 的 roleId 白名单排除。排除规则：a>=32（NPC 与编号≥32 的魔龙37/大乌贼38）或 a∈{3,8,25,27,29}（骷髅队长/吸血鬼/魔王/大法师/骑士队长）。注意骑士队长(29)在排除名单内，而高级卫兵(23)可以炸 —— 这是原版让玩家处理高防怪的手段。源码：reference/mota50/source/mota50-action.js:use(20) 内的 canUseBomb",
+    "teleportSymmetric": "中心对称传送",
+    "changeFloor": "楼层增减",
+    "openFloorSelect": "打开楼层选择面板",
+    "toggleUi": "开关某个 UI 面板",
+    "buyStat": "商店购买。价格与增量由 core/shop.mjs 按 constants.json 的 shop 段计算，不写死在道具表里",
+    "buyItem": "向商人购买商品（钥匙 / 地震卷轴 / 生命）。商品按楼层定义在 data/npcs.json 的 merchant.goodsByFloor，价格写在那里而非本表。",
+    "sellItem": "向商人出售道具换金币（第 28 层回收黄钥匙，100 金币/把）。"
+  }
+}

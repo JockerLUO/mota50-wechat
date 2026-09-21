@@ -1,0 +1,167 @@
+{
+ "id": "floor-36",
+ "index": 36,
+ "title": "主塔 36 层",
+ "size": {
+  "cols": 11,
+  "rows": 11
+ },
+ "terrain": [
+  "..........v",
+  "..###y###..",
+  ".####.####.",
+  ".####.####.",
+  ".###...###.",
+  ".y.......y.",
+  ".###...###.",
+  ".####.####.",
+  ".####.####.",
+  "..###y###..",
+  "..........^"
+ ],
+ "stairs": {
+  "up": [
+   {
+    "x": 10,
+    "y": 10,
+    "to": 37,
+    "arrive": {
+     "x": 10,
+     "y": 10
+    }
+   }
+  ],
+  "down": [
+   {
+    "x": 10,
+    "y": 0,
+    "to": 35,
+    "arrive": {
+     "x": 10,
+     "y": 0
+    }
+   }
+  ]
+ },
+ "doors": {
+  "yellow": 4,
+  "blue": 0,
+  "red": 0
+ },
+ "entities": [
+  {
+   "type": "npc",
+   "id": "sage",
+   "x": 0,
+   "y": 0
+  },
+  {
+   "type": "monster",
+   "id": "warrior",
+   "x": 2,
+   "y": 0
+  },
+  {
+   "type": "monster",
+   "id": "orcWarrior",
+   "x": 6,
+   "y": 0
+  },
+  {
+   "type": "monster",
+   "id": "knight",
+   "x": 8,
+   "y": 0
+  },
+  {
+   "type": "monster",
+   "id": "phantom",
+   "x": 0,
+   "y": 2
+  },
+  {
+   "type": "monster",
+   "id": "phantom",
+   "x": 10,
+   "y": 2
+  },
+  {
+   "type": "monster",
+   "id": "knight",
+   "x": 0,
+   "y": 4
+  },
+  {
+   "type": "monster",
+   "id": "ghostWarrior",
+   "x": 5,
+   "y": 4
+  },
+  {
+   "type": "monster",
+   "id": "swordsman",
+   "x": 10,
+   "y": 4
+  },
+  {
+   "type": "monster",
+   "id": "phantom",
+   "x": 4,
+   "y": 5
+  },
+  {
+   "type": "monster",
+   "id": "phantom",
+   "x": 6,
+   "y": 5
+  },
+  {
+   "type": "monster",
+   "id": "knight",
+   "x": 5,
+   "y": 6
+  },
+  {
+   "type": "monster",
+   "id": "knight",
+   "x": 10,
+   "y": 6
+  },
+  {
+   "type": "monster",
+   "id": "swordsman",
+   "x": 0,
+   "y": 8
+  },
+  {
+   "type": "item",
+   "id": "bluePotion",
+   "x": 0,
+   "y": 10
+  },
+  {
+   "type": "monster",
+   "id": "warrior",
+   "x": 2,
+   "y": 10
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 4,
+   "y": 10
+  },
+  {
+   "type": "monster",
+   "id": "orcWarrior",
+   "x": 6,
+   "y": 10
+  },
+  {
+   "type": "monster",
+   "id": "swordsman",
+   "x": 8,
+   "y": 10
+  }
+ ]
+}

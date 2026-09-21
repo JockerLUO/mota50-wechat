@@ -1,0 +1,51 @@
+{
+  "$license": "地形图例。派生自 GPL-3.0 作品 m8705/MAGIC-TOWER-JS。数值与地图数据经转换/交叉核对而来，「转成另一种格式」不构成独立创作，按 GPL-3.0 通例应同样以 GPL-3.0 分发。详见 reference/mota50/ATTRIBUTION.md §3（含闭源发布的替代路径）。",
+  "$comment": "地形图例。数字 key 沿用原版《魔塔50层》源码编码（见 reference/mota50/source/mota50-graph.js），char 是本项目字符画使用的符号，两者一一对应。",
+  "source": {
+    "origin": "原版魔塔50层",
+    "legendFrom": "reference/mota50/source/mota50-graph.js:123-160",
+    "passabilityFrom": "reference/mota50/source/mota50-event.js:function checkFloor",
+    "verifiedAt": "2026-09-20"
+  },
+  "legend": {
+    "0": { "char": ".", "name": "空地", "passable": true },
+    "1": { "char": "#", "name": "墙", "passable": false },
+    "2": {
+      "char": "D",
+      "name": "牢门",
+      "passable": false,
+      "openBy": "event",
+      "note": "剧情事件开启，不消耗钥匙。原版第2层由中级卫兵把守，击杀后自动开启。"
+    },
+    "3": { "char": "v", "name": "下楼梯", "passable": true, "stairs": "down", "note": "踩上后进入 floorIndex - 1" },
+    "4": { "char": "^", "name": "上楼梯", "passable": true, "stairs": "up", "note": "踩上后进入 floorIndex + 1" },
+    "5": {
+      "char": "~",
+      "name": "岩浆",
+      "passable": false,
+      "note": "原版不可通行，需地震卷轴/铁锹等道具改变地形。"
+    },
+    "6": {
+      "char": "*",
+      "name": "星际空间",
+      "passable": false,
+      "note": "视觉上的深空背景，等价于墙。注意：参考实现 m8705 漏判了此地形（未列入阻挡分支），本项目按原版语义判定为不可通行。"
+    },
+    "7": { "char": "y", "name": "黄门", "passable": false, "key": "yellowKey" },
+    "8": { "char": "b", "name": "蓝门", "passable": false, "key": "blueKey" },
+    "9": { "char": "r", "name": "红门", "passable": false, "key": "redKey" },
+    "10": {
+      "char": "a",
+      "name": "自动门",
+      "passable": false,
+      "openBy": "event",
+      "note": "击败指定怪物后自动变为空地。原版第8层由初级卫兵把守。"
+    },
+    "11": {
+      "char": "w",
+      "name": "假墙",
+      "passable": true,
+      "note": "外观与墙相同，撞一次后变为空地。属于隐藏通路设计手法。"
+    }
+  }
+}

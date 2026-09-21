@@ -1,0 +1,209 @@
+{
+ "id": "floor-34",
+ "index": 34,
+ "title": "主塔 34 层",
+ "size": {
+  "cols": 11,
+  "rows": 11
+ },
+ "terrain": [
+  "v..#...#...",
+  "...y...y...",
+  "...########",
+  "#y##.#.#.#.",
+  "...#y#y#y#y",
+  ".#.........",
+  "...#y#y#y#y",
+  "#y##.#.#.#.",
+  "...########",
+  ".#.y...y...",
+  "...#.^.#..."
+ ],
+ "stairs": {
+  "up": [
+   {
+    "x": 5,
+    "y": 10,
+    "to": 35,
+    "arrive": {
+     "x": 5,
+     "y": 10
+    }
+   }
+  ],
+  "down": [
+   {
+    "x": 0,
+    "y": 0,
+    "to": 33,
+    "arrive": {
+     "x": 0,
+     "y": 0
+    }
+   }
+  ]
+ },
+ "doors": {
+  "yellow": 14,
+  "blue": 0,
+  "red": 0
+ },
+ "entities": [
+  {
+   "type": "item",
+   "id": "redPotion",
+   "x": 2,
+   "y": 0
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 5,
+   "y": 0
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 8,
+   "y": 0
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 9,
+   "y": 0
+  },
+  {
+   "type": "item",
+   "id": "blueGem",
+   "x": 10,
+   "y": 0
+  },
+  {
+   "type": "monster",
+   "id": "phantom",
+   "x": 4,
+   "y": 1
+  },
+  {
+   "type": "monster",
+   "id": "knight",
+   "x": 6,
+   "y": 1
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 9,
+   "y": 1
+  },
+  {
+   "type": "item",
+   "id": "redPotion",
+   "x": 10,
+   "y": 1
+  },
+  {
+   "type": "monster",
+   "id": "phantom",
+   "x": 1,
+   "y": 2
+  },
+  {
+   "type": "monster",
+   "id": "greenSlime",
+   "x": 4,
+   "y": 3
+  },
+  {
+   "type": "monster",
+   "id": "swordsman",
+   "x": 6,
+   "y": 3
+  },
+  {
+   "type": "monster",
+   "id": "bigSlime",
+   "x": 8,
+   "y": 3
+  },
+  {
+   "type": "monster",
+   "id": "warrior",
+   "x": 10,
+   "y": 3
+  },
+  {
+   "type": "monster",
+   "id": "ghostWarrior",
+   "x": 4,
+   "y": 7
+  },
+  {
+   "type": "monster",
+   "id": "redSlime",
+   "x": 6,
+   "y": 7
+  },
+  {
+   "type": "monster",
+   "id": "knight",
+   "x": 8,
+   "y": 7
+  },
+  {
+   "type": "monster",
+   "id": "bat",
+   "x": 10,
+   "y": 7
+  },
+  {
+   "type": "monster",
+   "id": "ghostWarrior",
+   "x": 2,
+   "y": 8
+  },
+  {
+   "type": "monster",
+   "id": "swordsman",
+   "x": 0,
+   "y": 9
+  },
+  {
+   "type": "monster",
+   "id": "warrior",
+   "x": 8,
+   "y": 9
+  },
+  {
+   "type": "item",
+   "id": "redPotion",
+   "x": 10,
+   "y": 9
+  },
+  {
+   "type": "item",
+   "id": "bluePotion",
+   "x": 0,
+   "y": 10
+  },
+  {
+   "type": "monster",
+   "id": "warrior",
+   "x": 1,
+   "y": 10
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 9,
+   "y": 10
+  },
+  {
+   "type": "item",
+   "id": "redGem",
+   "x": 10,
+   "y": 10
+  }
+ ]
+}

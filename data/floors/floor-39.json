@@ -1,0 +1,149 @@
+{
+ "id": "floor-39",
+ "index": 39,
+ "title": "主塔 39 层",
+ "size": {
+  "cols": 11,
+  "rows": 11
+ },
+ "terrain": [
+  ".......#..v",
+  ".y.y.y.#...",
+  ".......#...",
+  ".y.y.y.##y#",
+  ".......#...",
+  ".y.y.y.#.#.",
+  ".......#...",
+  "#b#######y#",
+  "...#...#...",
+  "#..y.#.y...",
+  "...#...#..^"
+ ],
+ "stairs": {
+  "up": [
+   {
+    "x": 10,
+    "y": 10,
+    "to": 40,
+    "arrive": {
+     "x": 10,
+     "y": 10
+    }
+   }
+  ],
+  "down": [
+   {
+    "x": 10,
+    "y": 0,
+    "to": 38,
+    "arrive": {
+     "x": 10,
+     "y": 0
+    }
+   }
+  ]
+ },
+ "doors": {
+  "yellow": 13,
+  "blue": 1,
+  "red": 0
+ },
+ "entities": [
+  {
+   "type": "npc",
+   "id": "merchant",
+   "x": 8,
+   "y": 1
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 10,
+   "y": 2
+  },
+  {
+   "type": "monster",
+   "id": "warrior",
+   "x": 10,
+   "y": 4
+  },
+  {
+   "type": "monster",
+   "id": "phantom",
+   "x": 8,
+   "y": 5
+  },
+  {
+   "type": "item",
+   "id": "redGem",
+   "x": 10,
+   "y": 5
+  },
+  {
+   "type": "monster",
+   "id": "ghostWarrior",
+   "x": 10,
+   "y": 6
+  },
+  {
+   "type": "monster",
+   "id": "ghostWarrior",
+   "x": 2,
+   "y": 8
+  },
+  {
+   "type": "monster",
+   "id": "swordsman",
+   "x": 4,
+   "y": 8
+  },
+  {
+   "type": "item",
+   "id": "blueGem",
+   "x": 5,
+   "y": 8
+  },
+  {
+   "type": "monster",
+   "id": "knight",
+   "x": 6,
+   "y": 8
+  },
+  {
+   "type": "monster",
+   "id": "knight",
+   "x": 9,
+   "y": 8
+  },
+  {
+   "type": "monster",
+   "id": "ghostWarrior",
+   "x": 1,
+   "y": 9
+  },
+  {
+   "type": "npc",
+   "id": "sage",
+   "x": 0,
+   "y": 10
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 2,
+   "y": 10
+  },
+  {
+   "type": "monster",
+   "id": "phantom",
+   "x": 5,
+   "y": 10
+  },
+  {
+   "type": "item",
+   "id": "redPotion",
+   "x": 8,
+   "y": 10
+  }
+ ]
+}

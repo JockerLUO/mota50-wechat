@@ -1,0 +1,47 @@
+/* 画布之外的样式。UI 全部画在 canvas 里，这里只负责「铺满窗口 + 居中缩放」。 */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #e9eef6;
+  font-family: 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, sans-serif;
+  color: #1e293b;
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#app,
+#stage {
+  position: absolute;
+  inset: 0;
+}
+
+#stage canvas {
+  display: block;
+}
+
+#boot {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  color: #5b6a80;
+  letter-spacing: 0.05em;
+  pointer-events: none;
+}
+
+#boot.boot-error {
+  color: #dc2626;
+  white-space: pre-wrap;
+  padding: 24px;
+  text-align: center;
+}

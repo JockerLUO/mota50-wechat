@@ -1,0 +1,310 @@
+{
+ "id": "floor-37",
+ "index": 37,
+ "title": "主塔 37 层",
+ "size": {
+  "cols": 11,
+  "rows": 11
+ },
+ "terrain": [
+  "^.y........",
+  "..#######..",
+  "b##..#..##.",
+  ".#...#...#.",
+  ".#...#...#.",
+  ".#########.",
+  ".#...#...#.",
+  ".#...#...#.",
+  ".##..#..##.",
+  "..#######..",
+  "..........v"
+ ],
+ "stairs": {
+  "up": [
+   {
+    "x": 0,
+    "y": 0,
+    "to": 38,
+    "arrive": {
+     "x": 0,
+     "y": 0
+    }
+   }
+  ],
+  "down": [
+   {
+    "x": 10,
+    "y": 10,
+    "to": 36,
+    "arrive": {
+     "x": 10,
+     "y": 10
+    }
+   }
+  ]
+ },
+ "doors": {
+  "yellow": 1,
+  "blue": 1,
+  "red": 0
+ },
+ "entities": [
+  {
+   "type": "monster",
+   "id": "warrior",
+   "x": 8,
+   "y": 0
+  },
+  {
+   "type": "item",
+   "id": "bluePotion",
+   "x": 10,
+   "y": 0
+  },
+  {
+   "type": "item",
+   "id": "redPotion",
+   "x": 3,
+   "y": 2
+  },
+  {
+   "type": "item",
+   "id": "redPotion",
+   "x": 4,
+   "y": 2
+  },
+  {
+   "type": "item",
+   "id": "redPotion",
+   "x": 6,
+   "y": 2
+  },
+  {
+   "type": "item",
+   "id": "redPotion",
+   "x": 7,
+   "y": 2
+  },
+  {
+   "type": "monster",
+   "id": "knight",
+   "x": 10,
+   "y": 2
+  },
+  {
+   "type": "item",
+   "id": "redPotion",
+   "x": 2,
+   "y": 3
+  },
+  {
+   "type": "item",
+   "id": "redPotion",
+   "x": 3,
+   "y": 3
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 4,
+   "y": 3
+  },
+  {
+   "type": "item",
+   "id": "redPotion",
+   "x": 6,
+   "y": 3
+  },
+  {
+   "type": "item",
+   "id": "redPotion",
+   "x": 7,
+   "y": 3
+  },
+  {
+   "type": "item",
+   "id": "redPotion",
+   "x": 8,
+   "y": 3
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 2,
+   "y": 4
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 3,
+   "y": 4
+  },
+  {
+   "type": "item",
+   "id": "bomb",
+   "x": 4,
+   "y": 4
+  },
+  {
+   "type": "item",
+   "id": "redKey",
+   "x": 6,
+   "y": 4
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 7,
+   "y": 4
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 8,
+   "y": 4
+  },
+  {
+   "type": "item",
+   "id": "redPotion",
+   "x": 0,
+   "y": 5
+  },
+  {
+   "type": "monster",
+   "id": "swordsman",
+   "x": 10,
+   "y": 5
+  },
+  {
+   "type": "item",
+   "id": "blueGem",
+   "x": 2,
+   "y": 6
+  },
+  {
+   "type": "item",
+   "id": "redGem",
+   "x": 3,
+   "y": 6
+  },
+  {
+   "type": "item",
+   "id": "bluePotion",
+   "x": 4,
+   "y": 6
+  },
+  {
+   "type": "item",
+   "id": "redGem",
+   "x": 6,
+   "y": 6
+  },
+  {
+   "type": "item",
+   "id": "redGem",
+   "x": 7,
+   "y": 6
+  },
+  {
+   "type": "item",
+   "id": "redGem",
+   "x": 8,
+   "y": 6
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 2,
+   "y": 7
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 3,
+   "y": 7
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 4,
+   "y": 7
+  },
+  {
+   "type": "item",
+   "id": "blueGem",
+   "x": 6,
+   "y": 7
+  },
+  {
+   "type": "item",
+   "id": "blueGem",
+   "x": 7,
+   "y": 7
+  },
+  {
+   "type": "item",
+   "id": "blueGem",
+   "x": 8,
+   "y": 7
+  },
+  {
+   "type": "monster",
+   "id": "warrior",
+   "x": 0,
+   "y": 8
+  },
+  {
+   "type": "item",
+   "id": "blueKey",
+   "x": 3,
+   "y": 8
+  },
+  {
+   "type": "item",
+   "id": "blueKey",
+   "x": 4,
+   "y": 8
+  },
+  {
+   "type": "item",
+   "id": "bluePotion",
+   "x": 6,
+   "y": 8
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 7,
+   "y": 8
+  },
+  {
+   "type": "monster",
+   "id": "knight",
+   "x": 10,
+   "y": 8
+  },
+  {
+   "type": "npc",
+   "id": "sage",
+   "x": 0,
+   "y": 10
+  },
+  {
+   "type": "monster",
+   "id": "ghostWarrior",
+   "x": 2,
+   "y": 10
+  },
+  {
+   "type": "monster",
+   "id": "ghostWarrior",
+   "x": 8,
+   "y": 10
+  }
+ ],
+ "notes": {
+  "title": "仓库层",
+  "note": "整层是一座需要「地震卷轴」才能开启的仓库：使用地震卷轴清除本层所有墙后，可取到大量宝石与炸药。这是原版最著名的解谜设计之一。",
+  "evidence": "攻略「下37层使用地震卷轴Q取红+16=190、蓝宝石+16=182各4和炸弹B、红钥匙1、蓝钥匙2、黄钥匙9」；NPC 对白「你需要用地震卷轴取出37楼仓库内的所有宝物」"
+ }
+}

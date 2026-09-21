@@ -1,0 +1,15 @@
+{
+  "appid": "touristappid",
+  "projectname": "mota50-minigame",
+  "compileType": "game",
+  "miniprogramRoot": "./",
+  "description": "魔塔 50 层 —— 微信小游戏。src 在仓库根，本目录是构建产物 dist-minigame 的模板。",
+  "setting": {
+    "es6": false,
+    "enhance": false,
+    "postcss": false,
+    "minified": false,
+    "urlCheck": false,
+    "autoAudits": false
+  }
+}

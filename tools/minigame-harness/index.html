@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>小游戏产物 · 无 DOM 环境实测</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: #14141a;
+      }
+      #frame {
+        display: block;
+        width: 390px;
+        height: 844px;
+        image-rendering: pixelated;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- 这一页只是个「相框」。
+         真正的实测跑在 worker.js 里 —— Worker 是一个**真实的无 DOM 环境**，
+         不像页面那样要费劲伪造（页面的 document 是 [LegacyUnforgeable]，删不掉）。
+         本页只做两件事：转发报告、把 Worker 传回来的那一帧画出来好截图。 -->
+    <canvas id="frame" width="390" height="844"></canvas>
+    <script>
+      const frame = document.getElementById('frame');
+      const STATUS = { report: null, frame: false };
+
+      function flush() {
+        if (!STATUS.report) return;
+        fetch('/__result', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(STATUS.report)
+        });
+      }
+
+      const worker = new Worker('/worker.js');
+      worker.onmessage = (e) => {
+        const d = e.data || {};
+        if (d.type === 'report') {
+          STATUS.report = d.report;
+          // 等那一帧到手再回传报告，保证驱动脚本截图时画面已经画好。
+          // 但别等死：3 秒还没来就先回传。
+          setTimeout(flush, 3000);
+        } else if (d.type === 'frame') {
+          frame.width = d.bitmap.width;
+          frame.height = d.bitmap.height;
+          frame.getContext('2d').drawImage(d.bitmap, 0, 0);
+          if (d.bitmap.close) d.bitmap.close();
+          STATUS.frame = true;
+          flush();
+        } else if (d.type === 'frameError') {
+          console.warn('transferToImageBitmap 失败：' + d.message);
+          flush();
+        }
+      };
+      worker.onerror = (e) => console.error('[worker.onerror] ' + e.message + ' @' + e.filename + ':' + e.lineno);
+    </script>
+  </body>
+</html>

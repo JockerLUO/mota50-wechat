@@ -1,0 +1,190 @@
+{
+ "id": "floor-45",
+ "index": 45,
+ "title": "主塔 45 层",
+ "size": {
+  "cols": 11,
+  "rows": 11
+ },
+ "terrain": [
+  "v.........^",
+  "#####y#####",
+  "...#...#...",
+  "b#.#...#...",
+  "...#...###y",
+  "b#.##y##.#.",
+  "...y.......",
+  "#r#######..",
+  "...#..#.##y",
+  "...a..a.y..",
+  "...#..#.#.."
+ ],
+ "stairs": {
+  "up": [
+   {
+    "x": 10,
+    "y": 0,
+    "to": 46,
+    "arrive": {
+     "x": 10,
+     "y": 0
+    }
+   }
+  ],
+  "down": [
+   {
+    "x": 0,
+    "y": 0,
+    "to": 44,
+    "arrive": {
+     "x": 0,
+     "y": 0
+    }
+   }
+  ]
+ },
+ "doors": {
+  "yellow": 6,
+  "blue": 2,
+  "red": 1
+ },
+ "entities": [
+  {
+   "type": "item",
+   "id": "redGem",
+   "x": 0,
+   "y": 2
+  },
+  {
+   "type": "item",
+   "id": "redGem",
+   "x": 1,
+   "y": 2
+  },
+  {
+   "type": "monster",
+   "id": "juniorWizard",
+   "x": 4,
+   "y": 2
+  },
+  {
+   "type": "monster",
+   "id": "seniorWizard",
+   "x": 6,
+   "y": 2
+  },
+  {
+   "type": "npc",
+   "id": "merchant",
+   "x": 8,
+   "y": 2
+  },
+  {
+   "type": "monster",
+   "id": "darkKnight",
+   "x": 2,
+   "y": 3
+  },
+  {
+   "type": "monster",
+   "id": "slimeKing",
+   "x": 10,
+   "y": 3
+  },
+  {
+   "type": "item",
+   "id": "blueGem",
+   "x": 0,
+   "y": 4
+  },
+  {
+   "type": "item",
+   "id": "blueGem",
+   "x": 1,
+   "y": 4
+  },
+  {
+   "type": "monster",
+   "id": "seniorWizard",
+   "x": 4,
+   "y": 4
+  },
+  {
+   "type": "monster",
+   "id": "juniorWizard",
+   "x": 6,
+   "y": 4
+  },
+  {
+   "type": "monster",
+   "id": "darkKnight",
+   "x": 2,
+   "y": 5
+  },
+  {
+   "type": "npc",
+   "id": "sage",
+   "x": 8,
+   "y": 5
+  },
+  {
+   "type": "monster",
+   "id": "vampireBat",
+   "x": 6,
+   "y": 6
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 10,
+   "y": 6
+  },
+  {
+   "type": "monster",
+   "id": "seniorWizard",
+   "x": 9,
+   "y": 7
+  },
+  {
+   "type": "monster",
+   "id": "darkKnight",
+   "x": 4,
+   "y": 8
+  },
+  {
+   "type": "monster",
+   "id": "magicGuard",
+   "x": 7,
+   "y": 8
+  },
+  {
+   "type": "item",
+   "id": "upFlyer",
+   "x": 1,
+   "y": 9
+  },
+  {
+   "type": "monster",
+   "id": "darkKnight",
+   "x": 4,
+   "y": 10
+  },
+  {
+   "type": "monster",
+   "id": "magicGuard",
+   "x": 7,
+   "y": 10
+  },
+  {
+   "type": "item",
+   "id": "bluePotion",
+   "x": 10,
+   "y": 10
+  }
+ ],
+ "notes": {
+  "title": "上楼器层",
+  "note": "上楼器在左下角。只能用一次，直接上一层。",
+  "evidence": "飞行器说明文「上楼器在45层左下角…只能用一次」"
+ }
+}

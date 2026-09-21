@@ -1,0 +1,233 @@
+{
+ "id": "floor-16",
+ "index": 16,
+ "title": "主塔 16 层",
+ "size": {
+  "cols": 11,
+  "rows": 11
+ },
+ "terrain": [
+  "...#.v.#...",
+  "...y...y...",
+  "...#...#...",
+  "#####b###y#",
+  "...#...#...",
+  "...y...#...",
+  "...#...#...",
+  "#w###y###y#",
+  "...#...#...",
+  "...y...y.##",
+  "...#.^.#.w."
+ ],
+ "stairs": {
+  "up": [
+   {
+    "x": 5,
+    "y": 10,
+    "to": 17,
+    "arrive": {
+     "x": 5,
+     "y": 10
+    }
+   }
+  ],
+  "down": [
+   {
+    "x": 5,
+    "y": 0,
+    "to": 15,
+    "arrive": {
+     "x": 5,
+     "y": 0
+    }
+   }
+  ]
+ },
+ "doors": {
+  "yellow": 8,
+  "blue": 1,
+  "red": 0
+ },
+ "entities": [
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 0,
+   "y": 0
+  },
+  {
+   "type": "monster",
+   "id": "bigBat",
+   "x": 1,
+   "y": 0
+  },
+  {
+   "type": "monster",
+   "id": "bigBat",
+   "x": 10,
+   "y": 0
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 0,
+   "y": 1
+  },
+  {
+   "type": "monster",
+   "id": "seniorMage",
+   "x": 1,
+   "y": 1
+  },
+  {
+   "type": "monster",
+   "id": "bigSlime",
+   "x": 8,
+   "y": 1
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 0,
+   "y": 2
+  },
+  {
+   "type": "monster",
+   "id": "bigBat",
+   "x": 1,
+   "y": 2
+  },
+  {
+   "type": "monster",
+   "id": "orc",
+   "x": 4,
+   "y": 2
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 6,
+   "y": 2
+  },
+  {
+   "type": "item",
+   "id": "redPotion",
+   "x": 10,
+   "y": 2
+  },
+  {
+   "type": "item",
+   "id": "redGem",
+   "x": 0,
+   "y": 4
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 1,
+   "y": 4
+  },
+  {
+   "type": "item",
+   "id": "redPotion",
+   "x": 4,
+   "y": 4
+  },
+  {
+   "type": "monster",
+   "id": "orc",
+   "x": 9,
+   "y": 4
+  },
+  {
+   "type": "item",
+   "id": "redPotion",
+   "x": 0,
+   "y": 5
+  },
+  {
+   "type": "monster",
+   "id": "stoneGolem",
+   "x": 2,
+   "y": 5
+  },
+  {
+   "type": "monster",
+   "id": "orcWarrior",
+   "x": 5,
+   "y": 5
+  },
+  {
+   "type": "item",
+   "id": "blueGem",
+   "x": 0,
+   "y": 6
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 1,
+   "y": 6
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 6,
+   "y": 6
+  },
+  {
+   "type": "monster",
+   "id": "bigBat",
+   "x": 8,
+   "y": 6
+  },
+  {
+   "type": "item",
+   "id": "blueKey",
+   "x": 10,
+   "y": 6
+  },
+  {
+   "type": "monster",
+   "id": "bigSlime",
+   "x": 1,
+   "y": 8
+  },
+  {
+   "type": "monster",
+   "id": "bigBat",
+   "x": 4,
+   "y": 8
+  },
+  {
+   "type": "monster",
+   "id": "bigBat",
+   "x": 6,
+   "y": 8
+  },
+  {
+   "type": "monster",
+   "id": "seniorMage",
+   "x": 9,
+   "y": 8
+  },
+  {
+   "type": "npc",
+   "id": "sage",
+   "x": 0,
+   "y": 10
+  },
+  {
+   "type": "monster",
+   "id": "phantom",
+   "x": 8,
+   "y": 10
+  },
+  {
+   "type": "item",
+   "id": "holyWater",
+   "x": 10,
+   "y": 10
+  }
+ ]
+}

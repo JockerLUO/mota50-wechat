@@ -1,0 +1,190 @@
+{
+ "id": "floor-47",
+ "index": 47,
+ "title": "主塔 47 层",
+ "size": {
+  "cols": 11,
+  "rows": 11
+ },
+ "terrain": [
+  "^.b...y....",
+  "..#...#.##.",
+  ".######....",
+  ".#.y..#y###",
+  ".#.#..#....",
+  ".y.#..#....",
+  ".#.#..####y",
+  ".#.b..#....",
+  ".######.###",
+  "..#...#.#..",
+  "..y...y...v"
+ ],
+ "stairs": {
+  "up": [
+   {
+    "x": 0,
+    "y": 0,
+    "to": 48,
+    "arrive": {
+     "x": 0,
+     "y": 0
+    }
+   }
+  ],
+  "down": [
+   {
+    "x": 10,
+    "y": 10,
+    "to": 46,
+    "arrive": {
+     "x": 10,
+     "y": 10
+    }
+   }
+  ]
+ },
+ "doors": {
+  "yellow": 7,
+  "blue": 2,
+  "red": 0
+ },
+ "entities": [
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 10,
+   "y": 0
+  },
+  {
+   "type": "npc",
+   "id": "merchant",
+   "x": 4,
+   "y": 1
+  },
+  {
+   "type": "monster",
+   "id": "seniorWizard",
+   "x": 7,
+   "y": 1
+  },
+  {
+   "type": "item",
+   "id": "blueGem",
+   "x": 10,
+   "y": 1
+  },
+  {
+   "type": "monster",
+   "id": "slimeKing",
+   "x": 8,
+   "y": 2
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 10,
+   "y": 2
+  },
+  {
+   "type": "monster",
+   "id": "seniorWizard",
+   "x": 4,
+   "y": 3
+  },
+  {
+   "type": "monster",
+   "id": "vampireBat",
+   "x": 2,
+   "y": 4
+  },
+  {
+   "type": "monster",
+   "id": "juniorWizard",
+   "x": 5,
+   "y": 4
+  },
+  {
+   "type": "monster",
+   "id": "juniorWizard",
+   "x": 8,
+   "y": 4
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 7,
+   "y": 5
+  },
+  {
+   "type": "monster",
+   "id": "vampireBat",
+   "x": 10,
+   "y": 5
+  },
+  {
+   "type": "item",
+   "id": "blueKey",
+   "x": 4,
+   "y": 6
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 5,
+   "y": 6
+  },
+  {
+   "type": "item",
+   "id": "redGem",
+   "x": 4,
+   "y": 7
+  },
+  {
+   "type": "item",
+   "id": "blueGem",
+   "x": 5,
+   "y": 7
+  },
+  {
+   "type": "monster",
+   "id": "seniorWizard",
+   "x": 0,
+   "y": 8
+  },
+  {
+   "type": "monster",
+   "id": "slimeKing",
+   "x": 7,
+   "y": 8
+  },
+  {
+   "type": "item",
+   "id": "redPotion",
+   "x": 3,
+   "y": 9
+  },
+  {
+   "type": "item",
+   "id": "redGem",
+   "x": 5,
+   "y": 9
+  },
+  {
+   "type": "npc",
+   "id": "sage",
+   "x": 7,
+   "y": 9
+  },
+  {
+   "type": "monster",
+   "id": "juniorWizard",
+   "x": 4,
+   "y": 10
+  }
+ ],
+ "notes": {
+  "title": "地震卷轴商店",
+  "note": "商人出售地震卷轴，价格 3000 金币（源码 traderWord[47] 为准） —— 这是全局最贵的单笔支出，也是「钱该买属性还是买道具」的核心抉择点。 ⚠️ 攻略写 4000 金币，而源码 traderWord 写 3000 —— 本项目以源码为准，差异已记录。",
+  "evidence": "攻略「向商人买地震卷轴Q(钱4000)」，NPC 对白「如果要打败魔龙你需要 圣剑，圣盾，屠龙匕 或更高等级的装备」；reference/mota50/source/mota50-action.js:traderWord[47]「我有地震卷轴，你出3000个金币就卖给你。」"
+ }
+}

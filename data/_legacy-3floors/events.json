@@ -1,0 +1,71 @@
+{
+  "f01-intro": {
+    "trigger": "onFloorEnter",
+    "floor": "floor-01",
+    "once": true,
+    "conditions": [],
+    "effects": [
+      { "op": "dialog", "text": "欢迎来到魔塔。" },
+      { "op": "dialog", "text": "站在怪物前方可以看到战斗预判：损失多少生命、需要几回合。攻击力不足时，战斗回合数会暴涨，损失成倍增加。" }
+    ]
+  },
+  "f01-oldman": {
+    "trigger": "onEnter",
+    "once": true,
+    "conditions": [],
+    "effects": [
+      { "op": "dialog", "text": "老人：红宝石加攻击，蓝宝石加防御。别小看一点攻击力，它能让战斗回合数少一半。" },
+      { "op": "giveItem", "id": "redPotion", "count": 1 }
+    ]
+  },
+  "f01-vault-guard": {
+    "trigger": "onEnter",
+    "once": true,
+    "conditions": [{ "op": "gte", "stat": "atk", "value": 12 }],
+    "effects": [{ "op": "dialog", "text": "你感觉这具骷髅挡得住现在的你，但打得过——只要愿意付出代价。" }]
+  },
+  "f03-holy-water": {
+    "trigger": "onEnter",
+    "once": true,
+    "conditions": [],
+    "effects": [
+      { "op": "dialog", "text": "你发现了一瓶圣水。" },
+      { "op": "giveItem", "id": "holyWater", "count": 1 }
+    ]
+  },
+  "f03-gate-warning": {
+    "trigger": "onEnter",
+    "once": true,
+    "conditions": [{ "op": "lt", "stat": "atk", "value": 20 }],
+    "effects": [{ "op": "dialog", "text": "守卫：你的攻击力还不足以轻松击败后面的敌人，建议先回去找找宝石。" }]
+  },
+  "shop01-buy-hp": {
+    "trigger": "onShopBuy",
+    "once": false,
+    "conditions": [{ "op": "gte", "stat": "gold", "value": 50 }],
+    "effects": [
+      { "op": "add", "stat": "gold", "value": -50 },
+      { "op": "add", "stat": "hp", "value": 200 },
+      { "op": "dialog", "text": "生命 +200" }
+    ]
+  },
+  "shop01-buy-atk": {
+    "trigger": "onShopBuy",
+    "once": false,
+    "conditions": [{ "op": "gte", "stat": "gold", "value": 120 }],
+    "effects": [
+      { "op": "add", "stat": "gold", "value": -120 },
+      { "op": "add", "stat": "atk", "value": 2 },
+      { "op": "dialog", "text": "攻击 +2" }
+    ]
+  },
+  "f05-boss-cleared": {
+    "trigger": "onBattleEnd",
+    "once": true,
+    "conditions": [{ "op": "defeated", "id": "vampire" }],
+    "effects": [
+      { "op": "dialog", "text": "吸血鬼化作黑雾消散了。" },
+      { "op": "giveItem", "id": "flyWing", "count": 1 }
+    ]
+  }
+}

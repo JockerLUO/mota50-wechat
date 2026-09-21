@@ -1,0 +1,232 @@
+{
+ "id": "floor-19",
+ "index": 19,
+ "title": "主塔 19 层",
+ "size": {
+  "cols": 11,
+  "rows": 11
+ },
+ "terrain": [
+  "v.#.....#..",
+  "..#..#..#..",
+  "y##.#w#.#y#",
+  "..#..w..#..",
+  "..#..#..#..",
+  "y##.....#..",
+  "..###b####y",
+  "...........",
+  "y####.##...",
+  ".#.y...###.",
+  "...#.^.y..."
+ ],
+ "stairs": {
+  "up": [
+   {
+    "x": 5,
+    "y": 10,
+    "to": 20,
+    "arrive": {
+     "x": 5,
+     "y": 10
+    }
+   }
+  ],
+  "down": [
+   {
+    "x": 0,
+    "y": 0,
+    "to": 18,
+    "arrive": {
+     "x": 0,
+     "y": 0
+    }
+   }
+  ]
+ },
+ "doors": {
+  "yellow": 7,
+  "blue": 1,
+  "red": 0
+ },
+ "entities": [
+  {
+   "type": "item",
+   "id": "redPotion",
+   "x": 3,
+   "y": 0
+  },
+  {
+   "type": "monster",
+   "id": "seniorMage",
+   "x": 5,
+   "y": 0
+  },
+  {
+   "type": "item",
+   "id": "blueKey",
+   "x": 7,
+   "y": 0
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 9,
+   "y": 0
+  },
+  {
+   "type": "item",
+   "id": "redGem",
+   "x": 10,
+   "y": 0
+  },
+  {
+   "type": "monster",
+   "id": "bigBat",
+   "x": 9,
+   "y": 1
+  },
+  {
+   "type": "monster",
+   "id": "orcWarrior",
+   "x": 3,
+   "y": 2
+  },
+  {
+   "type": "item",
+   "id": "cross",
+   "x": 5,
+   "y": 2
+  },
+  {
+   "type": "monster",
+   "id": "orcWarrior",
+   "x": 7,
+   "y": 2
+  },
+  {
+   "type": "monster",
+   "id": "bat",
+   "x": 0,
+   "y": 3
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 3,
+   "y": 4
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 7,
+   "y": 4
+  },
+  {
+   "type": "monster",
+   "id": "bigSlime",
+   "x": 9,
+   "y": 4
+  },
+  {
+   "type": "monster",
+   "id": "bigSlime",
+   "x": 10,
+   "y": 4
+  },
+  {
+   "type": "monster",
+   "id": "stoneGolem",
+   "x": 4,
+   "y": 5
+  },
+  {
+   "type": "monster",
+   "id": "stoneGolem",
+   "x": 6,
+   "y": 5
+  },
+  {
+   "type": "monster",
+   "id": "bigBat",
+   "x": 0,
+   "y": 6
+  },
+  {
+   "type": "monster",
+   "id": "bigSlime",
+   "x": 2,
+   "y": 7
+  },
+  {
+   "type": "monster",
+   "id": "orcWarrior",
+   "x": 7,
+   "y": 7
+  },
+  {
+   "type": "monster",
+   "id": "orc",
+   "x": 10,
+   "y": 7
+  },
+  {
+   "type": "monster",
+   "id": "orcWarrior",
+   "x": 5,
+   "y": 8
+  },
+  {
+   "type": "item",
+   "id": "redPotion",
+   "x": 8,
+   "y": 8
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 9,
+   "y": 8
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 4,
+   "y": 9
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 6,
+   "y": 9
+  },
+  {
+   "type": "monster",
+   "id": "bigBat",
+   "x": 10,
+   "y": 9
+  },
+  {
+   "type": "monster",
+   "id": "bigSlime",
+   "x": 0,
+   "y": 10
+  },
+  {
+   "type": "monster",
+   "id": "bigBat",
+   "x": 2,
+   "y": 10
+  },
+  {
+   "type": "monster",
+   "id": "bat",
+   "x": 9,
+   "y": 10
+  }
+ ],
+ "notes": {
+  "title": "十字架层",
+  "note": "十字架藏在隐形墙内，需要撞墙获得。石头人（def 68）是本层门槛怪，攻击力不足时完全无法击破。",
+  "evidence": "攻略「上19层开蓝门杀石头人耗血162撞隐形墙取十字架和黄钥匙2」"
+ }
+}

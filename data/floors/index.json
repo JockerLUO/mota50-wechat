@@ -1,0 +1,674 @@
+{
+  "$comment": "楼层索引。坐标系统：零基，(x: 0~10, y: 0~10)，y 向下增长；数组下标 = y * 11 + x。",
+  "$license": "本文件派生自 GPL-3.0 作品 m8705/MAGIC-TOWER-JS，「转成另一种格式」不构成独立创作，按 GPL-3.0 通例应同样以 GPL-3.0 分发。详见 reference/mota50/ATTRIBUTION.md §3（含闭源发布的替代路径）。",
+  "coordinateSystem": "zero-based",
+  "cols": 11,
+  "rows": 11,
+  "floorCount": 51,
+  "sourceCommit": "m8705/MAGIC-TOWER-JS @ 0e09a59f7d223a267dab8a748aeaee0833de2c9c",
+  "floors": [
+    {
+      "id": "floor-00",
+      "index": 0,
+      "title": "主塔 0 层（地下）",
+      "monsters": 0,
+      "items": 1,
+      "npcs": 0,
+      "doors": {
+        "yellow": 0,
+        "blue": 0,
+        "red": 0
+      }
+    },
+    {
+      "id": "floor-01",
+      "index": 1,
+      "title": "主塔 1 层",
+      "monsters": 11,
+      "items": 12,
+      "npcs": 1,
+      "doors": {
+        "yellow": 7,
+        "blue": 0,
+        "red": 0
+      }
+    },
+    {
+      "id": "floor-02",
+      "index": 2,
+      "title": "主塔 2 层",
+      "monsters": 2,
+      "items": 10,
+      "npcs": 3,
+      "doors": {
+        "yellow": 0,
+        "blue": 1,
+        "red": 0
+      }
+    },
+    {
+      "id": "floor-03",
+      "index": 3,
+      "title": "主塔 3 层",
+      "monsters": 7,
+      "items": 18,
+      "npcs": 1,
+      "doors": {
+        "yellow": 5,
+        "blue": 0,
+        "red": 0
+      }
+    },
+    {
+      "id": "floor-04",
+      "index": 4,
+      "title": "主塔 4 层",
+      "monsters": 10,
+      "items": 10,
+      "npcs": 2,
+      "doors": {
+        "yellow": 7,
+        "blue": 1,
+        "red": 0
+      }
+    },
+    {
+      "id": "floor-05",
+      "index": 5,
+      "title": "主塔 5 层",
+      "monsters": 12,
+      "items": 12,
+      "npcs": 0,
+      "doors": {
+        "yellow": 5,
+        "blue": 0,
+        "red": 0
+      }
+    },
+    {
+      "id": "floor-06",
+      "index": 6,
+      "title": "主塔 6 层",
+      "monsters": 15,
+      "items": 10,
+      "npcs": 2,
+      "doors": {
+        "yellow": 8,
+        "blue": 0,
+        "red": 0
+      }
+    },
+    {
+      "id": "floor-07",
+      "index": 7,
+      "title": "主塔 7 层",
+      "monsters": 16,
+      "items": 11,
+      "npcs": 2,
+      "doors": {
+        "yellow": 9,
+        "blue": 1,
+        "red": 0
+      }
+    },
+    {
+      "id": "floor-08",
+      "index": 8,
+      "title": "主塔 8 层",
+      "monsters": 15,
+      "items": 16,
+      "npcs": 0,
+      "doors": {
+        "yellow": 9,
+        "blue": 1,
+        "red": 0
+      }
+    },
+    {
+      "id": "floor-09",
+      "index": 9,
+      "title": "主塔 9 层",
+      "monsters": 14,
+      "items": 13,
+      "npcs": 1,
+      "doors": {
+        "yellow": 11,
+        "blue": 2,
+        "red": 0
+      }
+    },
+    {
+      "id": "floor-10",
+      "index": 10,
+      "title": "主塔 10 层",
+      "monsters": 17,
+      "items": 3,
+      "npcs": 0,
+      "doors": {
+        "yellow": 4,
+        "blue": 0,
+        "red": 1
+      }
+    },
+    {
+      "id": "floor-11",
+      "index": 11,
+      "title": "主塔 11 层",
+      "monsters": 15,
+      "items": 12,
+      "npcs": 1,
+      "doors": {
+        "yellow": 7,
+        "blue": 1,
+        "red": 0
+      }
+    },
+    {
+      "id": "floor-12",
+      "index": 12,
+      "title": "主塔 12 层",
+      "monsters": 14,
+      "items": 13,
+      "npcs": 3,
+      "doors": {
+        "yellow": 6,
+        "blue": 1,
+        "red": 0
+      }
+    },
+    {
+      "id": "floor-13",
+      "index": 13,
+      "title": "主塔 13 层",
+      "monsters": 0,
+      "items": 1,
+      "npcs": 0,
+      "doors": {
+        "yellow": 1,
+        "blue": 0,
+        "red": 0
+      }
+    },
+    {
+      "id": "floor-14",
+      "index": 14,
+      "title": "主塔 14 层",
+      "monsters": 16,
+      "items": 12,
+      "npcs": 0,
+      "doors": {
+        "yellow": 9,
+        "blue": 2,
+        "red": 0
+      }
+    },
+    {
+      "id": "floor-15",
+      "index": 15,
+      "title": "主塔 15 层",
+      "monsters": 14,
+      "items": 6,
+      "npcs": 2,
+      "doors": {
+        "yellow": 7,
+        "blue": 0,
+        "red": 0
+      }
+    },
+    {
+      "id": "floor-16",
+      "index": 16,
+      "title": "主塔 16 层",
+      "monsters": 15,
+      "items": 14,
+      "npcs": 1,
+      "doors": {
+        "yellow": 8,
+        "blue": 1,
+        "red": 0
+      }
+    },
+    {
+      "id": "floor-17",
+      "index": 17,
+      "title": "主塔 17 层",
+      "monsters": 15,
+      "items": 8,
+      "npcs": 0,
+      "doors": {
+        "yellow": 3,
+        "blue": 1,
+        "red": 0
+      }
+    },
+    {
+      "id": "floor-18",
+      "index": 18,
+      "title": "主塔 18 层",
+      "monsters": 20,
+      "items": 14,
+      "npcs": 1,
+      "doors": {
+        "yellow": 8,
+        "blue": 2,
+        "red": 0
+      }
+    },
+    {
+      "id": "floor-19",
+      "index": 19,
+      "title": "主塔 19 层",
+      "monsters": 18,
+      "items": 11,
+      "npcs": 0,
+      "doors": {
+        "yellow": 7,
+        "blue": 1,
+        "red": 0
+      }
+    },
+    {
+      "id": "floor-20",
+      "index": 20,
+      "title": "主塔 20 层",
+      "monsters": 16,
+      "items": 8,
+      "npcs": 0,
+      "doors": {
+        "yellow": 2,
+        "blue": 2,
+        "red": 1
+      }
+    },
+    {
+      "id": "floor-21",
+      "index": 21,
+      "title": "主塔 21 层",
+      "monsters": 0,
+      "items": 0,
+      "npcs": 1,
+      "doors": {
+        "yellow": 0,
+        "blue": 0,
+        "red": 0
+      }
+    },
+    {
+      "id": "floor-22",
+      "index": 22,
+      "title": "主塔 22 层",
+      "monsters": 0,
+      "items": 0,
+      "npcs": 0,
+      "doors": {
+        "yellow": 0,
+        "blue": 0,
+        "red": 0
+      }
+    },
+    {
+      "id": "floor-23",
+      "index": 23,
+      "title": "主塔 23 层",
+      "monsters": 0,
+      "items": 0,
+      "npcs": 0,
+      "doors": {
+        "yellow": 0,
+        "blue": 0,
+        "red": 0
+      }
+    },
+    {
+      "id": "floor-24",
+      "index": 24,
+      "title": "主塔 24 层",
+      "monsters": 0,
+      "items": 0,
+      "npcs": 1,
+      "doors": {
+        "yellow": 0,
+        "blue": 0,
+        "red": 1
+      }
+    },
+    {
+      "id": "floor-25",
+      "index": 25,
+      "title": "主塔 25 层",
+      "monsters": 1,
+      "items": 0,
+      "npcs": 0,
+      "doors": {
+        "yellow": 0,
+        "blue": 0,
+        "red": 1
+      }
+    },
+    {
+      "id": "floor-26",
+      "index": 26,
+      "title": "主塔 26 层",
+      "monsters": 0,
+      "items": 0,
+      "npcs": 1,
+      "doors": {
+        "yellow": 0,
+        "blue": 0,
+        "red": 3
+      }
+    },
+    {
+      "id": "floor-27",
+      "index": 27,
+      "title": "主塔 27 层",
+      "monsters": 0,
+      "items": 0,
+      "npcs": 1,
+      "doors": {
+        "yellow": 0,
+        "blue": 0,
+        "red": 0
+      }
+    },
+    {
+      "id": "floor-28",
+      "index": 28,
+      "title": "主塔 28 层",
+      "monsters": 0,
+      "items": 0,
+      "npcs": 1,
+      "doors": {
+        "yellow": 0,
+        "blue": 0,
+        "red": 0
+      }
+    },
+    {
+      "id": "floor-29",
+      "index": 29,
+      "title": "主塔 29 层",
+      "monsters": 0,
+      "items": 0,
+      "npcs": 2,
+      "doors": {
+        "yellow": 0,
+        "blue": 0,
+        "red": 0
+      }
+    },
+    {
+      "id": "floor-30",
+      "index": 30,
+      "title": "主塔 30 层",
+      "monsters": 6,
+      "items": 0,
+      "npcs": 0,
+      "doors": {
+        "yellow": 0,
+        "blue": 0,
+        "red": 0
+      }
+    },
+    {
+      "id": "floor-31",
+      "index": 31,
+      "title": "主塔 31 层",
+      "monsters": 14,
+      "items": 14,
+      "npcs": 2,
+      "doors": {
+        "yellow": 8,
+        "blue": 0,
+        "red": 0
+      }
+    },
+    {
+      "id": "floor-32",
+      "index": 32,
+      "title": "主塔 32 层",
+      "monsters": 8,
+      "items": 14,
+      "npcs": 1,
+      "doors": {
+        "yellow": 5,
+        "blue": 1,
+        "red": 0
+      }
+    },
+    {
+      "id": "floor-33",
+      "index": 33,
+      "title": "主塔 33 层",
+      "monsters": 16,
+      "items": 7,
+      "npcs": 1,
+      "doors": {
+        "yellow": 8,
+        "blue": 2,
+        "red": 0
+      }
+    },
+    {
+      "id": "floor-34",
+      "index": 34,
+      "title": "主塔 34 层",
+      "monsters": 15,
+      "items": 11,
+      "npcs": 0,
+      "doors": {
+        "yellow": 14,
+        "blue": 0,
+        "red": 0
+      }
+    },
+    {
+      "id": "floor-35",
+      "index": 35,
+      "title": "主塔 35 层",
+      "monsters": 1,
+      "items": 1,
+      "npcs": 0,
+      "doors": {
+        "yellow": 0,
+        "blue": 0,
+        "red": 0
+      }
+    },
+    {
+      "id": "floor-36",
+      "index": 36,
+      "title": "主塔 36 层",
+      "monsters": 16,
+      "items": 2,
+      "npcs": 1,
+      "doors": {
+        "yellow": 4,
+        "blue": 0,
+        "red": 0
+      }
+    },
+    {
+      "id": "floor-37",
+      "index": 37,
+      "title": "主塔 37 层",
+      "monsters": 7,
+      "items": 34,
+      "npcs": 1,
+      "doors": {
+        "yellow": 1,
+        "blue": 1,
+        "red": 0
+      }
+    },
+    {
+      "id": "floor-38",
+      "index": 38,
+      "title": "主塔 38 层",
+      "monsters": 16,
+      "items": 9,
+      "npcs": 2,
+      "doors": {
+        "yellow": 6,
+        "blue": 3,
+        "red": 1
+      }
+    },
+    {
+      "id": "floor-39",
+      "index": 39,
+      "title": "主塔 39 层",
+      "monsters": 9,
+      "items": 5,
+      "npcs": 2,
+      "doors": {
+        "yellow": 13,
+        "blue": 1,
+        "red": 0
+      }
+    },
+    {
+      "id": "floor-40",
+      "index": 40,
+      "title": "主塔 40 层",
+      "monsters": 18,
+      "items": 5,
+      "npcs": 0,
+      "doors": {
+        "yellow": 1,
+        "blue": 1,
+        "red": 1
+      }
+    },
+    {
+      "id": "floor-41",
+      "index": 41,
+      "title": "主塔 41 层",
+      "monsters": 11,
+      "items": 17,
+      "npcs": 1,
+      "doors": {
+        "yellow": 19,
+        "blue": 2,
+        "red": 0
+      }
+    },
+    {
+      "id": "floor-42",
+      "index": 42,
+      "title": "主塔 42 层",
+      "monsters": 11,
+      "items": 19,
+      "npcs": 1,
+      "doors": {
+        "yellow": 4,
+        "blue": 0,
+        "red": 0
+      }
+    },
+    {
+      "id": "floor-43",
+      "index": 43,
+      "title": "主塔 43 层",
+      "monsters": 12,
+      "items": 8,
+      "npcs": 0,
+      "doors": {
+        "yellow": 10,
+        "blue": 2,
+        "red": 0
+      }
+    },
+    {
+      "id": "floor-44",
+      "index": 44,
+      "title": "主塔 44 层",
+      "monsters": 2,
+      "items": 5,
+      "npcs": 0,
+      "doors": {
+        "yellow": 0,
+        "blue": 0,
+        "red": 0
+      }
+    },
+    {
+      "id": "floor-45",
+      "index": 45,
+      "title": "主塔 45 层",
+      "monsters": 13,
+      "items": 7,
+      "npcs": 2,
+      "doors": {
+        "yellow": 6,
+        "blue": 2,
+        "red": 1
+      }
+    },
+    {
+      "id": "floor-46",
+      "index": 46,
+      "title": "主塔 46 层",
+      "monsters": 15,
+      "items": 4,
+      "npcs": 2,
+      "doors": {
+        "yellow": 8,
+        "blue": 2,
+        "red": 0
+      }
+    },
+    {
+      "id": "floor-47",
+      "index": 47,
+      "title": "主塔 47 层",
+      "monsters": 10,
+      "items": 10,
+      "npcs": 2,
+      "doors": {
+        "yellow": 7,
+        "blue": 2,
+        "red": 0
+      }
+    },
+    {
+      "id": "floor-48",
+      "index": 48,
+      "title": "主塔 48 层",
+      "monsters": 11,
+      "items": 9,
+      "npcs": 1,
+      "doors": {
+        "yellow": 2,
+        "blue": 3,
+        "red": 0
+      }
+    },
+    {
+      "id": "floor-49",
+      "index": 49,
+      "title": "主塔 49 层",
+      "monsters": 4,
+      "items": 0,
+      "npcs": 0,
+      "doors": {
+        "yellow": 0,
+        "blue": 0,
+        "red": 1
+      }
+    },
+    {
+      "id": "floor-50",
+      "index": 50,
+      "title": "主塔 50 层",
+      "monsters": 1,
+      "items": 0,
+      "npcs": 0,
+      "doors": {
+        "yellow": 0,
+        "blue": 0,
+        "red": 0
+      }
+    }
+  ]
+}

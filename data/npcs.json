@@ -1,0 +1,266 @@
+{
+  "$license": "NPC 表。派生自 GPL-3.0 作品 m8705/MAGIC-TOWER-JS。数值与地图数据经转换/交叉核对而来，「转成另一种格式」不构成独立创作，按 GPL-3.0 通例应同样以 GPL-3.0 分发。详见 reference/mota50/ATTRIBUTION.md §3（含闭源发布的替代路径）。",
+  "$comment": "NPC 表。sourceId 对应参考源码 role 层中 32 以上的取值；这些地块不参与战斗，走各自的对话/功能分支。 商人的分楼层商品清单来自 action.js 的 traderWord 数组——该文件在本轮才补入归档，此前 items.json 曾引用过它却不曾真正持有。",
+  "source": {
+    "legend": "reference/mota50/source/mota50-graph.js 角色图例尾部",
+    "behaviour": "reference/mota50/source/mota50-event.js:function checkRole",
+    "verifiedAt": "2026-09-20"
+  },
+  "npcs": {
+    "sage": {
+      "sourceId": 32,
+      "name": "智慧老人",
+      "sprite": "npc_sage",
+      "effects": [
+        {
+          "op": "mulStat",
+          "stat": "atk",
+          "value": 1.1,
+          "round": "floor"
+        },
+        {
+          "op": "mulStat",
+          "stat": "def",
+          "value": 1.1,
+          "round": "floor"
+        }
+      ],
+      "note": "出现两次：第2层给攻防各 +10%（向下取整）；第3层赠与怪物书；另在第35层开启通道。"
+    },
+    "merchant": {
+      "sourceId": 33,
+      "name": "商人",
+      "sprite": "npc_merchant",
+      "effects": [
+        {
+          "op": "buyItem"
+        }
+      ],
+      "note": "按楼层出售不同商品。原版50层的商人只卖钥匙、地震卷轴与生命，属性必须在商店（sourceId 39）购买。",
+      "goodsByFloor": {
+        "2": {
+          "gifts": [
+            {
+              "op": "addStat",
+              "stat": "gold",
+              "value": 1000
+            }
+          ],
+          "note": "剧情赠送：救出智者后获得 1000 金币"
+        },
+        "6": {
+          "goods": [
+            {
+              "op": "buyItem",
+              "item": "blueKey",
+              "count": 1,
+              "price": 50
+            }
+          ]
+        },
+        "7": {
+          "goods": [
+            {
+              "op": "buyItem",
+              "item": "yellowKey",
+              "count": 5,
+              "price": 50
+            }
+          ]
+        },
+        "12": {
+          "goods": [
+            {
+              "op": "buyItem",
+              "item": "redKey",
+              "count": 1,
+              "price": 800
+            }
+          ]
+        },
+        "15": {
+          "goods": [
+            {
+              "op": "buyItem",
+              "item": "blueKey",
+              "count": 1,
+              "price": 200
+            }
+          ]
+        },
+        "28": {
+          "goods": [
+            {
+              "op": "sellItem",
+              "item": "yellowKey",
+              "count": 1,
+              "price": 100
+            }
+          ],
+          "note": "与其它层相反：这里是**回收**黄钥匙（玩家卖出换金币）"
+        },
+        "29": {
+          "goods": [
+            {
+              "op": "buyItem",
+              "item": "blueKey",
+              "count": 1,
+              "price": 200
+            }
+          ]
+        },
+        "31": {
+          "goods": [
+            {
+              "op": "buyItem",
+              "item": "yellowKey",
+              "count": 5,
+              "price": 1000
+            }
+          ]
+        },
+        "38": {
+          "goods": [
+            {
+              "op": "buyItem",
+              "item": "yellowKey",
+              "count": 3,
+              "price": 200
+            }
+          ]
+        },
+        "39": {
+          "goods": [
+            {
+              "op": "buyItem",
+              "item": "blueKey",
+              "count": 3,
+              "price": 2000
+            }
+          ]
+        },
+        "45": {
+          "goods": [
+            {
+              "op": "buyStat",
+              "stat": "hp",
+              "value": 2000,
+              "price": 1000
+            }
+          ],
+          "note": "全局唯一的商人出售属性；商店（39）是常规属性来源"
+        },
+        "47": {
+          "goods": [
+            {
+              "op": "buyItem",
+              "item": "quakeScroll",
+              "count": 1,
+              "price": 3000
+            }
+          ],
+          "note": "地震卷轴唯一获取途径"
+        }
+      },
+      "goodsSummary": {
+        "yellowKeysSold": 13,
+        "blueKeysSold": 6,
+        "redKeysSold": 1,
+        "note": "商人售出的钥匙数量。这解释了「本数据钥匙数少于社区基准帖」的口径差异：基准帖的 totalKeys 含 merchantKeys，而地图数据里商人只是 NPC、不携带钥匙实体。",
+        "crossCheckWithBaseline": [
+          {
+            "zone": "一区",
+            "key": "黄",
+            "sourceSold": 5,
+            "baselineMerchantKeys": 5,
+            "match": true
+          },
+          {
+            "zone": "一区",
+            "key": "蓝",
+            "sourceSold": 1,
+            "baselineMerchantKeys": 1,
+            "match": true
+          },
+          {
+            "zone": "二区",
+            "key": "蓝",
+            "sourceSold": 1,
+            "baselineMerchantKeys": 1,
+            "match": true
+          },
+          {
+            "zone": "二区",
+            "key": "黄",
+            "sourceSold": 0,
+            "baselineMerchantKeys": 0,
+            "match": true
+          },
+          {
+            "zone": "五区",
+            "key": "黄/蓝",
+            "sourceSold": 0,
+            "baselineMerchantKeys": 0,
+            "match": true
+          },
+          {
+            "zone": "四区",
+            "key": "黄",
+            "sourceSold": 8,
+            "baselineMerchantKeys": 7,
+            "match": false,
+            "delta": 1
+          },
+          {
+            "zone": "四区",
+            "key": "蓝",
+            "sourceSold": 3,
+            "baselineMerchantKeys": 4,
+            "match": false,
+            "delta": -1
+          }
+        ],
+        "crossCheckNote": "3 个区完全吻合，四区两处各差 1 —— 说明「基准帖 merchantKeys = 商人售出钥匙」这个判断方向正确，但四区仍有 1 把的出入未解释（可能是基准帖把某处地图钥匙记成了商人出售，或 28 层回收被计入）。不要声称「完全吻合」。"
+      },
+      "evidence": "reference/mota50/source/mota50-action.js:var traderWord（索引 = 楼层，逐个转写为商品结构）"
+    },
+    "thief": {
+      "sourceId": 34,
+      "name": "小偷",
+      "sprite": "npc_thief",
+      "note": "第2层对话两次，透露「铁剑在05层、铁盾在09层」。属于引导型 NPC。"
+    },
+    "fairy": {
+      "sourceId": 35,
+      "name": "仙子",
+      "sprite": "npc_fairy",
+      "note": "剧情 NPC"
+    },
+    "princess": {
+      "sourceId": 36,
+      "name": "公主",
+      "sprite": "npc_princess",
+      "note": "通关目标"
+    },
+    "shop": {
+      "sourceId": 39,
+      "name": "商店",
+      "sprite": "npc_shop",
+      "effects": [
+        {
+          "op": "buyStat",
+          "stat": "hp"
+        },
+        {
+          "op": "buyStat",
+          "stat": "atk"
+        },
+        {
+          "op": "buyStat",
+          "stat": "def"
+        }
+      ],
+      "note": "三选一：加生命 / 加攻击 / 加防御。定价与增量见 data/constants.json 的 shop 段。"
+    }
+  }
+}

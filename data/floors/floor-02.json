@@ -1,0 +1,143 @@
+{
+ "id": "floor-02",
+ "index": 2,
+ "title": "主塔 2 层",
+ "size": {
+  "cols": 11,
+  "rows": 11
+ },
+ "terrain": [
+  "v.b........",
+  "..##.....##",
+  ".#####.####",
+  ".#..#...#..",
+  ".#..D...D..",
+  ".####...###",
+  ".#..#...#..",
+  ".#..D...D..",
+  ".####...###",
+  ".#..#...#..",
+  "^#..D...D.."
+ ],
+ "stairs": {
+  "up": [
+   {
+    "x": 0,
+    "y": 10,
+    "to": 3,
+    "arrive": {
+     "x": 0,
+     "y": 10
+    }
+   }
+  ],
+  "down": [
+   {
+    "x": 0,
+    "y": 0,
+    "to": 1,
+    "arrive": {
+     "x": 0,
+     "y": 0
+    }
+   }
+  ]
+ },
+ "doors": {
+  "yellow": 0,
+  "blue": 1,
+  "red": 0
+ },
+ "entities": [
+  {
+   "type": "monster",
+   "id": "midGuard",
+   "x": 5,
+   "y": 1
+  },
+  {
+   "type": "monster",
+   "id": "midGuard",
+   "x": 7,
+   "y": 1
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 2,
+   "y": 3
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 3,
+   "y": 3
+  },
+  {
+   "type": "npc",
+   "id": "sage",
+   "x": 10,
+   "y": 3
+  },
+  {
+   "type": "item",
+   "id": "yellowKey",
+   "x": 2,
+   "y": 4
+  },
+  {
+   "type": "item",
+   "id": "blueGem",
+   "x": 2,
+   "y": 6
+  },
+  {
+   "type": "item",
+   "id": "blueGem",
+   "x": 3,
+   "y": 6
+  },
+  {
+   "type": "npc",
+   "id": "merchant",
+   "x": 10,
+   "y": 6
+  },
+  {
+   "type": "item",
+   "id": "redGem",
+   "x": 2,
+   "y": 7
+  },
+  {
+   "type": "item",
+   "id": "redGem",
+   "x": 3,
+   "y": 7
+  },
+  {
+   "type": "item",
+   "id": "bluePotion",
+   "x": 2,
+   "y": 9
+  },
+  {
+   "type": "item",
+   "id": "bluePotion",
+   "x": 3,
+   "y": 9
+  },
+  {
+   "type": "npc",
+   "id": "sage",
+   "x": 10,
+   "y": 9
+  },
+  {
+   "type": "item",
+   "id": "bluePotion",
+   "x": 2,
+   "y": 10
+  }
+ ]
+}
