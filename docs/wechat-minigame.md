@@ -375,6 +375,8 @@ TypeError: Cannot destructure property 'userAgent' of
 ✅ 宿主本来就没有 DOM（不用伪造）            ✅ project.config.json 声明 compileType=game
 ✅ appid 没被写成小程序游客号              ✅ 产物语法不高于 es2015（云端检查器的地板）
 ✅ 宿主本来有 Intl 且已真删（证明「无异常」不是假绿）  ✅ Intl 缺失时由垫片补上
+✅ 宿主已禁 unsafe-eval（new Function 抛 EvalError）  ✅ 启动后禁令仍有效 / Function 未被替换
+✅ 禁的是 eval 而非 Function 本身（真实构造器仍完好）  ← 见 §9.8
 ✅ 上屏画布 = wx.createCanvas() 的第一块    ✅ 触摸点击精确落到预期格子（含远距离格）
 ✅ 越界点击被正确忽略                      ✅ 触摸事件能驱动游戏
 ✅ 移动方向与点击方向一致
@@ -398,6 +400,7 @@ TypeError: Cannot destructure property 'userAgent' of
 ✅ document 让路：宿主原生实现未被替换（createElement / body.appendChild 都在）
 ✅ navigator 补齐：宿主不可用时垫片补上可用的 UA      ← 这一页必须先删掉 navigator
 ✅ 宿主本来有 Intl 且已真删 / Intl 缺失时由垫片补上
+✅ 宿主已禁 unsafe-eval / 启动后仍有效 / Function 未被替换 / 真实构造器完好  ← 见 §9.8
 ✅ 页面没有未捕获异常
 ✅ GameGlobal.mota 已暴露（游戏启动成功）
 ✅ 渲染器是 webgl                        ✅ 分辨率 = 设备像素比 3
@@ -838,6 +841,104 @@ intro 只垫**宿主可能没有、而且我们不需要给它行为**的全局�
 真机路径仍然完全由 `env.ts` 承担；intro 存在的唯一理由是那些
 `globalThis` 与作用域链分叉的宿主。
 
+### 9.8 第三个错：`unsafe-eval` —— 垫片修完之后**才**轮得到它
+
+`Intl` 与 `navigator` 两条都垫上之后，IDE 落盘的时间线第一次**跑出了 `module`**：
+
+```
+module → shim → hostModule → host → probe → error
+```
+
+也就是说：模块图整条走完、`DOMAdapter` 换好、上屏画布抢到、WebGL 探针通过 ——
+然后死在 `Game.create()` 里：
+
+```
+Error: Current environment does not allow unsafe-eval,
+       please use pixi.js/unsafe-eval module to enable support.
+```
+
+**这正是「探针把黑盒切成段」的价值**：`module → shim → hostModule → host → probe`
+五段全绿而后面才炸，一眼就能排除掉前面四轮怀疑过的一切（import 顺序、垫片、
+画布预订、WebGL 可用性），把范围收到「渲染器构造」这一件事上。
+
+#### 根因：小游戏子上下文是 CSP 禁 eval 的，而 Pixi 8 有两处依赖它
+
+| 用到 `new Function` 的地方 | 什么时候跑 | 后果 |
+|---|---|---|
+| `AbstractRenderer._unsafeEvalCheck()` | 渲染器一构造就查 | 查不到直接抛（就是上面这句） |
+| `GlUniformGroupSystem._generateUniformsSync` / `GlUboSystem` / `GlShaderSystem` | **每帧**同步 uniform/ubo | 动态生成同步函数，没它就没法渲染 |
+
+同一条落盘记录里的 `bare: { Intl: "no-new-function" }` 是独立的第二个证据 ——
+`bareView()` 用 `new Function` 去读裸标识符（等价于 pixi 的处境），
+它返回 `no-new-function` 说明这个环境里 `new Function` **本身就抛**，
+而不是「`Function` 全局不存在」。**两个通道给出同一个结论，才敢下手。**
+
+#### 解法：`import 'pixi.js/unsafe-eval'`（纯副作用，一行）
+
+```ts
+// src/minigame/pixi-adapter.ts —— 第一个 import pixi 的模块
+import { DOMAdapter } from 'pixi.js';
+import 'pixi.js/unsafe-eval';
+```
+
+这个子路径导出（`lib/unsafe-eval/init.mjs`）把上面几处的实现换成免 eval 的 polyfill，
+并把两个 `_unsafeEvalCheck` 覆盖成空实现。它 import 的
+`../rendering/renderers/gl/GlUboSystem.mjs` 与主入口 `lib/index.mjs` 里的
+`./rendering/...` **解析到同一批文件**，Vite 去重后补丁打在真实类上
+（构建证据：模块数 800 → 808，体积 +30 KB）。
+
+#### ⚠️ 这个坑怎么**验**：静态搜字符串是假判据
+
+原实现是**死代码** —— `GlUniformGroupSystem.prototype._generateUniformsSync` 等
+仍被类方法引用，polyfill 只是**在原型上覆盖**它们，Rollup tree-shake 不掉。
+所以产物里**必然还能搜到 `new Function`**，「搜不到」这个判据根本不成立。
+
+唯一有效的证法是**行为判据**：把 `new Function` 弄成执行期抛 `EvalError`，
+看游戏还起不起得来。由此新增了一个**两个宿主共用的桩**：
+
+```
+tools/minigame-harness/no-unsafe-eval.js
+```
+
+- **按 CSP 的样子装**：`Function` 全局还在、`typeof` 仍是 `'function'`、
+  `prototype` 指回真实原型（保证 `instanceof Function` / `fn.constructor` 语义不变），
+  只让**动态构造**抛 `EvalError`。否则「禁 eval」就变成「Function 坏了」，测的不是同一件事。
+- **两个宿主都要装**（Worker 用 `importScripts`，DOM 页面用 `<script src>`），顺序都在
+  `game.js` **之前** —— Pixi 的 `unsafeEvalSupported()` 结果会被**记忆化**。
+- **有 DOM 那一侧尤其不能省**：浏览器默认允许 eval，`unsafeEvalSupported()` 返回 true
+  —— 也就是说在允许 eval 的宿主里，「漏了 `pixi.js/unsafe-eval`」这个 bug
+  **永远不会暴露**，测试全绿但什么都没测到。补上禁令才把这个盲区堵住。
+
+新增 3 条判据 × 2 个宿主（两侧都必须同时满足）：
+
+| 判据 | 拦的是什么 |
+|---|---|
+| 宿主已禁 `unsafe-eval`（`new Function` 抛 `EvalError`） | **前提**：禁令没装上，后面两条都是空转 |
+| 启动后禁令仍有效、且 `globalThis.Function` 没被替换 | 「启动成功」是不是靠把 eval 要回来换的 |
+| 真实构造器仍完好（`new Function("return true")() === true`） | 把「禁 eval」误做成「Function 全坏」 |
+
+补丁生效的正面证据（无 DOM 宿主，2026-09-21 16:22 构建）：
+
+```
+✅ 宿主已禁 unsafe-eval（`new Function` 抛 EvalError）—— evalBanned=true
+✅ 启动后禁令仍有效                                    —— evalStillBannedAfterBoot=true
+✅ 渲染器是 webgl（不是静默降级的 canvas）              —— rendererType=webgl
+✅ 图集真的加载成功                                    —— atlas.ready = true
+✅ 帧缓冲里有实际画面                                  —— 74.7%（6662 种颜色）
+✅ 场景图里有精灵                                      —— Sprite 节点 150 个
+```
+
+**在 `new Function` 必抛的宿主里跑出 74.7% 非背景像素、6662 种颜色** ——
+这就是「免 eval 的那几处 polyfill 真的在每帧干活」的证据。
+
+#### 一条值得带走的顺序经验
+
+`module → shim → hostModule → host → probe` 这五段是在**四轮**里一段一段加出来的：
+每报一次错、就把「黑盒」切开一处，直到它只能停在唯一一个地方。
+**四个错误（`_a`、`Intl`、`navigator`、`unsafe-eval`）是串行的 ——
+修掉一个才会露出下一个。** 所以「报错一模一样」通常不是「没修」，
+而是还有下一层：这正是 §9.1 那个「先去捞落盘证据、别猜」的前提。
+
 ---
 
 ## 10. 复现命令
@@ -845,10 +946,10 @@ intro 只垫**宿主可能没有、而且我们不需要给它行为**的全局�
 ```bash
 npm run build:minigame    # 构建产物（含 tsc --noEmit）
 npm run verify:sandbox    # 干净 V8（node:vm）宿主实测，7 项判据
-npm run verify:minigame   # 无 DOM 环境实测，26 项判据
-npm run verify:dom        # 有原生 DOM 宿主实测，14 项判据
+npm run verify:minigame   # 无 DOM 环境实测，32 项判据（含 3 条禁 unsafe-eval）
+npm run verify:dom        # 有原生 DOM 宿主实测，17 项判据（含 3 条禁 unsafe-eval）
 npm run verify:visual     # 渲染层回归，8 项判据
-npm run verify:all        # 以上四套
+npm run verify:all        # 以上四套，共 64 项判据
 ```
 
 - `assets/preview/minigame-board.png`：无 DOM 宿主里 `transferToImageBitmap()` 出来的画面。

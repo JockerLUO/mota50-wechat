@@ -73,6 +73,16 @@ const report = {
   intlGone: null,
   /** 启动之后 Intl 又被垫片补上了吗（应当为 true，说明游戏能跑不是因为宿主本来就有）。 */
   intlAfterBoot: null,
+  /**
+   * `new Function` 禁令是否装上了 / 启动后是否仍然有效。
+   *
+   * 见下面「── 4 禁 unsafe-eval」那一段。这一对值必须都是 true，
+   * 否则「启动成功」就不能算作「不依赖 unsafe-eval」的证据。
+   */
+  evalBanned: null,
+  evalStillBannedAfterBoot: null,
+  /** 产物自己在 EvalError 之后有没有把 `Function` 换回去（正常应当没有）。 */
+  functionWasSwapped: null,
   unremovable: [],
   deviation: null,
   screen: null,
@@ -112,6 +122,13 @@ addEventListener('unhandledrejection', (e) => fail(`[unhandledrejection] ${e.rea
   const contextCalls = [];
   /** 前几块画布的创建调用栈 —— 用来定位「谁抢在宿主前面拿了画布」。 */
   const canvasStacks = [];
+  /**
+   * 禁 eval 的自查句柄（`/no-unsafe-eval.js` 挂上来的）。
+   *
+   * 必须声明在 `try` 之外的 main 作用域：`finally` 里要读它来判断
+   * 「启动之后禁令还在不在」。第一版没这么做，`finally` 直接 ReferenceError。
+   */
+  let ban = null;
 
   try {
     // ── 0. 留住原始引用（马上要被抹掉）
@@ -215,7 +232,28 @@ addEventListener('unhandledrejection', (e) => fail(`[unhandledrejection] ${e.rea
       return;
     }
 
-    // ── 4. wx 运行时垫片
+    // ── 4. 禁 unsafe-eval —— 按 CSP 的样子复现微信 IDE 子上下文
+    //
+    // 实现抽去了 `/no-unsafe-eval.js`，与「有 DOM 宿主」那条路径共用同一份，
+    // 免得两边对「什么叫禁 eval」产生分歧（理由与依据都写在那份文件的头部注释里）。
+    //
+    // ⚠️ 必须在本行（早于 `importScripts('/game.js')`）装上：Pixi 的
+    //    `unsafeEvalSupported()` 结果会被**记忆化**，第一次探测发生在渲染器构造时。
+    step("importScripts(/no-unsafe-eval.js)");
+    importScripts('/no-unsafe-eval.js');
+    ban = g.__unsafeEvalBan;
+    if (!ban || !ban.armed()) {
+      fail('没能禁掉 unsafe-eval（`new Function` 仍可用），这条判据不成立 —— 后面的结论不可信');
+      return;
+    }
+    if (!ban.realCtorIntact()) {
+      fail('真实 Function 构造器被弄坏了，禁 eval 的方式与 CSP 不符，判据失真');
+      return;
+    }
+    report.evalBanned = true;
+    step('已禁 unsafe-eval（`new Function` 抛 EvalError，Function 全局与原型链保持完好）');
+
+    // ── 5. wx 运行时垫片
     const INFO = {
       windowWidth: 390,
       windowHeight: 844,
@@ -346,11 +384,11 @@ addEventListener('unhandledrejection', (e) => fail(`[unhandledrejection] ${e.rea
       }
     };
 
-    // ── 5. 装载产物（importScripts 是宿主用来装载的，不是游戏依赖的 API）
+    // ── 6. 装载产物（importScripts 是宿主用来装载的，不是游戏依赖的 API）
     step('importScripts(/game.js)');
     importScripts('/game.js');
 
-    // ── 6. 等启动 / 等弹窗
+    // ── 7. 等启动 / 等弹窗
     const deadline = Date.now() + 25000;
     while (Date.now() < deadline) {
       if (g.mota && g.mota.game) break;
@@ -544,6 +582,10 @@ addEventListener('unhandledrejection', (e) => fail(`[unhandledrejection] ${e.rea
     // 这一条与 `intlGone` 配对成证据链：删除前有 → 删干净 → 垫片补上 →
     // 于是「无异常 + 启动成功」是真实结论，而不是「宿主本来就有 Intl」的假绿。
     report.intlAfterBoot = typeof Intl !== 'undefined';
+    // 禁令有没有在启动过程中被换掉 —— 若产物（或某个依赖）自己给 globalThis.Function
+    // 赋了新值，那「启动成功」就可能是靠把 eval 要回来换取的，判据必须跟着失效。
+    report.evalStillBannedAfterBoot = !!(ban && ban.armed());
+    report.functionWasSwapped = !(ban && ban.stillInstalled());
     postMessage({ type: 'report', report });
     try {
       const game = g.mota && g.mota.game;

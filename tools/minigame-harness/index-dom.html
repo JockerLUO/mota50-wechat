@@ -38,6 +38,23 @@
       那样测出来的坐标映射是假的。
     -->
     <script src="/wx-stub.js"></script>
+    <!--
+      禁 unsafe-eval —— 与 Worker 宿主（worker.js 里的 importScripts）**共用同一份实现**。
+
+      为什么有 DOM 的宿主也必须禁：浏览器（包括请 playwright 起的 chromium）默认允许 eval，
+      Pixi 的 `unsafeEvalSupported()` 于是返回 true —— 也就是说在允许 eval 的宿主里，
+      「漏了 `pixi.js/unsafe-eval`」这个 bug **永远不会暴露**：测试全绿，实际什么都没测到。
+      装上禁令，「有 DOM / 无 DOM」两条路径才都真的覆盖它。
+
+      ⚠️ 顺序：必须在 `/game.js` **之前**。Pixi 的探测结果会被记忆化，
+        第一次探测就发生在渲染器构造时。
+    -->
+    <script src="/no-unsafe-eval.js"></script>
+    <!-- 装上的**当刻**先自查一次并存证：驱动脚本启动后再查一次，两次对比才说明
+         「禁令是在 game.js 之前装上的，而且启动过程没把它换掉」。 -->
+    <script>
+      window.__evalBannedAtStart = window.__unsafeEvalBan.armed();
+    </script>
     <script src="/game.js"></script>
     <script>
       // 报告给驱动脚本：本页只提供「宿主事实」，判据全部在 verify-dom-host.cjs 里。

@@ -209,6 +209,40 @@ const server = http.createServer((req, res) => {
     `启动后 typeof Intl = ${report.intlAfterBoot ? 'object（垫片）' : 'undefined'}`
   );
 
+  // ── 禁用 unsafe-eval：`pixi.js/unsafe-eval` 有没有真的接管 ──────────────
+  //
+  // 这一组是 2026-09-21 IDE 第四轮报错的对症判据。当时 pad 好 Intl/navigator 之后
+  // 时间线一路走到了 `probe`，然后死在 `Game.create()` 里：
+  //
+  //   Error: Current environment does not allow unsafe-eval,
+  //          please use pixi.js/unsafe-eval module to enable support.
+  //
+  // （同一条落盘记录里 `bare.Intl = "no-new-function"` 互证了 CSP 禁 eval 这件事。）
+  //
+  // ⚠️ 这里**不能**用「产物里搜 `new Function`」当判据 —— 原实现是死代码，
+  //    被 polyfill 在原型上覆盖，Rollup tree-shake 不掉，搜了必然还是能搜到。
+  //    唯一有效的是**行为判据**：让 `new Function` 执行期抛 EvalError，看它还起不起得来。
+  //
+  // 三条必须一起看，缺一条都可能是假绿：
+  //   ① 禁令真的装上了（否则测的是「宿主允许 eval」，等于没测）
+  //   ② 启动后禁令仍然有效（否则可能是产物把 `Function` 换回去换来的成功）
+  //   ③ `Function` 没被替换（`instanceof` 等语义没被顺手弄坏）
+  add(
+    '宿主已禁 unsafe-eval（`new Function` 抛 EvalError）—— 本组判据的前提',
+    report.evalBanned === true,
+    `evalBanned=${report.evalBanned}`
+  );
+  add(
+    '启动后禁令仍有效（成功不是靠把 eval 要回来）',
+    report.evalStillBannedAfterBoot === true,
+    `evalStillBannedAfterBoot=${report.evalStillBannedAfterBoot}`
+  );
+  add(
+    '`globalThis.Function` 没被产物替换（禁的是 eval，不是 Function 本身）',
+    report.functionWasSwapped === false,
+    `functionWasSwapped=${report.functionWasSwapped}`
+  );
+
   // ── 工程配置（这两条看着像「配置检查」，其实是环境正确性判据）────────
   //
   // 开发者工具是**按 appid 的 `gameApp` 属性**决定项目类型的，`compileType` 只表达意图：

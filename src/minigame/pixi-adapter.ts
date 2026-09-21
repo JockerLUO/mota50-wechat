@@ -10,6 +10,28 @@
  */
 
 import { DOMAdapter } from 'pixi.js';
+/**
+ * 免 `eval` 补丁 —— **必须排在 `pixi.js` 之后、任何 `Renderer` 构造之前**。
+ *
+ * 小游戏（含 IDE 的子上下文）禁 `unsafe-eval`，于是 `new Function` 直接抛。
+ * Pixi 8 有两处依赖它：
+ *   ① `AbstractRenderer._unsafeEvalCheck()` —— 渲染器一构造就查，查不到就抛
+ *      「Current environment does not allow unsafe-eval, please use pixi.js/unsafe-eval module...」
+ *      （这就是本轮 IDE 时间线的最后一条：过了 `probe`，死在 `Game.create()` 里）
+ *   ② `GlUniformGroupSystem._generateUniformsSync` / `GlUboSystem` / `GlShaderSystem`
+ *      —— 用 `new Function` 动态生成 uniform/ubo 同步函数，每帧都跑
+ *
+ * 这个子路径导出是**纯副作用**：把上面几处的实现（外加 ParticleBuffer 的粒子更新）
+ * 换成 `lib/unsafe-eval/` 下那份不用 eval 的 polyfill，并把两个 `_unsafeEvalCheck`
+ * 覆盖成空实现。它 import 的 `../rendering/renderers/gl/GlUboSystem.mjs` 等路径，
+ * 与主入口 `lib/index.mjs` 里的 `./rendering/...` **解析到同一批文件**，
+ * 所以 Vite 去重后补丁打在真实类上 —— 这也是为什么它必须在本文件（第一个 import pixi
+ * 的模块）里、而不是某个只在 Web 侧用的地方。
+ *
+ * `bare: no-new-function`（见 beacon 的 `bareView`）已经先一步印证了这个判断：
+ * 那个环境里 `new Function` 本身就抛，`Intl`/`navigator` 探针全返回 `no-new-function`。
+ */
+import 'pixi.js/unsafe-eval';
 import { assertInstalled, createOffscreenCanvas, g, wxApi } from './env';
 import { beaconStage } from './beacon';
 

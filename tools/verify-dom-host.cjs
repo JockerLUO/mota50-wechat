@@ -219,7 +219,17 @@ function analyzePixels(rec) {
       //  —— navUsableAfterBoot：启动后是否**可用**（垫片补上了才是通过）
       hostHadNavigator: g.__hostHadNavigator === true,
       navigatorGone: g.__navigatorGone === true,
-      navUsableAfterBoot: !!(g.navigator && typeof g.navigator.userAgent === 'string' && g.navigator.userAgent.length > 0)
+      navUsableAfterBoot: !!(g.navigator && typeof g.navigator.userAgent === 'string' && g.navigator.userAgent.length > 0),
+      // 禁 unsafe-eval 的三态。桩在 `game.js` 之前装上（见 tools/minigame-harness/no-unsafe-eval.js），
+      // 所以「装上的当刻」那个值由页面自己存证到 `__evalBannedAtStart`。
+      //
+      // ⚠️ 有 DOM 的宿主默认**允许** eval，Pixi 的 `unsafeEvalSupported()` 会返回 true ——
+      //    这意味着「漏了 `pixi.js/unsafe-eval`」这个 bug 在允许 eval 的宿主里
+      //    **永远不会暴露**。必须在有 DOM 这一侧也禁掉，判据才有意义。
+      evalBannedAtStart: g.__evalBannedAtStart === true,
+      evalStillBannedAfterBoot: !!(g.__unsafeEvalBan && g.__unsafeEvalBan.armed()),
+      realCtorIntact: !!(g.__unsafeEvalBan && g.__unsafeEvalBan.realCtorIntact()),
+      functionWasSwapped: !!(g.__unsafeEvalBan && !g.__unsafeEvalBan.stillInstalled())
     };
   });
 
@@ -298,6 +308,35 @@ function analyzePixels(rec) {
     'Intl 缺失时由垫片补上（所以「启动成功」不是靠宿主自带）',
     state.intlAfterBoot === true,
     `启动后 typeof Intl = ${state.intlAfterBoot ? 'object（垫片）' : 'undefined —— 那 pixi 早该抛了'}`
+  );
+
+  // ★ 禁用 unsafe-eval —— `pixi.js/unsafe-eval` 有没有真的接管（2026-09-21 第四轮）
+  //
+  // 微信 IDE 的子上下文是 CSP 禁 eval 的，实测死在 `Game.create()` 里：
+  //   Error: Current environment does not allow unsafe-eval, please use pixi.js/unsafe-eval ...
+  //
+  // 这条判据在**有 DOM 的宿主**上尤其必要，而且不是「顺便再测一遍」：
+  // 浏览器默认允许 eval，`unsafeEvalSupported()` 会返回 true —— 也就是说
+  // 在允许 eval 的宿主里，「漏了 `pixi.js/unsafe-eval`」这个 bug 永远不暴露，测试全绿但什么都没测到。
+  // 所以本页在 `game.js` 之前把 `new Function` 禁掉（实现与无 DOM 宿主共用
+  // `tools/minigame-harness/no-unsafe-eval.js`）。
+  //
+  // ⚠️ 不能用「产物里搜 `new Function`」代替：原实现是死代码，被 polyfill 在原型上覆盖，
+  //    Rollup tree-shake 不掉，必然还能搜到。唯一有效的证法是让它执行期抛错。
+  add(
+    '宿主已禁 unsafe-eval（`new Function` 抛 EvalError）—— 本组判据的前提',
+    state.evalBannedAtStart === true,
+    `装上的当刻 armed=${state.evalBannedAtStart}`
+  );
+  add(
+    '启动后禁令仍有效（成功不是靠把 eval 要回来）',
+    state.evalStillBannedAfterBoot === true && state.functionWasSwapped === false,
+    `仍 armed=${state.evalStillBannedAfterBoot} Function 被换=${state.functionWasSwapped}`
+  );
+  add(
+    '禁的是 eval 而非 Function 本身（真实构造器仍完好）',
+    state.realCtorIntact === true,
+    `new Function("return true")() === true → ${state.realCtorIntact}`
   );
 
   add(
