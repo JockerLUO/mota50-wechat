@@ -1,0 +1,60 @@
+[
+  {
+    "stage": "module",
+    "t": 0,
+    "data": {
+      "build": "2026-09-21 16:08:37",
+      "writeSticks": true,
+      "hasWx": true,
+      "wxKeys": 500,
+      "hasGameGlobal": true,
+      "hasWindow": true,
+      "hasDocument": true,
+      "hasWorkerGlobalScope": false,
+      "hasRAF": true,
+      "hasPerformance": true,
+      "navigator": {
+        "present": true,
+        "hasUA": true
+      },
+      "env": {
+        "Intl": "object",
+        "atob": "function",
+        "btoa": "undefined",
+        "structuredClone": "undefined",
+        "queueMicrotask": "function",
+        "TextDecoder": "function",
+        "TextEncoder": "function",
+        "URL": "function",
+        "ResizeObserver": "undefined",
+        "AbortController": "undefined",
+        "fetch": "undefined",
+        "createImageBitmap": "undefined",
+        "OffscreenCanvas": "undefined",
+        "performance": "object",
+        "WebAssembly": "undefined"
+      }
+    }
+  },
+  {
+    "stage": "domError",
+    "t": 13,
+    "message": "Uncaught TypeError: Cannot destructure property 'userAgent' of 'DOMAdapter.get(...).getNavigator(...)' as it is undefined.",
+    "filename": "http://127.0.0.1:11042/__dev__/WAGameSubContext.js",
+    "lineno": 1,
+    "colno": 137657,
+    "stack": "TypeError: Cannot destructure property 'userAgent' of 'DOMAdapter.get(...).getNavigator(...)' as it is undefined.\n    at isSafari (http://127.0.0.1:11042/game/game.js:34510:13)\n    at http://127.0.0.1:11042/game/game.js:42904:34\n    at http://127.0.0.1:11042/game/game.js:51502:3\n    at Module.d (http://127.0.0.1:11042/__dev__/WAGameSubContext.js:1:151462)\n    at p (http://127.0.0.1:11042/__dev__/WAGameSubContext.js:1:132040)\n    at http://127.0.0.1:11042/__dev__/WAGameSubContext.js:1:137592\n    at Object.runWith (http://127.0.0.1:11042/__dev__/WAGameSubContext.js:1:136261)\n    at P (http://127.0.0.1:11042/__dev__/WAGameSubContext.js:1:137574)\n    at ide:///package/__APP__/game.js:1:1\n    at doWhenAllScriptLoaded (ide:///getmainpackage.js:58:21)"
+  },
+  {
+    "stage": "wxError",
+    "t": 15,
+    "message": "message=MiniProgramError\nCannot destructure property 'userAgent' of 'DOMAdapter.get(...).getNavigator(...)' as it is undefined.\nTypeError: Cannot destructure property 'userAgent' of 'DOMAdapter.get(...).getNavigator(...)' as it is undefined.\n    at isSafari (http://127.0.0.1:11042/game/game.js:34510:13)\n    at http://127.0.0.1:11042/game/game.js:42904:34\n    at http://127.0.0.1:11042/game/game.js:51502:3\n    at Module.d (http://127.0.0.1:11042/__dev__/WAGameSubContext.js:1:151462)\n    at p (http://127.0.0.1:11042/__dev__/WAGameSubContext.js:1:132040)\n    at http://127.0.0.1:11042/__dev__/WAGameSubContext.js:1:137592\n    at Object.runWith (http://127.0.0.1:11042/__dev__/WAGameSubContext.js:1:136261)\n    at P (http://127.0.0.1:11042/__dev__/WAGameSubContext.js:1:137574)\n    at ide:///package/__APP__/game.js:1:1\n    at doWhenAllScriptLoaded (ide:///getmainpackage.js:58:21)",
+    "arg2": null,
+    "shape": "[object Object]",
+    "keys": [
+      "message",
+      "stack"
+    ],
+    "stack": ""
+  }
+]

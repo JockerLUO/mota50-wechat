@@ -188,54 +188,65 @@ function hostHasTeeth(host) {
 //
 // 这是 `Intl is not defined` 那次的**回归判据**。前提是这个宿主真的「有牙齿」
 // （裸 Intl 会抛）—— 没牙齿的话这条判据就是空转，必须当场说明而不是给个假绿。
+//
+// `navigator` 也在同一条判据里：它和 Intl 是**同一个坑的第二例**（实测）——
+// IDE 里 `globalThis.navigator` 有 UA、裸标识符 `navigator` 却是 undefined，
+// pixi 的 `getNavigator: () => navigator` 读到 undefined，
+// 在模块顶层 `isSafari()` 里当场炸。所以两个都要覆盖，缺一个就还是黑屏。
 {
   const host = curatedHost();
   host.prepare();
   const teeth = hostHasTeeth(host);
   const { name, message } = load(host);
-  const hitIntl = /Intl/.test(message) && /is not defined/.test(message);
+  // 只要不是死在「我们垫过的那两个全局」上就算过；后面还可能因别的全局缺失而倒，
+  // 那是**另一条待办**（见报告末尾的「已知边界」），不该混进这条判据里。
+  const hit = ['Intl', 'navigator'].filter((k) => new RegExp(`\\b${k} is not defined`).test(message));
   check(
-    '白名单沙箱（缺 Intl + 写入被丢弃）：不因 Intl 倒下',
-    teeth && !hitIntl,
+    '白名单沙箱（缺 Intl/navigator + 写入被丢弃）：不因这两个全局倒下',
+    teeth && hit.length === 0,
     !teeth
       ? '宿主模型没牙齿（裸 Intl 没抛 ReferenceError）—— 判据会空转，先修宿主'
-      : hitIntl
+      : hit.length
         ? `${name}: ${message}`
         : `按预期（产物停在：${message.slice(0, 40)}…）`
   );
-  if (teeth && !hitIntl) {
+  if (teeth && hit.length === 0 && !message.includes(NO_WX)) {
     info.push(`白名单沙箱里的已知边界：垫片装不上，产物停在「${message.slice(0, 70)}」`);
   }
 }
 
 // ── 判据 4：反证 —— 摘掉词法垫片，判据 3 必须变红 ────────────────────
 //
-// 「不抛 Intl 错误」有可能因为宿主模型没牙齿而空转成假绿，所以人工把垫片那一行
-// 删掉、在**同一个宿主**里再跑一次：必须重新抛出 `Intl is not defined`。
-// 这一条同时证明了两件事：① 判据 3 确实在测垫片；② 这条路（缺 Intl 且装不上的宿主）
-// 是真实可达的 —— 不是想象出来的场景，这次报错就是这么来的。
-{
+// 「不抛错」有可能因为宿主模型没牙齿而空转成假绿，所以人工把垫片里对应那一行删掉、
+// 在**同一个宿主**里再跑一次：必须重新抛出 `Intl is not defined` / `navigator is not defined`。
+// 这一条同时证明了两件事：① 判据 3 确实在测垫片；② 这条路（缺全局且装不上的宿主）
+// 是真实可达的 —— 不是想象出来的场景，这两次报错都是这么来的。
+for (const [key, re] of [
+  ['Intl', /^\s*var Intl = /],
+  ['navigator', /^\s*var navigator = /]
+]) {
   const lines = code.split('\n');
-  const introIdx = lines.findIndex((l) => /^\s*var Intl = /.test(l));
-  if (introIdx < 0) {
-    check('反证：词法垫片确实存在于产物中', false, '产物里找不到词法垫片（`var Intl = ...`）');
-  } else {
-    const stripped = lines.filter((_, i) => i !== introIdx).join('\n');
-    const host = curatedHost();
-    host.prepare();
-    let err = null;
-    try {
-      host.run(stripped, 'game-stripped.js');
-    } catch (e) {
-      err = e;
-    }
-    const message = err ? String(err.message) : '';
-    check(
-      '反证：摘掉词法垫片后，同一宿主必须炸出 Intl is not defined',
-      /Intl/.test(message) && /is not defined/.test(message),
-      err ? `${err.name}: ${message.slice(0, 90)}` : '摘掉垫片后居然没抛错 —— 判据 3 是空转的'
-    );
+  const idx = lines.findIndex((l) => re.test(l));
+  if (idx < 0) {
+    check(`反证：产物里存在 ${key} 的词法垫片`, false, `找不到 \`var ${key} = ...\``);
+    continue;
   }
+  const stripped = lines.filter((_, i) => i !== idx).join('\n');
+  const host = curatedHost();
+  host.prepare();
+  let err = null;
+  try {
+    host.run(stripped, `game-no-${key}.js`);
+  } catch (e) {
+    err = e;
+  }
+  const message = err ? String(err.message) : '';
+  const expect = new RegExp(`\\b${key} is not defined`);
+  check(
+    `反证：摘掉 ${key} 垫片后，同一宿主必须炸出 ${key} is not defined`,
+    expect.test(message),
+    err ? `${err.name}: ${message.slice(0, 90)}` : `摘掉 ${key} 垫片后居然没抛错 —— 判据 3 是空转的`
+  );
 }
 
 // ── 判据 5：词法垫片不能把宿主的 Intl 顶掉 ──────────────────────────

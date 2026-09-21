@@ -756,12 +756,56 @@ var Intl = (typeof globalThis === "object" && globalThis && globalThis.Intl) || 
 2. **不裸写 `globalThis`。** 沙箱里它可能是 `undefined`，只有 `typeof` 是安全的。
    也不能用 `?.` / `??` —— 这段字符串在模块图之外，别指望降级规则一致。
 
-只垫 `Intl` 一个，不顺手垫别的：`document` / 事件那一套需要 `env.ts` 里那些有行为的
-替身对象（还要配合 `wx.createCanvas()` 首次调用的时机），intro 里造不出来；
-而 `navigator` 若也在 intro 里 `var` 一个，会**把 `env.ts` 稍后用系统信息合成的那份
-挡在作用域外**，等于拿真问题换假问题。
+只垫**宿主可能没有、而且我们不需要给它行为**的全局。当前是 `Intl` 与 `navigator`
+两个 —— 都不是「顺手多垫的」，而是**实测各报过一次错**（§9.3 / §9.5）。
+其余全局不垫，理由见上。注意垫进来的那个对象**必须与 `env.ts` 共用同一个引用**，
+否则会在真机上悄悄退回成简陋的那一份（§9.5 的纪律）。
 
-### 9.5 新增第四套判据：`verify:sandbox`
+### 9.5 `navigator` 是同一个坑的第二例（**加垫片后立刻暴露**）
+
+第一版只垫了 `Intl`。用户在 IDE 里再点一次编译，拿到的新错误是：
+
+```
+Uncaught TypeError: Cannot destructure property 'userAgent' of
+  'DOMAdapter.get(...).getNavigator(...)' as it is undefined.
+    at isSafari (game.js:34510)
+    at game.js:42904            ← const defaultForceAllocation = isSafari()（模块顶层）
+    at game.js:51502            ← 入口 IIFE
+```
+
+而成一**同一份产物的探针**在同一个宿主里报的是
+`navigator: {present: true, hasUA: true}`。两个观测都对，因为它们看的是两条路径：
+
+| 路径 | 这个宿主给出的答案 |
+|---|---|
+| `globalThis.navigator` | 有 `userAgent` 的对象（探针报的就是它） |
+| **裸标识符 `navigator`** | **`undefined`** |
+
+pixi 默认适配器写的是 `getNavigator: () => navigator`（裸标识符），
+而 `isSafari()` 由 `const defaultForceAllocation = isSafari()` 在**模块顶层**调用 ——
+早于我们把 `DOMAdapter` 换成小游戏实现。于是它读到 `undefined`，当场炸。
+
+**规则因此是通用的：垫片要同时覆盖 `globalThis` 与裸标识符两条路径。**
+`env.ts` 的 `safeAssign` 只管前一条（按值判断，在真机/浏览器上都有效），
+后一条只有词法绑定管得着。
+
+#### 一个必须守住的纪律：**一个对象、两处引用**
+
+`navigator` 这一条不能像 `Intl` 那样各垫各的 —— 否则 `env.ts` 用
+`wx.getSystemInfoSync()` 合成的 UA 会被**挡在作用域外**（pixi 只看得见 intro 里
+那份简陋的），拿真问题换假问题。做法：
+
+- **intro**：宿主有就沿用宿主那份；没有就造一份 **空 UA** 的，并**同时挂到
+  `globalThis.navigator`** 上（空 UA 是为了让 `env.ts` 仍然判「不可用」）。
+- **`env.ts`**：改成**就地补字段**（`Object.assign(existing, fields)`），不再整对象替换。
+  加 `try/catch` 兜底 —— 宿主对象可能是只读的（浏览器的 `navigator` 就是），
+  就地补字段抛错会连坐 `installGlobals()` 后面的全部步骤（第三轮黑屏的成因）。
+
+判据：`verify:dom` 里那条「navigator 补齐」断言 UA 是
+`Mozilla/5.0 (iOS 17.0) WeChatMiniGame/3.17.3…` —— 那是**系统信息合成的那份**，
+它出现在 pixi 读得到的位置，说明两个引用确实是同一个对象。
+
+### 9.6 新增第四套判据：`verify:sandbox`
 
 `verify:minigame`（Worker）与 `verify:dom`（Chromium）**结构性地抓不到**上面两条：
 浏览器必然有 `Intl`、全局想加就加、而且总是把脚本包一层。所以补一套跑在
@@ -771,8 +815,8 @@ var Intl = (typeof globalThis === "object" && globalThis && globalThis.Intl) || 
 |---|---|
 | 普通宿主：模块图完整求值到适配层（停在「未找到全局 wx」） | 产物**自身的作用域**被构建配置弄坏（`_a is not defined` 那次） |
 | 普通宿主 + 缺 `Intl`：不因 Intl 倒下 | 垫片路径（全局可扩展，`env.ts` 够用） |
-| 白名单沙箱（缺 `Intl` + **写入被丢弃**）：不因 Intl 倒下 | 只有词法垫片能救的那条路径 |
-| **反证**：把垫片那一行摘掉，同一宿主必须炸出 `Intl is not defined` | 证明上一条不是空转（宿主模型有牙齿） |
+| 白名单沙箱（缺 `Intl`/`navigator` + **写入被丢弃**）：不因这两个全局倒下 | 只有词法垫片能救的那条路径 |
+| **反证 ×2**：分别摘掉 `Intl` / `navigator` 的垫片，同一宿主必须炸出对应的 `X is not defined` | 证明上一条不是空转（宿主模型有牙齿） |
 | 宿主原有的 `Intl` 未被顶掉 | 词法绑定是否真的落在包装内（否则就是全局污染） |
 | 垫片位置：在包装内、早于第一处 `Intl` 读取 | 位置被改坏的绊线 |
 
@@ -780,13 +824,19 @@ var Intl = (typeof globalThis === "object" && globalThis && globalThis.Intl) || 
 不能用「沙箱对象就是 Proxy」那种写法 —— 那样裸 `Intl` 会解析成 `undefined`
 而**不抛 ReferenceError**，路径跟真机对不上（试过）。
 
-### 9.6 已知边界（下一步的输入，不是本次的结论）
+### 9.7 边界：词法垫片只解决「看得见」，不解决「有行为」
 
-同一个白名单沙箱里，垫片修好 `Intl` 之后产物的下一个断点是
-**`navigator is not defined`**（pixi 在模块顶层读它，见 §4）。真机与有 DOM 的
-IDE 上下文都不缺它，所以**没有在这一轮里动**。真要做，正确做法是
-「intro 只建对象、`env.ts` **就地**补字段（`Object.assign`）」，
-而不是各自建一份 —— 否则会把 `wx.getSystemInfoSync()` 合成的那份 UA 挡在作用域外。
+intro 只垫**宿主可能没有、而且我们不需要给它行为**的全局。当前两个：`Intl`、`navigator`
+（后者的行为由 `env.ts` 在同一个对象上补）。`document` / 事件那一套**不垫**：
+
+- 它们需要 `env.ts` 里那些有行为的替身（事件总线、`getBoundingClientRect` 补丁、
+  `createElement` 路由表）；
+- 还要配合 `wx.createCanvas()` **第一次**调用的时机（抢上屏画布，见 §2）——
+  比 intro 晚得多也讲究得多。
+
+换句话说：**intro 是「让裸标识符有个落脚点」的兜底，不是垫片的替代品。**
+真机路径仍然完全由 `env.ts` 承担；intro 存在的唯一理由是那些
+`globalThis` 与作用域链分叉的宿主。
 
 ---
 
@@ -794,7 +844,7 @@ IDE 上下文都不缺它，所以**没有在这一轮里动**。真要做，正
 
 ```bash
 npm run build:minigame    # 构建产物（含 tsc --noEmit）
-npm run verify:sandbox    # 干净 V8（node:vm）宿主实测，6 项判据
+npm run verify:sandbox    # 干净 V8（node:vm）宿主实测，7 项判据
 npm run verify:minigame   # 无 DOM 环境实测，26 项判据
 npm run verify:dom        # 有原生 DOM 宿主实测，14 项判据
 npm run verify:visual     # 渲染层回归，8 项判据

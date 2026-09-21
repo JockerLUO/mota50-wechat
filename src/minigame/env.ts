@@ -641,12 +641,34 @@ function installNavigator(): void {
     platform = String(info.platform ?? '');
     synthesized = `Mozilla/5.0 (${info.system ?? 'unknown'}) WeChatMiniGame/${info.version ?? '?'} MicroMessenger`;
   }
-  safeAssign('navigator', {
+  const fields = {
     userAgent: synthesized,
     platform: existing?.platform ?? platform,
     maxTouchPoints: existing?.maxTouchPoints ?? 1,
     gpu: null
-  });
+  };
+
+  // ⚠️ **就地补字段**，不要整对象替换 —— 这一条是实测逼出来的。
+  //
+  // 产物最外层有一条**词法垫片** `var navigator = ...`（见 `vite.minigame.config.ts`
+  // 的 `PRELUDE`），它给裸标识符 `navigator` 兜底 —— 而 pixi 的默认适配器读的正是
+  // 裸标识符（`getNavigator: () => navigator`）。垫片里的那份对象如果被这里**替换**掉，
+  // 词法绑定仍然指向**旧对象**，pixi 就永远看不到这里合成的 UA：
+  // 真机上有 `wx.getSystemInfoSync()` 却等于没用上，白干。
+  //
+  // 所以约定是「一个对象、两处引用」：垫片负责建（宿主没有时）、并挂到 `globalThis`
+  // 上；这里只往上补字段。`Object.assign` 对同一个对象的两个引用都生效。
+  if (existing && typeof existing === 'object') {
+    try {
+      Object.assign(existing, fields);
+      return;
+    } catch {
+      // 宿主对象可能是只读的（浏览器里 `navigator` 就是）：那种情况下就地补字段会抛，
+      // 而这里一抛就会连坐 `installGlobals()` 后面的所有步骤（第三轮黑屏就是这么来的）。
+      // 所以退回到「装一份新的」，让 `safeAssign` 自己去认怂。
+    }
+  }
+  safeAssign('navigator', fields);
 }
 
 let installed = false;

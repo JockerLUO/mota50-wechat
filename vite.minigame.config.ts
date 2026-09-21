@@ -84,9 +84,19 @@ const BUILD_ID = (() => {
  * 全局**。当前符合这个描述的只有 `Intl`（pixi 只用它做 grapheme 分段，
  * 空对象即等价于「没有 Segmenter」，pixi 自己会退回 `[...s]`）。
  *
+ * ## 边界：**只垫「裸标识符」能被看见这件事**，垫不了行为
+ *
+ * 当前垫两个：`Intl` 与 `navigator`。选它们的标准是同一条：
+ *   **pixi 会在模块求值期用裸标识符读它们，而「宿主有 `globalThis.X`」不代表
+ *   「裸标识符 X 读得到」** —— 实测两者真的会分叉（见下面 navigator 的注释）。
+ *
+ * `document` / 事件那一套**不垫**：它们需要 `env.ts` 里那些有行为的替身对象
+ * （事件总线、`getBoundingClientRect` 补丁），还必须配合 `wx.createCanvas()`
+ * 第一次调用的时机 —— intro 里造不出来，也不该造。
+ *
  * ## 写法约束（两条都是实测撞出来的，别为了方便破例）
  *
- * **① 必须是单行、括号配平的一条语句。**
+ * **① 每条语句必须单行、括号配平。**
  *
  * 最初把它写成多行的 IIFE（`var Intl = (function () { ... })();`），结果
  * Rollup 的 iife 包装与它套在一起**错位**了：产物里 `(function() {` 出现在第 1 行、
@@ -99,17 +109,52 @@ const BUILD_ID = (() => {
  * `game.js` 跑在同一个 realm 里，而它自己那堆压缩代码里就有一个全局 `var _a`，
  * 于是我们的裸 `_a` 被**别人的变量**意外接住了；真机上没有这个巧合，直接黑屏。
  * 所以「IDE 里能跑」在这里是完全无效的证据 ——
- * 判据必须落在「产物自身结构」上（见 `tools/verify-sandbox.cjs` 的
- * 「函数包裹模式下能跑到 wx 缺失那一句」）。
+ * 判据必须落在「产物自身结构」上（见 `tools/verify-sandbox.cjs` 的判据 1：
+ * 干净宿主里必须一路跑到我们那句「未找到全局 wx」）。
  *
- * **② 必须自己守 ES2015 地板。**
+ * **② 每条语句必须自己守 ES2015 地板。**
  *
  * 这段字符串是 Rollup 的 `intro`，虽然也会过一遍 Vite 的 esbuild，但它的位置
  * 特殊（在模块图之外），不要指望降级规则和模块源码一样。所以：不用 `?.`、
  * 不用 `??`、不裸写 `globalThis`（沙箱里它可能是 undefined，只有 `typeof` 安全）。
+ *
+ * ## 为什么 `navigator` 也要垫（第二轮才发现的同一个坑）
+ *
+ * 第一版只垫了 `Intl`，用户在 IDE 里点编译后拿到的新错误是：
+ *
+ *   Cannot destructure property 'userAgent' of 'DOMAdapter.get().getNavigator()'
+ *   as it is undefined        at isSafari (game.js:34510)
+ *
+ * 而**同一份产物的探针在同一个宿主里报的是 `navigator: {present: true, hasUA: true}`**。
+ * 两个观测都对 —— 它们看的是两条不同的路径：
+ *
+ *   - `globalThis.navigator`      → 宿主给的、有 userAgent 的那个对象
+ *   - 裸标识符 `navigator`        → **undefined**
+ *
+ * pixi 的默认适配器写的是 `getNavigator: () => navigator`（裸标识符），
+ * 而 `isSafari()` 由 `const defaultForceAllocation = isSafari()` 在**模块顶层**调用 ——
+ * 早于我们把 `DOMAdapter` 换成小游戏实现。于是它读到 undefined，当场炸。
+ *
+ * 所以规则是通用的：**垫片要同时覆盖 `globalThis` 与裸标识符两条路径**。
+ * `env.ts` 的 `safeAssign` 只管前一条（它按值判断，在真机上是有效的），
+ * 后一条只有词法绑定管得着 —— 这就是本文件存在的原因。
+ *
+ * ⚠️ 关键细节：`navigator` 这一条必须与 `env.ts` **共用同一个对象**。
+ * 否则 `env.ts` 用 `wx.getSystemInfoSync()` 合成的 UA 会被挡在作用域外，
+ * pixi 只能看到 intro 里这份简陋的 —— 那是拿真问题换假问题。
+ * 做法：intro 把兜底对象**同时装到 `globalThis.navigator` 上**，
+ * `env.ts` 那边改成**就地补字段**（`Object.assign`）而不是整对象替换。
  */
-const PRELUDE =
-  'var Intl = (typeof globalThis === "object" && globalThis && globalThis.Intl) || { Segmenter: void 0 };';
+const PRELUDE = [
+  // Intl：pixi 的 CanvasTextMetrics 静态字段初始化器会读它。
+  // 空对象（没有 Segmenter）等价于「宿主不支持」，pixi 自己会退回 `[...s]` 分段。
+  'var Intl = (typeof globalThis === "object" && globalThis && globalThis.Intl) || { Segmenter: void 0 };',
+  // navigator：pixi 的 BrowserAdapter `getNavigator: () => navigator`，由模块顶层的
+  // isSafari() 触发。优先用宿主那份（它的 UA 比我们编的准）；宿主没有就造一份**空 UA** 的，
+  // 并同时挂到 globalThis 上 —— 空 UA 是为了让 `env.ts` 仍然认为「不可用」，
+  // 从而继续用 wx.getSystemInfoSync() 补上真实机型。
+  'var navigator = (typeof globalThis === "object" && globalThis && globalThis.navigator) || (typeof globalThis === "object" && globalThis ? (globalThis.navigator = { userAgent: "", platform: "", maxTouchPoints: 1, gpu: null }) : { userAgent: "", platform: "", maxTouchPoints: 1, gpu: null });'
+].join('\n');
 
 /**
  * 把 `assets/atlas/*.png` 的 import 换成包内相对路径字面量。

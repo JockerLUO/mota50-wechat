@@ -51,6 +51,34 @@ const ON: boolean = __MOTA_WX_BEACON__;
 /** 本次运行的是哪一份产物 —— 见 `vite.minigame.config.ts` 里 BUILD_ID 的说明。 */
 const BUILD: string = __MOTA_BUILD_ID__;
 
+/**
+ * 裸标识符能不能读到 —— **必须用 `new Function` 来量**。
+ *
+ * 这是本轮最关键的一个观测，也是花了三轮才想到怎么测的：
+ * 在这个宿主里，**「`globalThis.X` 读得到」与「裸标识符 `X` 读得到」可以是两件事**。
+ * 实测（IDE）：`globalThis.navigator` 有 userAgent，裸 `navigator` 却是 `undefined`
+ * —— 于是 pixi 的 `getNavigator: () => navigator` 读到 undefined，整包炸在模块求值期。
+ *
+ * 为什么不能直接在本模块里裸读：
+ *   1. 产物最外层有**词法垫片**（`var Intl` / `var navigator`），在本模块里裸读只会
+ *      读到垫片，测的就不是宿主了；
+ *   2. `new Function` 的函数体里，自由标识符按**全局对象/作用域链**解析，
+ *      看不到调用处的闭包作用域 —— 这恰好就是 pixi 面对的那个环境。
+ *
+ * 三态取值：`undefined` / 类型名 / `ReferenceError`（真的不在作用域链上）。
+ * 下一次再撞到 `xxx is not defined`，先比这一栏与同一条记录里 `env` 那一栏
+ * （属性视图）—— 两者不一致就是这个坑，直接照垫片的做法补。
+ */
+function bareView(name: 'Intl' | 'navigator'): string {
+  try {
+    // eslint-disable-next-line no-new-func
+    const probe = new Function(`try { return typeof ${name} } catch (e) { return e.name }`);
+    return String(probe());
+  } catch {
+    return 'no-new-function';
+  }
+}
+
 /** 本机取证端点。见 `tools/wx-beacon-server.cjs`。 */
 const PORT = 8899;
 
@@ -476,6 +504,10 @@ if (ON) {
     build: BUILD,
     // 宿主全局能不能装新键 —— 直接决定 `env.ts` 那套垫片在这个宿主上有没有用。
     writeSticks: writeSticks(),
+    // **作用域链视图**（`new Function` 里读，等价于 pixi 遇到的处境）。
+    // 与下面 `env` / `navigator` 那两栏（**属性视图**，走 `globalThis.X`）对照着看：
+    // 两者不一致就说明这个宿主的 `globalThis` 与作用域链分叉了 —— 垫片必须走词法绑定。
+    bare: { Intl: bareView('Intl'), navigator: bareView('navigator') },
     // 这些事实决定了「垫片该怎么补」，先记下来
     //
     // ⚠️ 一律用 `typeof x`（对**未声明的标识符**也安全），不要写 `!!x` ——
