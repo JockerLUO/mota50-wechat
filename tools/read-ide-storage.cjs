@@ -6,6 +6,7 @@
  * node tools/read-ide-storage.cjs          # 最新一份
  * node tools/read-ide-storage.cjs --list   # 列出所有候选
  * node tools/read-ide-storage.cjs --raw    # 原样打印时间线 JSON
+ * node tools/read-ide-storage.cjs --png    # 把落盘的像素记录解成图（默认 assets/preview/ide-frame.png）
  * ```
  *
  * ## 为什么需要它
@@ -27,10 +28,18 @@
  *    既可能是「跑了一次」，也可能是「另一个上下文把它盖掉了」。
  * 2. **先看构建号。** 它回答的是「IDE 到底在跑哪一份产物」——
  *    没有它就没法区分「修了没用」和「跑的还是旧包」。每次让人点编译前先记下当前构建号。
- * 3. **时间线是分段的**（`module → shim → hostModule → host → probe → boot`）。
- *    哪一段没出现，就死在那一趟 import / 那一步。本项目四个错
- *    （`_a` → `Intl` → `navigator` → `unsafe-eval`）**是串行的**，修掉一个才露下一个，
+ * 3. **时间线是分段的**（`module → shim → hostModule → host → probe → boot → pixels`）。
+ *    哪一段没出现，就死在那一趟 import / 那一步。本项目这一路修掉了七个错
+ *    （`_a` → `Intl` → `navigator` → `unsafe-eval` → `document` → `performance` /
+ *    `requestAnimationFrame` → `MouseEvent`）**全是串行的**：修掉一个才露下一个，
  *    所以「报错一模一样」的另一种解释是「还没修到会暴露它的那一步」。
+ *    `boot` 出现 = 渲染器起来了；`pixels` 出现 = 真的画了帧（可 `--png` 看图）。
+ *
+ * 4. **`bare` 视图在 `shim` 段，不在 `module` 段。** 它由 `env.ts` 的
+ *    `reportBareReachability()` 在模块作用域**直接读**裸标识符产生，所以必须等
+ *    垫片装完才量得到。它比错误栈有用得多：一次列出**全部**缺口（本机 32 个），
+ *    而不是一轮报一个。这份清单是「还要不要垫」的唯一依据，
+ *    所以默认视图里**不截断**它。
  */
 
 'use strict';
@@ -107,12 +116,12 @@ function fmtTime(ms) {
 
 /**
  * module 阶段的字段很多，但不是都值得一眼看到。
- * 这一组是「每次排查都会先看」的：构建号、宿主事实、两个错过的坑、以及裸标识符视图。
+ * 这一组是「每次排查都会先看」的：构建号、宿主事实、走过的几个坑。
+ * 注意 `bare`（裸标识符视图）**不在这里** —— 它在 `shim` 段，见 printShim()。
  */
 const MODULE_HIGHLIGHT = [
   'build',
   'writeSticks',
-  'bare',
   'hasWx',
   'wxKeys',
   'hasGameGlobal',
@@ -129,23 +138,62 @@ function printModule(data) {
   if (data.build) console.log(`  构建号: ${data.build}   ← 先比这个，确认 IDE 跑的是不是刚构建的包`);
   for (const k of MODULE_HIGHLIGHT) {
     if (!(k in data)) continue;
-    const v = data[k];
-    if (k === 'bare') {
-      const bad = Object.entries(v).some(([, s]) => s === 'ReferenceError' || s === 'EvalError');
-      console.log(
-        `  bare（作用域链视图，new Function 裸读）: ${JSON.stringify(v)}` +
-          (bad ? '   ← 有标识符在裸读路径上读不到/构造器被禁' : '')
-      );
-      continue;
-    }
-    if (k === 'env' || k === 'navigator') {
-      console.log(`  ${k}: ${JSON.stringify(v)}`);
-      continue;
-    }
-    console.log(`  ${k}: ${JSON.stringify(v)}`);
+    console.log(`  ${k}: ${JSON.stringify(data[k])}`);
   }
   const others = Object.keys(data).filter((k) => !MODULE_HIGHLIGHT.includes(k));
   if (others.length) console.log(`  （另有 ${others.length} 个字段：${others.join(', ')}）`);
+}
+
+/**
+ * `shim` 段的核心是 `bare` —— 由 `env.ts` 在模块作用域**直接读**每个裸标识符得到，
+ * 等价于 pixi 面对的那条作用域链。三态的含义完全不同，不能混着看：
+ *
+ *   - `对象类型名` / `function`  → 裸读**拿得到**（可能是宿主自带，也可能是我们的垫片）
+ *   - `undefined`               → 裸读拿得到但值是 undefined（属性路径有、裸路径也有，
+ *                                 只是宿主没填内容）—— 与「垫片没接上」是两回事
+ *   - `ReferenceError`          → 裸读**根本不存在**。要么该垫（且 pixi 真的会走到），
+ *                                 要么按「选垫两条判据」确认它不会被走到。
+ *
+ * 所以这里**分组打印、不截断**：默认视图里被 slice(0,220) 砍掉一半的话，
+ * 就没法判断「还有哪些没垫」，等于白量。
+ */
+function printShim(data) {
+  console.log('\n── shim 阶段（裸标识符可达性：模块作用域直接读，不用 typeof 守卫）──');
+  const bare = data && data.bare;
+  if (!bare || typeof bare !== 'object') {
+    console.log('  （没有 bare 字段 —— 说明这一份产物还是旧的探针，或垫片段没跑到）');
+    return;
+  }
+  const groups = { ok: [], undef: [], missing: [] };
+  for (const [k, v] of Object.entries(bare)) {
+    if (v === 'ReferenceError') groups.missing.push(k);
+    else if (v === 'undefined') groups.undef.push(k);
+    else groups.ok.push(`${k}=${v}`);
+  }
+  console.log(`  ✅ 裸读拿得到（${groups.ok.length}）: ${groups.ok.join('  ')}`);
+  console.log(`  ➖ 拿得到但值 undefined（${groups.undef.length}）: ${groups.undef.join('  ') || '（无）'}`);
+  console.log(
+    `  ⛔ 裸读不存在 ReferenceError（${groups.missing.length}）: ${
+      groups.missing.join('  ') || '（无）'
+    }`
+  );
+  // 本项目的 7 个垫片是「按判据筛出来的最小集」，它们的名字写死在这里，
+  // 是为了让「垫片有没有接上裸路径」变成一条一眼可核的断言，而不是靠人肉比对。
+  const SHIMMED = [
+    'Intl',
+    'navigator',
+    'document',
+    'performance',
+    'requestAnimationFrame',
+    'cancelAnimationFrame',
+    'MouseEvent'
+  ];
+  const notReachable = SHIMMED.filter((k) => !(k in bare) || bare[k] === 'ReferenceError' || bare[k] === 'undefined');
+  console.log(
+    notReachable.length
+      ? `  ⛔ 已垫的 7 项里有 ${notReachable.length} 项在裸路径上仍不可用：${notReachable.join(', ')}   ← 垫片没接上`
+      : `  ✅ 已垫的 7 项在裸路径上全部可用（Intl / navigator / document / performance / rAF / cAF / MouseEvent）`
+  );
 }
 
 function printTimeline(records) {
@@ -160,7 +208,9 @@ function printTimeline(records) {
   }
   console.log('');
   for (const r of records) {
-    if (r.stage === 'module') continue;
+    // module 与 shim 各自有专用打印（见 printModule / printShim）：
+    // 前者字段太多要挑重点，后者的 bare 清单必须完整不许截断。
+    if (r.stage === 'module' || r.stage === 'shim') continue;
     const t = r.t != null ? `t=${r.t}` : '';
     if (r.message || r.stack) {
       console.log(`  [${r.stage}] ${t}`);
@@ -175,6 +225,52 @@ function printTimeline(records) {
       console.log(`  [${r.stage}] ${t}`);
     }
   }
+}
+
+/**
+ * 把落盘的像素记录写成 PNG —— 「IDE 里到底画了什么」唯一能直接看的东西。
+ *
+ * 记录形如 `{cols, rows, px, distinctColors, nonBlackRatio, …}`，`px` 是 cols×rows 个
+ * 6 位十六进制 RGB 拼成的长串（行优先）。**探针侧已经翻好上下**（WebGL 原点在左下、
+ * 人看图从上往下），所以这里直接铺，不用再 flip —— 多翻一次就会把画面倒过来。
+ *
+ * cols/rows 优先从记录自己身上取；取不到就退回 `pixels` 段（那一份没有 px，但有格子尺寸）。
+ */
+function writePng(pxRaw, outPath, pixelsStage) {
+  if (pxRaw == null) {
+    console.error('\n没有像素记录，解不出图。');
+    console.error('要点：时间线里得先出现 pixels 段（说明游戏真的画了帧），');
+    console.error('且产物是探针版 —— npm run build:minigame:beacon 构建。');
+    return;
+  }
+  let rec = pxRaw;
+  if (typeof rec === 'string') {
+    try {
+      rec = JSON.parse(rec);
+    } catch {
+      /* 万一存的就是裸 px 串，按裸串处理 */
+    }
+  }
+  if (typeof rec === 'string') rec = { px: rec };
+
+  const cols = rec.cols || (pixelsStage && pixelsStage.cols);
+  const rows = rec.rows || (pixelsStage && pixelsStage.rows);
+  if (!cols || !rows || typeof rec.px !== 'string') {
+    console.error('\n像素记录里缺 cols/rows/px，解不出图。实际字段：' + JSON.stringify(Object.keys(rec)));
+    return;
+  }
+
+  const { pngFromHexGrid } = require('./lib/png.cjs');
+  const { png, width, height } = pngFromHexGrid(rec.px, cols, rows, 3);
+  fs.mkdirSync(path.dirname(outPath), { recursive: true });
+  fs.writeFileSync(outPath, png);
+
+  console.log('\n── 像素记录 → PNG ──');
+  console.log(`  网格 ${cols}×${rows} → ${width}×${height}（探针已翻好上下，直接铺）`);
+  if (rec.resolution != null) console.log(`  resolution: ${rec.resolution}`);
+  if (rec.distinctColors != null) console.log(`  颜色种类: ${rec.distinctColors}`);
+  if (rec.nonBlackRatio != null) console.log(`  非黑占比: ${rec.nonBlackRatio}`);
+  console.log(`  已写出: ${outPath}`);
 }
 
 function main() {
@@ -225,7 +321,17 @@ function main() {
 
   const mod = records.find((r) => r.stage === 'module');
   if (mod && mod.data) printModule(mod.data);
+  const shim = records.find((r) => r.stage === 'shim');
+  if (shim) printShim(shim.data || {});
   printTimeline(records);
+
+  if (args.includes('--png')) {
+    const outArg = args.find((a) => a.startsWith('--out='));
+    const outPath = outArg
+      ? path.resolve(outArg.slice('--out='.length))
+      : path.resolve('assets/preview/ide-frame.png');
+    writePng(px, outPath, records.find((r) => r.stage === 'pixels') || null);
+  }
 }
 
 main();
