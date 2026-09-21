@@ -86,13 +86,27 @@ const BUILD_ID = (() => {
  *
  * ## 边界：**只垫「裸标识符」能被看见这件事**，垫不了行为
  *
- * 当前垫两个：`Intl` 与 `navigator`。选它们的标准是同一条：
- *   **pixi 会在模块求值期用裸标识符读它们，而「宿主有 `globalThis.X`」不代表
- *   「裸标识符 X 读得到」** —— 实测两者真的会分叉（见下面 navigator 的注释）。
+ * 当前垫六个：`Intl`、`navigator`、`document`、`performance`、`requestAnimationFrame` /
+ * `cancelAnimationFrame`、`MouseEvent`。选它们的标准是**两条同时成立**：
+ *   ① pixi 会**裸读**它（不是 `globalThis.X`，也不是 `x.method()` 那种成员访问）；
+ *   ② 那条裸读**真的会执行**（不是 `typeof X` 守卫里的一句、也不是被我们替换掉的分支）。
  *
- * `document` / 事件那一套**不垫**：它们需要 `env.ts` 里那些有行为的替身对象
- * （事件总线、`getBoundingClientRect` 补丁），还必须配合 `wx.createCanvas()`
- * 第一次调用的时机 —— intro 里造不出来，也不该造。
+ * 判定 ① 的办法就是搜 pixi 源码；判定 ② 靠的是「这条路径有没有被跑到」——
+ * 实测过的方式：`Ticker.update(currentTime = performance.now())` 的默认参数每帧都走、
+ * `EventTicker` 合成 mousemove 时会 `new MouseEvent(...)`、`Ticker.start()` 裸调 rAF。
+ * 只满足 ① 不满足 ② 的（比如 `new Image()` 只在 `testImageFormat` 的探测里，
+ * 外面包着 try/catch）**不垫** —— 垫了反而多一份没人测过的替身。
+ *
+ * 值从哪来，分两类：
+ *   - **不需要行为** → intro 一步到位：`Intl`（空对象即等价于「没有 Segmenter」）。
+ *   - **需要行为** → 「**一个对象、两处引用**」：intro 只负责**选或造**那个对象
+ *     （并把它同时挂到 globalThis），`env.ts` 改成**就地补字段**（`Object.assign`）
+ *     而不是整对象替换。否则 intro 绑在裸标识符上的那份与 env.ts 装上去的那份
+ *     会变成两个对象，pixi 只会看到 intro 里那份简陋的 —— 拿真问题换假问题。
+ *     属于这一类的：`navigator`、`document`、`performance`、rAF/cAF。
+ *     `MouseEvent` 还有第三种形态：兜底要转发给 `globalThis.MouseEvent`
+ *     （`env.ts` 装的 `MiniMouseEvent`），所以它**不能**把自己挂到 globalThis 上 ——
+ *     会自我递归。它走**懒转发**：调用那一刻才去取。
  *
  * ## 写法约束（两条都是实测撞出来的，别为了方便破例）
  *
@@ -135,6 +149,19 @@ const BUILD_ID = (() => {
  * 而 `isSafari()` 由 `const defaultForceAllocation = isSafari()` 在**模块顶层**调用 ——
  * 早于我们把 `DOMAdapter` 换成小游戏实现。于是它读到 undefined，当场炸。
  *
+ * ## 第三例：`document`（`AccessibilitySystem`，渲染器构造期）
+ *
+ * 垫好前两者之后，时间线第一次跑出了 `module`
+ * （`module → shim → hostModule → host → probe`），然后死在 `Game.create()` 里：
+ *
+ *   TypeError: Cannot read properties of undefined (reading 'createElement')
+ *     at AccessibilitySystem._createTouchHook   ← const hookDiv = document.createElement("button")
+ *
+ * 与 `navigator` 完全同一个坑：属性路径有值、裸标识符是 undefined。
+ * 值得一提的只有一点：这几例的**暴露顺序是串行的** ——
+ * `_a` → `Intl` → `navigator` → `document` → `unsafe-eval`，修掉一个才会露出下一个，
+ * 所以「报错一模一样」通常不是「没修」，而是「还没修到会暴露它的那一步」。
+ *
  * 所以规则是通用的：**垫片要同时覆盖 `globalThis` 与裸标识符两条路径**。
  * `env.ts` 的 `safeAssign` 只管前一条（它按值判断，在真机上是有效的），
  * 后一条只有词法绑定管得着 —— 这就是本文件存在的原因。
@@ -153,7 +180,35 @@ const PRELUDE = [
   // isSafari() 触发。优先用宿主那份（它的 UA 比我们编的准）；宿主没有就造一份**空 UA** 的，
   // 并同时挂到 globalThis 上 —— 空 UA 是为了让 `env.ts` 仍然认为「不可用」，
   // 从而继续用 wx.getSystemInfoSync() 补上真实机型。
-  'var navigator = (typeof globalThis === "object" && globalThis && globalThis.navigator) || (typeof globalThis === "object" && globalThis ? (globalThis.navigator = { userAgent: "", platform: "", maxTouchPoints: 1, gpu: null }) : { userAgent: "", platform: "", maxTouchPoints: 1, gpu: null });'
+  'var navigator = (typeof globalThis === "object" && globalThis && globalThis.navigator) || (typeof globalThis === "object" && globalThis ? (globalThis.navigator = { userAgent: "", platform: "", maxTouchPoints: 1, gpu: null }) : { userAgent: "", platform: "", maxTouchPoints: 1, gpu: null });',
+  // ③ document：pixi 的 AccessibilitySystem._createTouchHook()（渲染器构造期）与
+  // DOMPipe（每帧）都会读裸 `document`。判据是**可用性**（createElement 是不是函数），
+  // 不是「属性在不在」—— IDE 里实测过「属性在、裸读 undefined」，也有「属性在但不可用」的形态。
+  'var document = (typeof globalThis === "object" && globalThis && globalThis.document && typeof globalThis.document.createElement === "function") ? globalThis.document : {};',
+  // ③b 把**选中的那个对象**留个记号给 `env.ts`。
+  //     为什么需要它：`env.ts` 要「就地补字段」到裸标识符指着的那一个对象上，
+  //     而单靠 `globalThis.document` 读回来的可能**不是同一个**——
+  //     宿主若把 `document` 设成只读属性，下一句的赋值会失败，
+  //     于是 `globalThis.document` 仍是宿主那个不可用的对象，而裸标识符是这里的占位对象。
+  //     有这条记号，「补哪个对象」就是个事实而不是猜测（这一整轮的教训）。
+  'if (typeof globalThis === "object" && globalThis) { try { globalThis.__motaDocumentShim = document; } catch (e) { } }',
+  // ③c 占位对象能挂上 globalThis 就挂上：两条路径指向同一个对象最省事。
+  'if (typeof globalThis === "object" && globalThis && !document.createElement) { try { globalThis.document = document; } catch (e) { } }',
+  // ④ performance —— pixi 有几十处**裸读** `performance.now()`：
+  //    `Ticker.update(currentTime = performance.now())` 的默认参数**每帧**都会走到，
+  //    `AccessibilitySystem`（就是 §③ 那个 document 崩在同一批 `_addSystems` 里）构造期也要。
+  //    判据用「`now` 是不是函数」，与 document 那条同一条思路。
+  'var performance = (typeof globalThis === "object" && globalThis && globalThis.performance && typeof globalThis.performance.now === "function") ? globalThis.performance : (typeof globalThis === "object" && globalThis ? (globalThis.performance = { now: function () { return Date.now(); } }) : { now: function () { return Date.now(); } });',
+  // ⑤ requestAnimationFrame / cancelAnimationFrame —— Ticker 启停时裸读。
+  //    ⚠️ 时间戳必须与 `performance` **同源**，否则 Ticker 算出的 delta 会跳变；
+  //    所以这里显式调上面那个词法绑定 `performance`，而不是 `Date.now()`。
+  'var requestAnimationFrame = (typeof globalThis === "object" && globalThis && typeof globalThis.requestAnimationFrame === "function") ? globalThis.requestAnimationFrame : (typeof globalThis === "object" && globalThis ? (globalThis.requestAnimationFrame = function (cb) { return setTimeout(function () { cb(performance.now()); }, 16); }) : function (cb) { return setTimeout(function () { cb(performance.now()); }, 16); });',
+  'var cancelAnimationFrame = (typeof globalThis === "object" && globalThis && typeof globalThis.cancelAnimationFrame === "function") ? globalThis.cancelAnimationFrame : (typeof globalThis === "object" && globalThis ? (globalThis.cancelAnimationFrame = function (id) { clearTimeout(id); }) : function (id) { clearTimeout(id); });',
+  // ⑥ MouseEvent —— pixi 的 `EventTicker` 合成 mousemove 时裸写 `new MouseEvent("mousemove", …)`。
+  //    ⚠️ 这一条**不能**用上面那种「把兜底挂到 globalThis 上」的写法：兜底本身要转发给
+  //    `globalThis.MouseEvent`，挂上去就自我递归了。改成**懒转发** ——
+  //    调用那一刻才去取 `globalThis.MouseEvent`（也就是 `env.ts` 装的 `MiniMouseEvent`）。
+  'var MouseEvent = (typeof globalThis === "object" && globalThis && typeof globalThis.MouseEvent === "function") ? globalThis.MouseEvent : function (type, init) { return new globalThis.MouseEvent(type, init); };'
 ].join('\n');
 
 /**

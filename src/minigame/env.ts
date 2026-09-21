@@ -429,6 +429,52 @@ const doc = {
 };
 
 /**
+ * 装 `document` —— 但**就地补字段**，不整对象替换。
+ *
+ * ## 为什么不能整对象替换（第三例，与 `navigator` 同一条纪律）
+ *
+ * 构建期 `PRELUDE` 里已经有一句 `var document = ...`（见 `vite.minigame.config.ts`），
+ * 它解决的是「**属性路径有值、裸标识符读不到**」这个分叉。但词法绑定的值
+ * 是**在 intro 那一刻定下的**，而 `env.ts` 在这之后才跑 —— 若这里
+ * `safeAssign('document', doc)` 整对象换掉属性，两条路径就指向两个对象了：
+ * 裸标识符仍旧指着 intro 那份，pixi 读到的就是它，于是「补了却没用」。
+ *
+ * ## 「补哪个对象」必须是事实，不能是猜测
+ *
+ * 首选 `globalThis.__motaDocumentShim` —— 那是 intro **留下记号的那个对象**，
+ * 也就是裸标识符指着的那一个。为什么不直接用 `globalThis.document` 呢：
+ * 宿主若把 `document` 设成只读属性，intro 那句赋值会失败，于是
+ * `globalThis.document` 仍是宿主那个**不可用**的对象，而裸标识符是 intro 的占位对象 ——
+ * 两个不同的东西。有记号就不用在这上面赌一把（这一整轮的教训就是这个）。
+ *
+ * ## 让路的判据必须与 intro **完全一致**
+ *
+ * intro 选对象的判据是「`createElement` 是不是函数」（可用性）。这里若改用
+ * `nativeDom`（= 「在」且「不可覆盖」），就会出现错配：某个宿主里
+ * `document` 属性在、也覆盖得动，但**根本不可用** —— intro 判定「不可用、用占位」，
+ * 而 `nativeDom` 会判「有原生 DOM、让路」，两边打架。所以这里用同一条判据。
+ */
+function installDocument(): void {
+  const existing = g.document as Any;
+  // 宿主那份**可用** → 让路。真 DOM 比垫片完整，硬装上去反而更糟：
+  // `document.addEventListener` 会收进我们的 documentBus，而原生事件永远不派发到那里
+  // →「画面有了但点不动」（理由详见 `nativeDom` 的注释）。
+  if (!!existing && typeof existing.createElement === 'function') return;
+
+  const target = (g.__motaDocumentShim as Any) || existing;
+  if (target && typeof target === 'object') {
+    // intro 选中的那个对象 —— 就地补，保住「一个对象、两处引用」。
+    try {
+      Object.assign(target, doc);
+      return;
+    } catch {
+      /* 宿主对象不可写，退回整体安装 */
+    }
+  }
+  safeAssign('document', doc);
+}
+
+/**
  * 读一次系统信息。
  *
  * `wx.getSystemInfoSync()` 在极早期调用或部分基础库上会抛，所以统一包一层 ——
@@ -691,9 +737,23 @@ export function installGlobals(): void {
     safeAssign('cancelAnimationFrame', (id: Any) => clearTimeout(id));
   }
 
+  // `document` **两种情况都要过一遍** —— 这是第三轮黑屏那一类错配的解药。
+  //
+  // `nativeDom` 问的是「宿主有原生 DOM 吗」，但它用的是「在 且 不可覆盖」这条判据；
+  // 而实测存在**第三种形态**：`document` 属性在、也覆盖得动，但**根本不可用**
+  // （IDE 里那次：`hasDocument: true`，而 pixi 读裸 `document` 得到 undefined）。
+  // 这种宿主会被 `nativeDom` 判成「非原生 DOM」，却在下面这行 return 之前就……
+  // 不，它会正常走到 `installDocument()`。真正要防的是相反的一侧：
+  // 宿主 `document` **不可覆盖但不可用** → `nativeDom` 为真 → 提前 return
+  // → 谁都没补 → 渲染器构造时 `document.createElement` 照样炸。
+  //
+  // 所以让 `installDocument()` 自己判（判据与构建期 intro 完全一致：createElement 是不是函数），
+  // 两边都调用：可用就让路（函数内部第一句 return），不可用就地补。
+  installDocument();
+
   if (nativeDom) {
     // 原生 DOM 宿主：事件由宿主自己派发，垫片**让路**。
-    // 这里不装 document/addEventListener/MouseEvent，理由见 `nativeDom` 的注释
+    // 这里不装 addEventListener/MouseEvent，理由见 `nativeDom` 的注释
     // （一装就抛，侥幸装上反而变成「点不动」）。pixi 走浏览器分支即可。
     //
     // 注意 `installed` 照样要置位：`assertInstalled()` 问的是「环境有没有就绪」，
@@ -703,7 +763,6 @@ export function installGlobals(): void {
   }
 
   // 以下三项各自独立：任何一个装不上都不能连坐其余（这是实测踩出来的约束）
-  safeAssign('document', doc);
   safeAssign('MouseEvent', MiniMouseEvent);
   safeAssign('addEventListener', (type: string, fn: (ev: Any) => void) => globalBus.addEventListener(type, fn));
   safeAssign('removeEventListener', (type: string, fn: (ev: Any) => void) => globalBus.removeEventListener(type, fn));
@@ -816,3 +875,84 @@ export function getReservedCanvas(): Any {
 installGlobals();
 installTouchBridge();
 reserveDisplayCanvas();
+reportBareReachability();
+
+/**
+ * 量一遍「**裸标识符**读得到哪些全局」—— 在产物自己的作用域里量。
+ *
+ * ## 为什么非要在产物内部量，而且非要用「直接读」而不是 `typeof X`
+ *
+ * 前几轮排查 `Intl` / `navigator` / `document` 时，每次都要**等 IDE 报一次错**
+ * 才知道某个全局的裸路径是死的 —— 因为「`globalThis.X` 有值」与「裸标识符 `X` 有值」
+ * 是两件事（白名单式宿主会把它们切开），而从产物**外面**量到的永远是宿主那一侧。
+ *
+ * 这段代码在模块作用域里，它读到的裸标识符就是**模块图里所有代码读到的那个**
+ * —— 也就是 pixi 读到的那个。于是「还有哪些全局是死的」一次就能全列出来，
+ * 不必一轮报一个。
+ *
+ * ⚠️ 两个细节：
+ *
+ * 1. **必须直接读 `X`，不能写 `typeof X`。** `typeof 未声明标识符` 按规范返回
+ *    `'undefined'` 而**不抛**，于是「未声明」与「声明了但是 undefined」会被混成一种 ——
+ *    而前者才是致命的（pixi 读它就是 `ReferenceError`，整包起不来）。
+ *    直接读放进 try/catch 才能把三态分开：`类型名` / `'undefined'` / `'ReferenceError'`。
+ * 2. **结果挂在 `globalThis` 上**（`__motaEnvBare`），不是导出给别的模块：
+ *    模块间 import 会改变 ESM 求值顺序，而这个文件的存在意义就是「第一个求值」。
+ *    走 props 传给探针（探查在 `pixi-adapter` 的 `shim` 埋点处顺手取走）。
+ *
+ * 判读方式：把结果与探针 `module` 阶段那栏 `env`（**属性路径** `typeof g.X`）对照。
+ * **两者不一致 = 这个宿主的两条路径分叉**，那就照 `Intl` / `navigator` / `document`
+ * 的做法补一个词法垫片（见 `vite.minigame.config.ts` 的 `PRELUDE`）。
+ */
+function reportBareReachability(): void {
+  const read = (get: () => unknown): string => {
+    try {
+      return typeof get();
+    } catch (err) {
+      // `ReferenceError` = 这个标识符**根本没被声明**（最严重的那种）
+      return (err as Error).name;
+    }
+  };
+
+  const out: Record<string, string> = {
+    // ── 已垫过词法垫片的三个：这里量的是「垫片有没有真的接上」──
+    Intl: read(() => Intl),
+    navigator: read(() => navigator),
+    document: read(() => document),
+    // ── 其余：量的是「宿主的作用域链给不给」，用来**一次列出全部缺口** ──
+    performance: read(() => performance),
+    requestAnimationFrame: read(() => requestAnimationFrame),
+    cancelAnimationFrame: read(() => cancelAnimationFrame),
+    MouseEvent: read(() => MouseEvent),
+    TouchEvent: read(() => TouchEvent),
+    addEventListener: read(() => addEventListener),
+    removeEventListener: read(() => removeEventListener),
+    dispatchEvent: read(() => dispatchEvent),
+    window: read(() => window),
+    self: read(() => self),
+    Image: read(() => Image),
+    HTMLImageElement: read(() => HTMLImageElement),
+    HTMLCanvasElement: read(() => HTMLCanvasElement),
+    WebGLRenderingContext: read(() => WebGLRenderingContext),
+    CanvasRenderingContext2D: read(() => CanvasRenderingContext2D),
+    fetch: read(() => fetch),
+    XMLHttpRequest: read(() => XMLHttpRequest),
+    atob: read(() => atob),
+    btoa: read(() => btoa),
+    structuredClone: read(() => structuredClone),
+    queueMicrotask: read(() => queueMicrotask),
+    TextDecoder: read(() => TextDecoder),
+    TextEncoder: read(() => TextEncoder),
+    URL: read(() => URL),
+    ResizeObserver: read(() => ResizeObserver),
+    AbortController: read(() => AbortController),
+    OffscreenCanvas: read(() => OffscreenCanvas),
+    createImageBitmap: read(() => createImageBitmap),
+    matchMedia: read(() => matchMedia),
+    devicePixelRatio: read(() => devicePixelRatio),
+    location: read(() => location),
+    screen: read(() => screen),
+    WebAssembly: read(() => WebAssembly)
+  };
+  (g as Any).__motaEnvBare = out;
+}

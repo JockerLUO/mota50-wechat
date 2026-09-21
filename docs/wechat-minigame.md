@@ -812,28 +812,35 @@ pixi 默认适配器写的是 `getNavigator: () => navigator`（裸标识符）�
 
 `verify:minigame`（Worker）与 `verify:dom`（Chromium）**结构性地抓不到**上面两条：
 浏览器必然有 `Intl`、全局想加就加、而且总是把脚本包一层。所以补一套跑在
-**干净 V8（`node:vm`）** 里的判据，共 6 条：
+**干净 V8（`node:vm`）** 里的判据，共 9 条：
 
 | 判据 | 拦的是什么 |
 |---|---|
 | 普通宿主：模块图完整求值到适配层（停在「未找到全局 wx」） | 产物**自身的作用域**被构建配置弄坏（`_a is not defined` 那次） |
 | 普通宿主 + 缺 `Intl`：不因 Intl 倒下 | 垫片路径（全局可扩展，`env.ts` 够用） |
-| 白名单沙箱（缺 `Intl`/`navigator` + **写入被丢弃**）：不因这两个全局倒下 | 只有词法垫片能救的那条路径 |
+| 白名单沙箱（缺 `Intl`/`navigator`，且**两条路径分叉**）：不因这两个全局倒下 | 只有词法垫片能救的那条路径 |
+| **对照**：同一沙箱里「属性路径装好值、裸读仍死」必须复现 | 证明上一类判据不是想象出来的场景（它每一次都有真实报错对应） |
+| **裸标识符视图**：产物内部量出的 7 个垫片全部可用 | 「垫了却没接上」与「还有别的全局是死的」 |
 | **反证 ×2**：分别摘掉 `Intl` / `navigator` 的垫片，同一宿主必须炸出对应的 `X is not defined` | 证明上一条不是空转（宿主模型有牙齿） |
 | 宿主原有的 `Intl` 未被顶掉 | 词法绑定是否真的落在包装内（否则就是全局污染） |
 | 垫片位置：在包装内、早于第一处 `Intl` 读取 | 位置被改坏的绊线 |
 
-白名单沙箱是 `with(proxy)` + 影子 `globalThis` 造的（写一律丢弃），
-不能用「沙箱对象就是 Proxy」那种写法 —— 那样裸 `Intl` 会解析成 `undefined`
-而**不抛 ReferenceError**，路径跟真机对不上（试过）。
+白名单沙箱是 `with(proxy)` + 影子 `globalThis` 造的：**写进去能读回来，但裸标识符不走它**
+（这正是那个分叉的形式，也是实测定的 —— IDE 里 `navigator` 的 UA 能被读回来，
+说明写落到了影子对象上）。不能用「沙箱对象就是 Proxy」那种写法 ——
+那样裸 `Intl` 会解析成 `undefined` 而**不抛 ReferenceError**，路径跟真机对不上（试过）。
 
 ### 9.7 边界：词法垫片只解决「看得见」，不解决「有行为」
 
-intro 只垫**宿主可能没有、而且我们不需要给它行为**的全局。当前两个：`Intl`、`navigator`
-（后者的行为由 `env.ts` 在同一个对象上补）。`document` / 事件那一套**不垫**：
+intro 的职责只有一条：**让裸标识符有个落脚点**，并且（对需要行为的那些）
+**选或造出那个落脚对象**，行为仍由 `env.ts` 在同一个对象上补（`Object.assign` 就地补字段）。
+当前七个：`Intl`、`navigator`、`document`、`performance`、
+`requestAnimationFrame` / `cancelAnimationFrame`、`MouseEvent`。
+
+`document` / 事件那一套**不能**只靠 intro 的原因不是「不需要行为」，而是时机与复杂度：
 
 - 它们需要 `env.ts` 里那些有行为的替身（事件总线、`getBoundingClientRect` 补丁、
-  `createElement` 路由表）；
+  `createElement` 路由表）——intro 里造不出来，只能先占位；
 - 还要配合 `wx.createCanvas()` **第一次**调用的时机（抢上屏画布，见 §2）——
   比 intro 晚得多也讲究得多。
 
@@ -935,9 +942,85 @@ tools/minigame-harness/no-unsafe-eval.js
 
 `module → shim → hostModule → host → probe` 这五段是在**四轮**里一段一段加出来的：
 每报一次错、就把「黑盒」切开一处，直到它只能停在唯一一个地方。
-**四个错误（`_a`、`Intl`、`navigator`、`unsafe-eval`）是串行的 ——
-修掉一个才会露出下一个。** 所以「报错一模一样」通常不是「没修」，
+**这些错误是串行的 —— 修掉一个才会露出下一个。** 所以「报错一模一样」通常不是「没修」，
 而是还有下一层：这正是 §9.1 那个「先去捞落盘证据、别猜」的前提。
+
+### 9.9 第四例到第七例：同一分叉的**全部**成员，以及「一次把缺口列完」
+
+`unsafe-eval` 修掉之后，IDE 里的下一次编译把时间线推到了 `probe` 之后，
+新的报错仍然是同一个坑的新成员：
+
+```
+TypeError: Cannot read properties of undefined (reading 'createElement')
+  at AccessibilitySystem._createTouchHook      ← const hookDiv = document.createElement("button")
+  at WebGLRenderer._addSystem / _addSystems
+```
+
+而**同一条落盘记录**里 `hasDocument: true`。也就是说：
+
+| 路径 | 这个宿主给出的答案 |
+|---|---|
+| `globalThis.document` | 有东西（`hasDocument: true`） |
+| **裸标识符 `document`** | **`undefined`** |
+
+与 `navigator` 一模一样。差别只在于**判据不能是「在不在」**：
+intro 选对象的判据改成了「`createElement` 是不是函数」（**可用性**）——
+「属性存在」既不等于「裸读得到」，也不等于「可用」。
+
+#### 与其一轮修一个，不如先把「裸路径是死的」清单一次列完
+
+前四例都是**等 IDE 报一次错**才知道的。这时做了一个决定性的改动：
+**把测量点搬进产物自己的作用域**，让 `env.ts` 直接量一遍。
+
+- 位置：`env.ts` 的 `reportBareReachability()`，跑在模块作用域里，
+  结果挂在 `globalThis.__motaEnvBare`，由探针在 `shim` 埋点取走。
+- 为什么非要在这里量：**pixi 是产物的一部分，它读的就是产物自己的作用域链**。
+  从外面（浏览器控制台、`new Function`、宿主侧注入）量到的永远是宿主那一侧。
+- ⚠️ **必须直接读 `X`，不能写 `typeof X`。** `typeof 未声明标识符` 按规范返回
+  `'undefined'` 而**不抛** —— 于是「未声明」和「声明了但是 undefined」会被混成一种，
+  而前者才致命（pixi 读它就是 `ReferenceError`，整包起不来）。
+  放进 try/catch 直接读，三态才分得开：`类型名` / `'undefined'` / `'ReferenceError'`。
+
+> 顺带删掉了一个**假观测**：上一版探针用 `new Function('return typeof Intl')` 去量，
+> 而 CSP 宿主里 `new Function` 本身必抛，它返回的 `'no-new-function'` 看起来像
+> 「读不到」，其实**什么都没测到**。这个假信号在那一轮里误导过一次。
+> 教训：**探针本身也要能报「我没测到」，而不是报一个像结果的字符串。**
+
+#### 选「垫哪些」的两条判据
+
+拿到清单之后，仍然**不是**把死掉的 32 项全垫上。判据是两条**同时成立**：
+
+1. pixi 会**裸读**它 —— 不是 `globalThis.X`，也不是 `x.method()` 那种成员访问；
+2. 那条裸读**真的会执行** —— 不是 `typeof X` 守卫里的一句，也不是被我们替换掉的分支。
+
+搜 pixi 源码 + 对照调用时机，最终落在四项上：
+
+| 全局 | 裸读点 | 什么时候真的会跑 |
+|---|---|---|
+| `performance` | `Ticker.update(currentTime = performance.now())` | **每帧**（默认参数）；`AccessibilitySystem` 构造期也要 |
+| `requestAnimationFrame` / `cancelAnimationFrame` | `Ticker.start()` / `ResizePlugin` | 启动时 |
+| `MouseEvent` | `EventTicker` 合成 mousemove：`new MouseEvent("mousemove", …)` | 触摸/合成事件时 |
+
+**只满足 ① 不满足 ② 的不垫。** 例：`new Image()` 只出现在
+`assets/detections/utils/testImageFormat.mjs` 的探测里，外面包着 try/catch ——
+垫了只是多一份没人测过的替身。（Worker 宿主的实测清单里 `Image`、`HTMLCanvasElement`、
+`window`、`XMLHttpRequest` 等 12 项本来就是 `ReferenceError`，而游戏跑得好好的，
+这就是「② 不成立」的实测形态。）
+
+`MouseEvent` 这条还多一个形态上的坑：它的兜底要**转发**给 `globalThis.MouseEvent`
+（也就是 `env.ts` 装的 `MiniMouseEvent`），所以它**不能**像 `performance` 那样
+把自己挂到 `globalThis` 上 —— 会自我递归。它走**懒转发**：调用那一刻才去取。
+
+#### 现在这句规则可以说完整了
+
+> **垫片必须同时覆盖 `globalThis.X` 与裸标识符 `X` 两条路径。**
+> 前者靠 `env.ts` 的 `safeAssign`（真机/浏览器够用），后者只有**构建期词法绑定**管得着。
+> 判断某个宿主里两者是否分叉，看探针的 `bare`（裸路径）与 `env`（属性路径）两栏 ——
+> 不一致就是这个坑；`ReferenceError` 而属性有值，就是它的指纹。
+
+回归判据（`verify:sandbox`，白名单沙箱模型）：把「属性路径有值、裸读死掉」**显式复现一次**
+（否则后面那些判据凭什么算数），再断言产物内部量出来的七个垫片全部可用。
+另外把完整的裸标识符清单打印出来 —— 它一次性回答「这个宿主还有哪些全局是死的」。
 
 ---
 
@@ -945,11 +1028,18 @@ tools/minigame-harness/no-unsafe-eval.js
 
 ```bash
 npm run build:minigame    # 构建产物（含 tsc --noEmit）
-npm run verify:sandbox    # 干净 V8（node:vm）宿主实测，7 项判据
-npm run verify:minigame   # 无 DOM 环境实测，32 项判据（含 3 条禁 unsafe-eval）
-npm run verify:dom        # 有原生 DOM 宿主实测，17 项判据（含 3 条禁 unsafe-eval）
+npm run verify:sandbox    # 干净 V8（node:vm）宿主实测，9 项判据（含裸标识符视图 ×7）
+npm run verify:minigame   # 无 DOM 环境实测，30 项判据（含禁 unsafe-eval ×3）
+npm run verify:dom        # 有原生 DOM 宿主实测，17 项判据（含禁 unsafe-eval ×3）
 npm run verify:visual     # 渲染层回归，8 项判据
 npm run verify:all        # 以上四套，共 64 项判据
+```
+
+另有一个不在四套之列的取证工具：读 IDE 落盘的探针记录（**不需要服务端在跑**）：
+
+```bash
+node tools/read-ide-storage.cjs          # 最新一份：构建号 / 宿主事实 / 裸标识符 / 时间线
+node tools/read-ide-storage.cjs --list   # 列出所有候选（带各自的构建号）
 ```
 
 - `assets/preview/minigame-board.png`：无 DOM 宿主里 `transferToImageBitmap()` 出来的画面。

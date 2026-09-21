@@ -416,6 +416,25 @@ const server = http.createServer((req, res) => {
       LADDER.every((s) => stages.includes(s)),
       stages.join(' → ')
     );
+    // 裸标识符视图（`env.ts` 在自己的模块作用域里量、挂在 `globalThis.__motaEnvBare`，
+    // 由探针在 `shim` 埋点取走）。这里是**唯一**能一次看清「本宿主还有哪些全局的裸路径是死的」
+    // 的地方 —— 省掉「一轮报一个 xxx is not defined」的来回。判读方式见 `no-unsafe-eval.js` 同级的说明。
+    const shimRec = Array.isArray(timeline) ? timeline.find((r) => r.stage === 'shim') : null;
+    const bareMap = shimRec && shimRec.data ? shimRec.data.bare : null;
+    if (bareMap) {
+      const must = ['Intl', 'navigator', 'document', 'performance', 'requestAnimationFrame', 'MouseEvent'];
+      const broke = must.filter((k) => bareMap[k] === 'undefined' || bareMap[k] === 'ReferenceError');
+      add(
+        '取证：已垫词法垫片的全局在裸路径上都可用（本宿主）',
+        broke.length === 0,
+        broke.length ? broke.map((k) => `${k}=${bareMap[k]}`).join(' ') : must.map((k) => `${k}=${bareMap[k]}`).join(' ')
+      );
+      const dead = Object.entries(bareMap).filter(([, v]) => v === 'ReferenceError');
+      console.log(
+        `  裸标识符清单（本宿主）：${Object.keys(bareMap).length - dead.length} 项可用` +
+          (dead.length ? `，${dead.length} 项 ReferenceError：${dead.map(([k]) => k).join(', ')}` : '')
+      );
+    }
     add(
       '取证：像素记录尺寸自洽（px 长度 = cols×rows×6）',
       !!pxRec && typeof pxRec.px === 'string' && pxRec.px.length === pxRec.cols * pxRec.rows * 6,

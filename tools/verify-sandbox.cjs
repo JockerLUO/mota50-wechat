@@ -27,8 +27,9 @@
  *            它代表**真机小游戏**：少了 `Intl`，但垫片装得进去 —— 于是
  *            `env.ts` 的 `safeAssign('Intl', {})` 就够用。
  *
- *   curated  白名单沙箱：只有白名单里的键「存在」，裸标识符 `Intl` / `navigator`
- *            缺失，且 `globalThis` 是个**写入被丢弃**的影子对象 —— 垫片**装不进去**。
+ *   curated  白名单沙箱：只有白名单里的键「存在」于**作用域链**上，裸标识符 `Intl` /
+ *            `navigator` / `document` 缺失；`globalThis` 是个**影子对象** ——
+ *            写进去能读回来，但**裸标识符不走它**，所以垫片「装了却看不见」。
  *            它代表微信开发者工具那条白名单路径：`globalThis.Intl = {}` 写了个寂寞，
  *            裸标识符照样 `ReferenceError`。**只有构建期词法垫片能救这一种**。
  *            （实测证据：IDE 里 `Intl` 缺失，但同一次运行的 DOM 上下文报
@@ -84,14 +85,23 @@ function curatedHost() {
   // 外层 realm 也要删：`with` 命中不了就穿透到这里
   vm.runInContext('delete globalThis.Intl; delete globalThis.navigator', ctx);
 
-  // 影子全局：白名单里的键读得到，**写一律丢弃**（这就是「垫片装不进去」）
+  // 影子全局：白名单里的键读得到；**写进去能读回来，但不影响裸标识符**。
+  //
+  // ⚠️ 「写能不能读回来」这一条是**实测定的**，不是猜的：
+  // IDE 里探针报 `navigator: {present:true, hasUA:true}` —— 而带 UA 的那个对象
+  // 只可能是 `env.ts` 用 `wx.getSystemInfoSync()` 合成后写进 `globalThis.navigator` 的
+  // （预置垫片的兜底版是空 UA）。既然它读得回来，说明这个宿主的写**是落到影子对象上的**，
+  // 只是**裸标识符不走影子对象**而已。
+  //
+  // 第一版这里是「写一律丢弃」（最严格的形态），结果比真机还严：
+  // 会让「`globalThis.X = v` 之后回读 `globalThis.X`」这条真实可用的路径也被判死。
   const gTarget = { ...BASE };
   const g = new Proxy(gTarget, {
     has: (t, k) => Reflect.has(t, k),
     get: (t, k) => (Reflect.has(t, k) ? Reflect.get(t, k) : undefined),
-    set: () => true,
-    defineProperty: () => true,
-    deleteProperty: () => true,
+    set: (t, k, v) => Reflect.set(t, k, v),
+    defineProperty: (t, k, d) => Reflect.defineProperty(t, k, d),
+    deleteProperty: (t, k) => Reflect.deleteProperty(t, k),
     getOwnPropertyDescriptor: (t, k) => Reflect.getOwnPropertyDescriptor(t, k)
   });
 
@@ -215,7 +225,101 @@ function hostHasTeeth(host) {
   }
 }
 
-// ── 判据 4：反证 —— 摘掉词法垫片，判据 3 必须变红 ────────────────────
+// ── 判据 4：对照 —— 这个宿主里「属性路径有值、裸读死掉」确实会发生 ──────
+//
+// 上面判据 3 只说「产物没死在那两个全局上」。可它凭什么算数？得先证明这个宿主
+// 真的会长出那个分叉。所以这里在一段**最小脚本**里复现一次：
+// 往影子全局上装 `document`（属性路径），然后**裸读**它 —— 必须抛 ReferenceError。
+//
+// 这一段也是 `document` 那一例（`AccessibilitySystem._createTouchHook` 报
+// `Cannot read properties of undefined (reading 'createElement')`）的最小复现：
+// 当时 `hasDocument: true`（属性有值），裸 `document` 却是 undefined。
+{
+  const host = curatedHost();
+  host.prepare();
+  // ⚠️ 必须 `host.run`（会包一层 `with (__scope)`），不能用 `evalIn` ——
+  // `evalIn` 跑在 realm 顶层，那里的 `globalThis` 是**真全局**，
+  // 于是「属性路径」和「裸标识符」自动一致，这个宿主就没有分叉了（第一版就写错了这个）。
+  // 另外必须**直接读** `document`：`typeof document` 对未声明的标识符返回 `'undefined'`
+  // 而**不抛**，会把「根本没声明」这个最严重的情况掩盖成「不可用」。
+  let outcome;
+  try {
+    host.run(
+      `(function () {
+         globalThis.document = { createElement: function () { return 1; } };
+         var d = document;
+         return 'ok:' + typeof d;
+       })()`,
+      'fork-probe.js'
+    );
+    outcome = '没抛错（宿主没分叉，判据无效）';
+  } catch (err) {
+    outcome = String(err && err.name);
+  }
+  check(
+    '白名单沙箱里「属性路径有值、裸读死掉」确实会发生（证明这类判据不是想象出来的）',
+    outcome === 'ReferenceError',
+    `属性路径装好之后裸读 → ${outcome}`
+  );
+}
+
+// ── 判据 5：裸标识符视图 —— 产物内部量出来的三态（第三例的回归判据）─────
+//
+// `env.ts` 的 `reportBareReachability()` 在**模块作用域**里直接读裸标识符
+// （不写 `typeof X` —— 那样未声明也返回 `'undefined'`，会把最致命的
+// `ReferenceError` 掩盖成「不可用」），结果挂在 `globalThis.__motaEnvBare`。
+//
+// 这是唯一量得到「pixi 到底拿到什么」的位置：pixi 是产物的一部分，
+// 它读的就是产物自己的作用域链；从外面量只能量到宿主那一侧。
+//
+// 三态取值：类型名（可用）/ `'undefined'`（存在但没值）/ `'ReferenceError'`（根本没声明）。
+// `Intl` / `navigator` / `document` 三个都必须**不是**后两种 ——
+// 它们各自对应一次真实的黑屏，是这条判据的由来。
+{
+  const host = curatedHost();
+  host.prepare();
+  load(host);
+  const map = host.evalIn('__scope.globalThis.__motaEnvBare');
+  // 这份名单与 `vite.minigame.config.ts` 的 `PRELUDE` **必须一一对应**：
+  // 每一个都是「pixi 会裸读、且那条裸读真的会执行」的全局，各自对应一次真实的
+  // `xxx is not defined` 黑屏（见 `docs/wechat-minigame.md` §9）。
+  const must = [
+    'Intl',
+    'navigator',
+    'document',
+    'performance',
+    'requestAnimationFrame',
+    'cancelAnimationFrame',
+    'MouseEvent'
+  ];
+  const bad = !map
+    ? must
+    : must.filter((k) => {
+        const v = map[k];
+        return v === 'undefined' || v === 'ReferenceError' || v == null;
+      });
+  check(
+    '白名单沙箱里七个词法垫片都真的接上了（在产物内部量的裸标识符视图）',
+    !!(map && bad.length === 0),
+    !map
+      ? '拿不到 __motaEnvBare —— env.ts 的自查没跑起来'
+      : bad.length
+        ? `${bad.map((k) => `${k}=${map[k]}`).join(' ')}`
+        : must.map((k) => `${k}=${map[k]}`).join(' ')
+  );
+  if (map) {
+    // 完整清单很有用：它一次性列出「这个宿主还有哪些全局的裸路径是死的」，
+    // 省掉「一轮报一个 xxx is not defined」的来回。
+    const dead = Object.entries(map).filter(([, v]) => v === 'ReferenceError');
+    const empty = Object.entries(map).filter(([, v]) => v === 'undefined');
+    info.push(`裸标识符清单：可用 ${Object.keys(map).length - dead.length - empty.length} 项` +
+      `，undefined ${empty.length} 项，ReferenceError ${dead.length} 项`);
+    if (dead.length) info.push(`  ReferenceError（没声明）：${dead.map(([k]) => k).join(', ')}`);
+    if (empty.length) info.push(`  undefined（存在但没值）：${empty.map(([k]) => k).join(', ')}`);
+  }
+}
+
+// ── 判据 6：反证 —— 摘掉词法垫片，判据 3 必须变红 ────────────────────
 //
 // 「不抛错」有可能因为宿主模型没牙齿而空转成假绿，所以人工把垫片里对应那一行删掉、
 // 在**同一个宿主**里再跑一次：必须重新抛出 `Intl is not defined` / `navigator is not defined`。
@@ -249,7 +353,7 @@ for (const [key, re] of [
   );
 }
 
-// ── 判据 5：词法垫片不能把宿主的 Intl 顶掉 ──────────────────────────
+// ── 判据 7：词法垫片不能把宿主的 Intl 顶掉 ──────────────────────────
 //
 // `var Intl = ...` 必须落在 IIFE 包装**内部**（那样才是词法绑定）。一旦落到文件
 // 顶层，它就变成全局属性，会把宿主真正的 Intl **换掉** —— 那是拿「修好黑屏」
@@ -267,7 +371,7 @@ for (const [key, re] of [
   );
 }
 
-// ── 判据 6：垫片位置 —— 在包装内、且早于第一处 Intl 读取 ────────────
+// ── 判据 8：垫片位置 —— 在包装内、且早于第一处 Intl 读取 ────────────
 //
 // 这是**结构绊线**，不是原理判据（真正说话的是 3/4/5）。它拦的是「位置被构建配置
 // 改坏」这类事故：intro 一旦掉出包装函数或挪到模块代码之后，上面几条的结论就不再
