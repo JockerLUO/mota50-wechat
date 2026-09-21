@@ -179,6 +179,36 @@ const server = http.createServer((req, res) => {
     `${naturallyGone.length} 个：${naturallyGone.join(', ')}`
   );
 
+  // ── 宿主缺失的全局：`Intl`（判「测试本身有没有效」）────────────────
+  //
+  // 真机小游戏**没有** `Intl`，而 Pixi 在**模块求值期**就读它的裸标识符：
+  // esbuild 降到 es2015 时把 `typeof Intl?.Segmenter === 'function'` 改写成了
+  // `typeof (Intl == null ? void 0 : Intl.Segmenter) === 'function'` ——
+  // `typeof` 那层保护被绕掉（`typeof Intl` 本来是不抛的，`Intl == null` 会），
+  // 于是 `ReferenceError: Intl is not defined`，整个包起不来。IDE 里的实测症状
+  // 就是这一句 + 黑屏。
+  //
+  // 这条判据的真正作用不是「检 Intl」，而是**证明宿主确实复现了小游戏的处境**：
+  // 必须 `hostHadIntl === true`（宿主本来有，说明删掉它这个动作有意义）
+  // 且 `intlGone === true`（真的删干净了 —— 只置 `undefined` 会让
+  // `Intl == null` 成立、错误消失，判据却还在报「通过」）。
+  // 两个条件缺一，上面那条「无报错 / 无异常」就是**假绿**，比不测更糟。
+  add(
+    '宿主本来有 Intl，且已真删（证明本轮的「无异常」不是假绿）',
+    report.hostHadIntl === true && report.intlGone === true,
+    `hostHadIntl=${report.hostHadIntl} intlGone=${report.intlGone}` +
+      (report.intlGone === false ? ' —— 只置了 undefined，这条路径没被真正测到' : '')
+  );
+  // 与上一条配对：删掉之后**必须由垫片补上**。
+  //
+  // 注意别在启动后去查 `'Intl' in globalThis` 为假 —— 那是在等一个错误的结论：
+  // 垫片补上它才是对的，真值在这里恰恰是「通过」的证据。
+  add(
+    'Intl 缺失时由垫片补上（所以启动成功不是靠宿主自带）',
+    report.intlAfterBoot === true,
+    `启动后 typeof Intl = ${report.intlAfterBoot ? 'object（垫片）' : 'undefined'}`
+  );
+
   // ── 工程配置（这两条看着像「配置检查」，其实是环境正确性判据）────────
   //
   // 开发者工具是**按 appid 的 `gameApp` 属性**决定项目类型的，`compileType` 只表达意图：

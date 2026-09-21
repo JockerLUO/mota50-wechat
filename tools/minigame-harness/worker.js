@@ -67,6 +67,12 @@ const report = {
   pixels: null,
   spriteCount: 0,
   removedNaturally: [],
+  /** 宿主（Worker）本来有没有 Intl。真机小游戏没有，见下面 kill 列表的说明。 */
+  hostHadIntl: null,
+  /** 抹除后 `'Intl' in g === false` 是否成立 —— driver 侧据此断言「这条测试真的有效」。 */
+  intlGone: null,
+  /** 启动之后 Intl 又被垫片补上了吗（应当为 true，说明游戏能跑不是因为宿主本来就有）。 */
+  intlAfterBoot: null,
   unremovable: [],
   deviation: null,
   screen: null,
@@ -111,6 +117,9 @@ addEventListener('unhandledrejection', (e) => fail(`[unhandledrejection] ${e.rea
     // ── 0. 留住原始引用（马上要被抹掉）
     const realFetch = typeof fetch === 'function' ? fetch.bind(g) : null;
     const realCreateImageBitmap = typeof createImageBitmap === 'function' ? createImageBitmap.bind(g) : null;
+    // Intl 在真机小游戏里**不存在**，必须先记下宿主本来的状态（Worker/页面都有），
+    // 后面删掉它才能复现小游戏的处境。见 kill 列表与 notReallyGone 的说明。
+    report.hostHadIntl = typeof Intl !== 'undefined';
 
     // ── 1. 让 Pixi 走浏览器环境分支（见文件头说明）
     //
@@ -161,7 +170,11 @@ addEventListener('unhandledrejection', (e) => fail(`[unhandledrejection] ${e.rea
       }
       report.killed.push(key);
     }
-    ['fetch', 'createImageBitmap', 'XMLHttpRequest', 'navigator', 'caches', 'WebGLRenderingContext'].forEach(kill);
+    // `Intl` 是其中最有欺骗性的一个：Worker 和浏览器都有，真机小游戏没有，
+    // 而 Pixi 恰好在**模块求值期**读它的裸标识符（esbuild 降级把
+    // `typeof Intl?.Segmenter` 变成了 `Intl == null ? ...`）。
+    // 不删掉它，这条路径就永远只有进了 IDE 才会暴露。
+    ['fetch', 'createImageBitmap', 'XMLHttpRequest', 'navigator', 'caches', 'WebGLRenderingContext', 'Intl'].forEach(kill);
     step(`已抹掉 Worker 有、小游戏没有的全局：${report.killed.join(', ')}`);
 
     // Pixi 里环境探测有两套写法，必须分开对待：
@@ -189,6 +202,16 @@ addEventListener('unhandledrejection', (e) => fail(`[unhandledrejection] ${e.rea
     const notReallyGone = ['Image', 'ontouchstart', 'ResizeObserver', 'WorkerGlobalScope'].filter((k) => k in g);
     if (notReallyGone.length) {
       fail(`以下全局没能真正删掉（Pixi 的 \`in globalThis\` 探测会因此走错分支）：${notReallyGone.join(', ')}`);
+      return;
+    }
+
+    // Intl 必须**真的不存在**（`'Intl' in g === false`），不能只置成 undefined：
+    // 出问题的那句是裸标识符 `Intl == null`，只有它**未被声明**时才抛
+    // ReferenceError。置成 undefined 会把这个 bug 悄悄“修好”，判据随之失效 ——
+    // **假绿比不测更糟**，所以这里宁可显式红掉。
+    report.intlGone = !('Intl' in g);
+    if (!report.intlGone) {
+      fail("Intl 仍在全局上（置成 undefined 也算）：裸标识符 ReferenceError 只在 Intl 不存在时复现，此判据已失效");
       return;
     }
 
@@ -516,6 +539,11 @@ addEventListener('unhandledrejection', (e) => fail(`[unhandledrejection] ${e.rea
 
     // 先把报告发回去，再试图截一帧（transferToImageBitmap 会清掉画布，必须放最后做）
     report.canvasStacks = canvasStacks;
+    // 启动之后 Intl 又“回来了”吗？—— 本该有的。我们把它删掉，产物里的
+    // `installIntl()` 应该补一个垫片上去（否则 pixi 那句裸标识符就抛了）。
+    // 这一条与 `intlGone` 配对成证据链：删除前有 → 删干净 → 垫片补上 →
+    // 于是「无异常 + 启动成功」是真实结论，而不是「宿主本来就有 Intl」的假绿。
+    report.intlAfterBoot = typeof Intl !== 'undefined';
     postMessage({ type: 'report', report });
     try {
       const game = g.mota && g.mota.game;

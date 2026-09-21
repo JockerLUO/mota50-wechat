@@ -383,7 +383,11 @@ if (ON) {
   beaconInstall();
   beaconStage('module', {
     // 这些事实决定了「垫片该怎么补」，先记下来
-    hasWx: !!wx,
+    //
+    // ⚠️ 一律用 `typeof x`（对**未声明的标识符**也安全），不要写 `!!x` ——
+    // 后者是裸引用，x 不存在时直接抛 ReferenceError。探针排在所有模块最前面，
+    // 它自己抛就等于把整条取证通道炸掉，而且恰好是在最需要它的那一次。
+    hasWx: typeof wx !== 'undefined',
     wxKeys: typeof wx === 'object' && wx ? Object.keys(wx).length : 0,
     hasGameGlobal: !!g.GameGlobal,
     // 小游戏是「无 DOM 也无 WorkerGlobalScope」的第三种环境（见 env.ts 的注释），
@@ -392,6 +396,51 @@ if (ON) {
     hasDocument: typeof g.document !== 'undefined',
     hasWorkerGlobalScope: typeof g.WorkerGlobalScope !== 'undefined',
     hasRAF: typeof g.requestAnimationFrame === 'function',
-    hasPerformance: !!g.performance?.now
+    hasPerformance: !!g.performance?.now,
+    // `navigator` 单独细查 —— 它是「有 DOM 宿主」里唯一被 Pixi 在**模块顶层**读的裸全局
+    // （BrowserAdapter 的 `getNavigator: () => navigator`，由 isSafari() 触发，
+    // 而那时我们还没把 DOMAdapter 换成小游戏实现）。
+    //
+    // 这里必须用三态描述而不是 `in`：IDE 模拟器里它是**存在但值为 undefined**，
+    // `'navigator' in g` 为真、`typeof` 为 'undefined' —— 只有 `hasUA` 能反映真实可用性。
+    navigator: {
+      present: typeof g.navigator !== 'undefined',
+      hasUA: !!(g.navigator && typeof g.navigator.userAgent === 'string' && g.navigator.userAgent.length > 0)
+    },
+    // ── 宿主提供哪些「可选全局」───────────────────────────────────────
+    //
+    // 这一段必须记在**垫片安装之前**（本模块是入口第一个 import，天然满足），
+    // 才能反映宿主的**原生**能力而不是垫片造出来的样子。
+    //
+    // 为什么值得专门记：微信小游戏比浏览器少一批全局，而 Pixi 里有若干
+    // 「可选全局探测」在 esbuild 降到 es2015 之后会**丢掉 typeof 的保护**，
+    // 变成裸标识符引用 —— 缺一个就是 `ReferenceError` + 黑屏，而那条报错
+    // 只出现在 IDE 控制台里、**不落盘**（`Intl` 就是这么找到的：从模拟器
+    // 报回 `Intl is not defined` 反查产物才发现是降级把 `Intl?.Segmenter`
+    // 改写成了 `Intl == null ? ...`）。
+    //
+    // 有了这份快照，下次再撞到 `xxx is not defined`，可以直接对照
+    // 「这个宿主到底有没有 xxx」，不必再靠猜或者反复让用户点编译。
+    //
+    // 写法用 `g.<name>` 而不是裸标识符：语义等价（globalThis 就是全局对象），
+    // 但不必依赖 tsconfig 的 lib 里有对应声明（`structuredClone` 要 es2022、
+    // `Intl` 要 es2015.intl，小游戏那份 lib 未必都收）。
+    env: {
+      Intl: typeof g.Intl,
+      atob: typeof g.atob,
+      btoa: typeof g.btoa,
+      structuredClone: typeof g.structuredClone,
+      queueMicrotask: typeof g.queueMicrotask,
+      TextDecoder: typeof g.TextDecoder,
+      TextEncoder: typeof g.TextEncoder,
+      URL: typeof g.URL,
+      ResizeObserver: typeof g.ResizeObserver,
+      AbortController: typeof g.AbortController,
+      fetch: typeof g.fetch,
+      createImageBitmap: typeof g.createImageBitmap,
+      OffscreenCanvas: typeof g.OffscreenCanvas,
+      performance: typeof g.performance,
+      WebAssembly: typeof g.WebAssembly
+    }
   });
 }

@@ -201,7 +201,25 @@ function analyzePixels(rec) {
       docIsWindowDoc,
       docHasRealBody,
       ua,
-      navIsObject
+      navIsObject,
+      // 删 Intl 这件事由 wx-stub.js 在 game.js 之前做，取证分两处：
+      //  —— hostHadIntl 读桩记下的**当时事实**（宿主本来有没有，证明删除有意义）
+      //  —— intlGone 也读桩记下的**删除后瞬间**的值（那时 game.js 还没跑）
+      //
+      // ⚠️ `intlGone` 不能在启动之后现查 `!('Intl' in globalThis)`：垫片补上 Intl
+      // 之后它当然为真 —— 那会让「垫片工作正常」被误报成「删除失败」。
+      // （第一版就是这么写的，DOM 宿主侧直接误红了一次。）
+      hostHadIntl: g.__hostHadIntl === true,
+      intlGone: g.__intlGone === true,
+      // 启动之后 Intl 在不在 —— 在，说明垫片补上了（因为桩已证明删干净过）
+      intlAfterBoot: typeof Intl !== 'undefined',
+      // navigator 三态取证，理由同 Intl：
+      //  —— hostHadNavigator：宿主本来有没有（证明删除这个动作有意义）
+      //  —— navigatorGone：删除后是否**不可用**（`in` 判不出来，得看值）
+      //  —— navUsableAfterBoot：启动后是否**可用**（垫片补上了才是通过）
+      hostHadNavigator: g.__hostHadNavigator === true,
+      navigatorGone: g.__navigatorGone === true,
+      navUsableAfterBoot: !!(g.navigator && typeof g.navigator.userAgent === 'string' && g.navigator.userAgent.length > 0)
     };
   });
 
@@ -218,11 +236,68 @@ function analyzePixels(rec) {
     `createElement=${state.docNative} body.appendChild=${state.docHasRealBody} document===window.document=${state.docIsWindowDoc}`
   );
 
-  // ★ 本次的核心判据：垫片在不能覆盖的宿主上必须「让路」而不是硬装
+  // ★ 核心判据一：`document` —— 宿主有可用实现时，垫片必须**让路**
+  //
+  // 硬覆盖会抛（`document` 在 window 上是 `[LegacyUnforgeable]` 只读自有属性），
+  // 而且它排在 `installGlobals()` 前面，一抛就把后面的 rAF 兜底与
+  // 「抢上屏画布」全部连坐 → **纯黑屏，且窗口里一条报错都没有**。
   add(
-    '垫片在原生 DOM 宿主上正确让路（原生 document / navigator 未被替换）',
-    state.docNative && state.navIsObject && !!state.ua && state.ua.length > 10,
-    `navigator.userAgent 仍是原生值：${(state.ua || '').slice(0, 46)}…`
+    'document 让路：宿主原生实现未被替换',
+    state.docNative && state.docIsWindowDoc && state.docHasRealBody,
+    `document===window.document=${state.docIsWindowDoc} body.appendChild=${state.docHasRealBody}`
+  );
+
+  // ★ 核心判据二：`navigator` —— 宿主**没有/不可用**时，垫片必须**补上**
+  //
+  // 这一条才是把上一版打回来的地方。当时规则写成「有原生 DOM 就整体让路」，
+  // 而 IDE 模拟器是 **#document 有、navigator 不可用**；Pixi 的**默认**适配器
+  // （BrowserAdapter）又在自己模块顶层就被读了一次：
+  //
+  //     const defaultForceAllocation = isSafari();   // → getNavigator().userAgent
+  //     getNavigator: () => navigator                // 裸标识符
+  //
+  // 这行发生在我们 `DOMAdapter.set(...)` **之前**，于是读到 undefined 当场抛
+  // `Cannot destructure property 'userAgent' … as it is undefined`，
+  // 整个包死在模块求值期（取证时间线只到 `module`）。
+  //
+  // 所以判据必须盯住「宿主不可用 → 由垫片补上」这条路径，
+  // 而不是假设「有 DOM 就一定可用」。三个条件缺一不可：
+  // 宿主本来有（删除有意义）→ 删完不可用（复现到位）→ 启动后可用（补上了）。
+  add(
+    'navigator 补齐：宿主不可用时垫片补上可用的 UA',
+    state.hostHadNavigator === true && state.navigatorGone === true && state.navUsableAfterBoot === true,
+    `宿主本来有=${state.hostHadNavigator} 删后不可用=${state.navigatorGone} 启动后可用=${state.navUsableAfterBoot}` +
+      `  UA=${(state.ua || '').slice(0, 44)}…`
+  );
+
+  // ★ 宿主缺失的全局 `Intl` —— 这条判的是「测试本身有没有效」，不是配置洁癖
+  //
+  // 真机小游戏**没有** `Intl`，而 Pixi 在**模块求值期**就读了它的裸标识符：
+  // esbuild 降到 es2015 时把 `typeof Intl?.Segmenter === 'function'` 改写成了
+  // `typeof (Intl == null ? void 0 : Intl.Segmenter) === 'function'` ——
+  // `typeof` 那层保护被绕掉（`typeof Intl` 本来不抛，`Intl == null` 会），
+  // 于是 `ReferenceError: Intl is not defined` + 黑屏（IDE 里的实测症状）。
+  // 所以本页在加载 `game.js` **之前**把 Intl 真删掉，让这条路径每次都被走到。
+  //
+  // 两个条件缺一不可：`hostHadIntl`（宿主本来有 ⇒ 删除这个动作有意义）
+  // 与 `intlGone`（真删干净了 ⇒ 复现到位）。只置 `undefined` 会让
+  // `Intl == null` 成立、错误消失，判据还报「通过」—— **假绿比不测更糟**。
+  add(
+    '宿主本来有 Intl，且已真删（复现真机小游戏的处境）',
+    state.hostHadIntl === true && state.intlGone === true,
+    `hostHadIntl=${state.hostHadIntl} intlGone=${state.intlGone}` +
+      (state.intlGone === false ? ' —— 只置了 undefined，这条路径没被真正测到' : '')
+  );
+
+  // 与上一条配对：删掉之后**必须由垫片补上**。
+  //
+  // 这里正是「同一件事在两侧含义相反」的地方：启动后 `'Intl' in globalThis` 为
+  // **真**才是通过（垫片补上了），为假反而是坏消息。所以删除状态必须在
+  // `game.js` 之前取证（见 `intlGone`），否则这条判据会把「垫片正常」读成「删除失败」。
+  add(
+    'Intl 缺失时由垫片补上（所以「启动成功」不是靠宿主自带）',
+    state.intlAfterBoot === true,
+    `启动后 typeof Intl = ${state.intlAfterBoot ? 'object（垫片）' : 'undefined —— 那 pixi 早该抛了'}`
   );
 
   add(

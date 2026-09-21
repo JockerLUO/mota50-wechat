@@ -550,10 +550,76 @@ function safeAssign(key: string, value: unknown): boolean {
   }
 }
 
+/**
+ * `Intl` —— 微信小游戏里**根本不存在**，而 Pixi 会在**模块求值期**读它。
+ *
+ * ## 为什么“不存在的全局”也能把整个包炸掉
+ *
+ * Pixi 源码写的是 `typeof Intl?.Segmenter === 'function'`，本意是「有 Intl 且有
+ * Segmenter」。在浏览器/Node 里 `Intl` 必然存在，所以这句一直很安全。
+ *
+ * 但 esbuild 降到 es2015 时把 `Intl?.Segmenter` 改写成
+ * `Intl == null ? void 0 : Intl.Segmenter` —— **`typeof` 那层保护被绕掉了**，
+ * `Intl` 退回成**裸标识符**。裸标识符不存在时 `Intl == null` 直接抛
+ * `ReferenceError: Intl is not defined`（而 `typeof Intl` 本身是不会抛的），
+ * 于是「探测一个可选全局」变成了「假设它必然存在」。
+ *
+ * 这段代码位于 `CanvasTextMetrics` 的**静态字段初始化器**里，属于模块求值期 ——
+ * 一抛就整个包起不来，表现为模拟器里 `ReferenceError: Intl is not defined`
+ * 加一块黑屏。
+ *
+ * ## 垫什么：一个空对象，故意不实现 Segmenter
+ *
+ * 空对象能让 `typeof Intl.Segmenter === 'function'` 为假，Pixi 于是走它自带的
+ * `[...s]` 兜底（按码点分段）。对中文/ASCII 而言这与 `Intl.Segmenter` 的
+ * grapheme 结果一致；自己写一个 Segmenter 只会凭空多出一个没人测过的排版分支。
+ * 所以垫它的唯一目的是**给裸标识符一个落脚点**，不是为了提供 Intl 功能。
+ *
+ * 顺带一提：`Intl` 缺失只是「小游戏比浏览器少了一堆全局」里最先撞上的一个，
+ * 所以 `verify:minigame` / `verify:dom` 两个宿主都会**主动删掉 Intl** 再跑，
+ * 免得这条路径又变成「只有在 IDE 里才能发现」。
+ */
+function installIntl(): void {
+  if (typeof g.Intl !== 'undefined') return;
+  // 宿主本来就没有，`safeAssign` 这里不可能失败；失败也只是少了个垫片，
+  // 由上面的 esbuild 降级分析可知后果很严重，所以留一条日志便于定位。
+  if (!safeAssign('Intl', {})) {
+    console.warn('[minigame] 无法安装 Intl 垫片：Pixi 的 CanvasTextMetrics 会在求值期抛 ReferenceError');
+  }
+}
+
 function installNavigator(): void {
-  // 原生 DOM 宿主：navigator 是完备的（真 UA 反而让 isMobile/isSafari 判得更准），
-  // 而且它在 window 上是只读属性 —— 碰它只会抛。让路。
-  if (nativeDom) return;
+  // ⚠️ 这里**不能**因为 `nativeDom` 就 return —— 上一版正是这么写的，于是 IDE 里炸了。
+  //
+  // ## 为什么「有原生 DOM 就让路」在 navigator 上是错的
+  //
+  // Pixi 的**默认**适配器（BrowserAdapter）在**模块顶层**就会读一次裸 `navigator`：
+  //
+  //     const defaultForceAllocation = isSafari();         // game.js 模块顶层常量初始化
+  //       → DOMAdapter.get().getNavigator().userAgent
+  //     getNavigator: () => navigator                      // BrowserAdapter：裸标识符
+  //
+  // 这一行发生在「我们把 DOMAdapter 换成小游戏实现」**之前**（`DOMAdapter.set`
+  // 在本模块末尾执行），所以那一刻读到的还是 BrowserAdapter。
+  // IDE 模拟器里 `navigator` 的值是 undefined，于是当场抛：
+  //   Cannot destructure property 'userAgent' of 'DOMAdapter.get(...).getNavigator(...)'
+  //   as it is undefined
+  // 整个包死在模块求值期（IDE 取回的探针记录里，时间线**只到 module**）。
+  //
+  // ## 正确的规则：**按项判断可用性**，而不是「有原生 DOM 就整体让路」
+  //
+  //   宿主已有且**可用**      → 让路。真浏览器里 navigator 是只读的 unforgeable 属性，
+  //                            硬覆盖必抛；而且它的真 UA 比我们编的准。
+  //   宿主没有 / **不可用**   → 必须补上。IDE 模拟器正是这一种：#document 有、
+  //                            navigator 却是 undefined —— 上一版只看了 document
+  //                            就断定「原生环境完备」，把 navigator 一起放掉了。
+  //
+  // 判据取「有没有可用的 userAgent」而不是「在不在」：IDE 里它“在”但值是
+  // undefined，用 `in` 或 `!== undefined` 判都看不出来。
+  const existing = g.navigator as Any;
+  const hasUA = !!existing && typeof existing.userAgent === 'string' && existing.userAgent.length > 0;
+  if (hasUA) return;
+
   let synthesized = 'WeChatMiniGame';
   let platform = '';
   const info = readSystemInfo();
@@ -561,10 +627,8 @@ function installNavigator(): void {
     platform = String(info.platform ?? '');
     synthesized = `Mozilla/5.0 (${info.system ?? 'unknown'}) WeChatMiniGame/${info.version ?? '?'} MicroMessenger`;
   }
-  const existing = g.navigator;
-  const hasUA = existing && typeof existing.userAgent === 'string' && existing.userAgent.length > 0;
   safeAssign('navigator', {
-    userAgent: hasUA ? existing.userAgent : synthesized,
+    userAgent: synthesized,
     platform: existing?.platform ?? platform,
     maxTouchPoints: existing?.maxTouchPoints ?? 1,
     gpu: null
@@ -574,7 +638,11 @@ function installNavigator(): void {
 let installed = false;
 
 export function installGlobals(): void {
-  // navigator 要排在最前：它是 pixi 模块求值期唯一会碰到的东西
+  // Intl 排在最前：它是 pixi **模块求值期**唯一会读的“裸标识符”全局，
+  // 一旦缺失就是 `ReferenceError`，比 navigator 那条路径还早、还硬。
+  installIntl();
+
+  // navigator 紧随其后：它是 pixi 模块求值期会碰的第二个全局。
   installNavigator();
 
   // Pixi `_transferMouseData` 会调 performance.now()。小游戏不一定有。

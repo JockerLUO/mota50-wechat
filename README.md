@@ -39,7 +39,7 @@ npm run dev          # 开发服务器，浏览器打开后即可玩
 
 点击棋盘寻路移动，方向键/`WASD` 也可直接走位；走到怪物、门、道具、NPC 上触发交互。
 
-### 在微信开发者工具里跑（有两个必踩的坑）
+### 在微信开发者工具里跑（有四个必踩的坑）
 
 ```bash
 npm run build:minigame        # 产出 dist-minigame/
@@ -69,10 +69,26 @@ SyntaxError: Unexpected token .
 微信开发者工具的模拟器是「有 wx 也有原生 DOM」的第四种环境：`document` / `navigator`
 在 `window` 上是只读属性，产物里硬覆盖会抛 `TypeError`。
 这个错误**不进 IDE 日志文件**，只出现在 IDE 控制台，所以看起来「没报错但画面全黑」。
-本项目的 `env.ts` 已改成「能装则装、装不上就让路」：有原生 DOM 时走浏览器分支，
-不再黑屏。`npm run verify:dom` 就是专门复现/断言这一类宿主的。
 
-三个坑的复现、判定链路与自查命令，见
+`env.ts` 的做法是「能装则装、装不上就让路」，但关键是**按项判断，不能按宿主类型一刀切**：
+`document` 在原生宿主上确有可用实现，就别碰；`navigator` 则只看**值可不可用**
+—— 模拟器里它「存在但为 undefined」。第一版按「宿主类型」整体让路，
+于是 `navigator` 被一并放掉，紧接着又死在
+`Cannot destructure property 'userAgent' of '...getNavigator(...)' as it is undefined`。
+`npm run verify:dom` 专门复现/断言这一类宿主。
+
+**坑四：小游戏缺的全局会让整个包死在模块求值期。**
+小游戏比浏览器少一批全局（`Intl` 就没有），而 Pixi 的「可选全局探测」经构建降级后
+会**丢掉 `typeof` 的保护** —— 源码里的 `typeof Intl?.Segmenter === 'function'`
+被 esbuild 降到 es2015 时改写成 `typeof (Intl == null ? void 0 : Intl.Segmenter) === 'function'`，
+`Intl` 于是退回**裸标识符**：`typeof Intl` 本来不抛，`Intl == null` 会抛
+`ReferenceError: Intl is not defined`。
+
+这段代码在 `CanvasTextMetrics` 的**模块顶层静态字段**里执行，所以症状是
+「一启动就死」+ 黑屏。`env.ts` 会把这些全局按需补齐；两个实测宿主也都会
+**主动删掉它们再跑**（而且要求「真的删干净」，只置 `undefined` 会红 —— 否则判据变假绿）。
+
+四个坑的复现、判定链路与自查命令，见
 [`docs/wechat-minigame.md`](docs/wechat-minigame.md) 的「在微信开发者工具里打开」、
 「验证：两种宿主，两套判据」与「语法地板」三节。
 
@@ -129,8 +145,8 @@ reference/mota50/        GPL-3.0 参考源码归档 + 溯源说明（不参与�
 | `npm run assets` | 由 `assets/raw` 重建图集与 `MANIFEST.json` |
 | `npm run import` | 由归档参考源码重建 `data/` |
 | `npm run validate` | 数据校验器 |
-| `npm run verify:minigame` | 无 DOM 环境实测（23 项判据 = 18 常驻 + 5 取证，退出码 0/1） |
-| `npm run verify:dom` | 有原生 DOM 宿主实测（11 项判据，退出码 0/1） |
+| `npm run verify:minigame` | 无 DOM 环境实测（26 项判据 = 21 常驻 + 5 取证，退出码 0/1） |
+| `npm run verify:dom` | 有原生 DOM 宿主实测（14 项判据，退出码 0/1） |
 | `npm run verify:all` | 以上两套 + `verify:visual` 一键跑完 |
 | `npm run verify:visual` | 真实 WebGL 渲染回归（8 项判据，退出码 0/1） |
 | `npm run shot` | 真机渲染截图取证 |

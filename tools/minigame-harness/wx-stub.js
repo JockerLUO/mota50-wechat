@@ -50,9 +50,63 @@
     calls.push(name);
   }
 
+  // ── 抹掉「浏览器/IDE 有、真机小游戏没有」的全局：`Intl` ──────────────
+  //
+  // 真机小游戏里没有 `Intl`，而 Pixi 在**模块求值期**就读了它的裸标识符：
+  // esbuild 降到 es2015 时把 `typeof Intl?.Segmenter === 'function'` 改写成了
+  // `typeof (Intl == null ? void 0 : Intl.Segmenter) === 'function'` ——
+  // `typeof` 那层保护被绕掉，`Intl` 退回裸标识符，于是
+  // `ReferenceError: Intl is not defined`，整个包起不来（IDE 里实测如此）。
+  //
+  // 这一步必须**真删**：`'Intl' in globalThis` 要变成 false。
+  // 只置成 `undefined` 会让 `Intl == null` 成立、错误消失 —— 那等于把这个 bug
+  // 悄悄修好，判据却还在报「通过」，比不测更糟。删不掉时下面的判据会红。
+  var hostHadIntl = typeof Intl !== 'undefined';
+  try {
+    delete globalThis.Intl;
+  } catch (e) {
+    /* 删不掉 → __intlGone 为 false → verify-dom-host.cjs 判据红 */
+  }
+
+  // ── 抹掉 `navigator`：这是 IDE 模拟器与真浏览器**最关键的一处不同** ──────
+  //
+  // 实测（从 IDE 取回的探针记录）：模拟器有 `window`、有 `document`，
+  // 但 `navigator` 拿到的值是 undefined。而 Pixi 的**默认**适配器是
+  // BrowserAdapter，它的写法是裸引用 `getNavigator: () => navigator`；
+  // 更早一行 `const defaultForceAllocation = isSafari()` 是**模块顶层的常量初始化**，
+  // 也就是在「我们把 DOMAdapter 换成小游戏实现」**之前**就会执行 ——
+  // 于是 `const { userAgent } = getNavigator()` 当场抛：
+  //   Cannot destructure property 'userAgent' of '...getNavigator(...)' as it is undefined
+  //
+  // 真 Chromium 里 `navigator` 完备，所以这一页**测不出**这个坑 —— 必须删掉它，
+  // 才能让「有 DOM 宿主」这一侧真的覆盖 IDE 的处境。
+  var hostHadNavigator = typeof navigator !== 'undefined';
+  try {
+    delete globalThis.navigator;
+  } catch (e) {
+    /* 落到下面的遮蔽 */
+  }
+  if (globalThis.navigator !== undefined) {
+    try {
+      Object.defineProperty(globalThis, 'navigator', {
+        value: undefined,
+        configurable: true,
+        writable: true
+      });
+    } catch (e) {
+      /* 删不掉也遮不住 → 判据会红 */
+    }
+  }
+
   globalThis.__wxCalls = calls;
   globalThis.__storage = storage;
   globalThis.__canvases = canvases;
+  globalThis.__hostHadIntl = hostHadIntl;
+  globalThis.__intlGone = !('Intl' in globalThis);
+  globalThis.__hostHadNavigator = hostHadNavigator;
+  // 删干净了吗？——「让路」的判据不能只看它在不在，得看**值**：
+  // IDE 里它“在”但值是 undefined。这一项为 true 才说明本页确实复现了那种处境。
+  globalThis.__navigatorGone = !(globalThis.navigator && globalThis.navigator.userAgent);
 
   globalThis.wx = {
     // ── 系统信息 ──────────────────────────────────────────────────

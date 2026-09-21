@@ -4,7 +4,7 @@
 
 - 产物：`dist-minigame/game.js`（单文件 IIFE，约 2.00 MB / gzip 424 KB）
 - 构建：`npm run build:minigame`
-- 验证：`npm run verify:minigame`（无 DOM 环境实测，23 项判据 = 18 常驻 + 5 取证，退出码 0/1）
+- 验证：`npm run verify:minigame`（无 DOM 环境实测，26 项判据 = 21 常驻 + 5 取证，退出码 0/1）
 
 ---
 
@@ -82,6 +82,29 @@ TypeError: Cannot destructure property 'userAgent' of
 
 **修法**：`env.ts` 的 `installNavigator()` 排在 `installGlobals()` 第一句，
 `gpu: null` 是刻意的（`isWebGPUSupported()` 读 `navigator.gpu`，给 null 才干脆返回 false）。
+
+#### ⚠️ 同一处的第二层：「有原生 DOM」≠「有可用的 `navigator`」（2026-09-21 补）
+
+上面这条最初只在**无 DOM 宿主**上验过，于是修法被写成了「宿主有原生 DOM 就整体让路」
+—— 然后在 IDE 模拟器里翻了车：**IDE 有 `window`、有 `document`，`navigator` 的值却是 undefined**。
+
+要命的是，Pixi 那句模块级 `isSafari()` 跑在我们 `DOMAdapter.set(...)` **之前**，
+那时用的还是默认 `BrowserAdapter` —— 所以 `document` 在不在，对这条路径毫无影响。
+
+由此得到一条通用规则 —— **垫片要「按项」判断可用性，不能按「宿主类型」一刀切**：
+
+| 宿主提供的这一项 | 垫片该做什么 |
+|---|---|
+| 有且**可用** | 让路。硬覆盖必抛：`document` / `navigator` 在 window 上是只读的 `[LegacyUnforgeable]` 属性 |
+| 没有 / **不可用** | 必须补上。IDE 模拟器就是这一种：#`document` 有、`navigator` 不可用 |
+
+判「可用」的写法同样有坑：IDE 里 `navigator` 是**存在但值为 undefined**，
+所以 `'navigator' in g` 与 `typeof g.navigator !== 'undefined'` 都会判成「有」。
+只有**去看值**（`getNavigator().userAgent` 是不是非空字符串）才判得准。
+
+这也解释了为什么「本地两侧全绿」不能替代在 IDE 里跑一次：真 Chromium 的
+`navigator` 完备，这一页**测不出**它 —— 必须先在宿主里**把 `navigator` 也删掉**，
+才会复现出 `navigator is not defined` 与「时间线只到 `module`」这个指纹。
 
 ### ② 上屏画布必须在 Pixi 模块求值前**预订**
 
@@ -298,8 +321,8 @@ touchstart 时**先**补一个 `mousemove`：网页上指针本来就会先移�
 ## 6. 验证：两种宿主，两套判据
 
 ```bash
-npm run verify:minigame   # 无 DOM 宿主（Web Worker），23 项判据 = 18 常驻 + 5 取证
-npm run verify:dom        # 有原生 DOM 宿主（IDE 模拟器同类），11 项判据
+npm run verify:minigame   # 无 DOM 宿主（Web Worker），26 项判据 = 21 常驻 + 5 取证
+npm run verify:dom        # 有原生 DOM 宿主（IDE 模拟器同类），14 项判据
 npm run verify:all        # 以上两者 + verify:visual
 ```
 
@@ -326,8 +349,20 @@ TypeError: Cannot set property navigator of #<Window> which has only a getter
 没有上屏画布，表现就是**纯黑屏，而且窗口里一条报错都没有**（异常进了 IDE 的控制台，
 那个控制台不落盘）。
 
-修复方式是「**能装则装，装不上就让路**」：有原生 DOM 时，垫片不硬覆盖
-`document` / `navigator` / `addEventListener` / canvas 事件方法，让 Pixi 走浏览器分支。
+修复方式是「**能装则装，装不上就让路**」—— 但**「按项」判、不能按「宿主类型」一刀切**：
+`document` / `addEventListener` / canvas 事件方法在原生宿主上确有可用实现，就别碰；
+而 `navigator` 只判它**是否可用**（有非空 `userAgent` 才让路），因为 IDE 模拟器
+`#document` 有、`navigator` 却是 undefined（详见 §3 ① 的「第二层」）。
+
+第一版写成「有原生 DOM 就整体让路」，于是 `navigator` 被一并放掉，
+在 IDE 里撞出下一层错误：
+
+```
+TypeError: Cannot destructure property 'userAgent' of
+'DOMAdapter.get(...).getNavigator(...)' as it is undefined
+```
+
+一模一样的两难，只是换了个全局 —— **看宿主类型做决定，迟早会漏掉某一项**。
 
 ### 判据（无 DOM 宿主，全部是数据，不是「看着对」）
 
@@ -339,22 +374,30 @@ TypeError: Cannot set property navigator of #<Window> which has only a getter
 ✅ 离屏画布确实拿到了（createCanvas ≥ 2 次）   ✅ 场景图里有精灵
 ✅ 宿主本来就没有 DOM（不用伪造）            ✅ project.config.json 声明 compileType=game
 ✅ appid 没被写成小程序游客号              ✅ 产物语法不高于 es2015（云端检查器的地板）
+✅ 宿主本来有 Intl 且已真删（证明「无异常」不是假绿）  ✅ Intl 缺失时由垫片补上
 ✅ 上屏画布 = wx.createCanvas() 的第一块    ✅ 触摸点击精确落到预期格子（含远距离格）
 ✅ 越界点击被正确忽略                      ✅ 触摸事件能驱动游戏
 ✅ 移动方向与点击方向一致
 ```
+
+两条「有效性」判据的由来：`Intl` 在真机小游戏里**不存在**，而 Pixi 在模块求值期读它的
+**裸标识符**（`typeof Intl?.Segmenter` 被 esbuild 降到 es2015 时改写成了
+`Intl == null ? void 0 : Intl.Segmenter`，`typeof` 的保护被绕掉了）。
+宿主里删掉它、又**要求它真的没了**（置成 undefined 会让报错消失、判据变成假绿），
+才能保住上面那条「无报错」的含金量。
 
 （当前实测全部通过：非背景色像素 74.7%、6662 种颜色、150 个精灵节点、
 5/5 次点击逐格命中，atlas.ready=true。）
 
 ### 有原生 DOM 宿主的判据
 
-`npm run verify:dom` 用真 Chromium 页面 + wx 桩，核心判据只有一条：
-**原生 `document` / `navigator` 没有被垫片替换，同时游戏还能正常启动。**
+`npm run verify:dom` 用真 Chromium 页面 + wx 桩，核心是**两条方向相反的判据**：
 
 ```
-✅ 原生 document 仍是真货（createElement / body.appendChild 都在）
-✅ 原生 navigator 未被替换（userAgent 仍是浏览器原值）
+✅ 宿主确实有原生 DOM（前置条件，不成立说明页面搭错了）
+✅ document 让路：宿主原生实现未被替换（createElement / body.appendChild 都在）
+✅ navigator 补齐：宿主不可用时垫片补上可用的 UA      ← 这一页必须先删掉 navigator
+✅ 宿主本来有 Intl 且已真删 / Intl 缺失时由垫片补上
 ✅ 页面没有未捕获异常
 ✅ GameGlobal.mota 已暴露（游戏启动成功）
 ✅ 渲染器是 webgl                        ✅ 分辨率 = 设备像素比 3
@@ -362,6 +405,11 @@ TypeError: Cannot set property navigator of #<Window> which has only a getter
 ✅ 取证时间线覆盖 module → shim → hostModule → host → probe → boot
 ✅ 帧缓冲里有实际画面（非背景色像素 > 30%） ✅ 画面不是纯色块（颜色种类 > 20）
 ```
+
+**为什么这一页必须主动删掉 `navigator` 和 `Intl`：** 真 Chromium 两样都完备，
+而 IDE 模拟器两样都没有 —— 不删就测不出那两条路径，本地会一路绿，
+直到在你的 IDE 里点下「编译」才炸。它们同时是**前置条件**：只有在宿主确实缺这两样时，
+「无异常 + 启动成功」才说明垫片补得对，而不是宿主本来就有。
 
 注意第 8 条（图集）在 `verify:dom` 里**只记录、不判负**：有 DOM 时 Pixi 会走
 `createImageBitmap` 分支，那条分支在一个 blob worker 里 `fetch(src)`，
@@ -383,6 +431,17 @@ blob worker 的 base URL 是 `blob:null/...`，**相对路径无法解析**，�
 
 `hasWindow` / `hasDocument` 都是 `true` —— 而**真机小游戏里这两个必须是 `false`**。
 也就是说模拟器是「有 wx、也有 DOM」的第四种环境，它既不等于真机，也不等于浏览器。
+
+> **探针后来还加了两项**（因为上面这条记录正是漏掉那处的原因）：
+> `navigator: { present, hasUA }` 与一份 `env` 快照（`Intl` / `atob` / `structuredClone` /
+> `TextDecoder` / `URL` / `OffscreenCanvas` … 的 `typeof` 结果）。
+> 它们都记在**垫片安装之前**，反映的是宿主**原生**能力。
+> 再遇到 `xxx is not defined`，先看这份快照里那一项是不是 `"undefined"`，
+> 不用再靠推断或反复让人点编译。
+>
+> 其中 `navigator` 特意用 `present` / `hasUA` **两态**描述：IDE 里它是
+> **存在但值为 undefined**，只看 `present` 会得出「有 navigator」这个错误结论。
+
 由此两条推论：
 
 - 「在 IDE 里跑通了」**不能**推出「真机跑得通」，反之亦然 —— 所以无 DOM 实测
@@ -620,8 +679,8 @@ grep -E "compileType changed|app.json" \
 
 ```bash
 npm run build:minigame    # 构建产物（含 tsc --noEmit）
-npm run verify:minigame   # 无 DOM 环境实测，23 项判据
-npm run verify:dom        # 有原生 DOM 宿主实测，11 项判据
+npm run verify:minigame   # 无 DOM 环境实测，26 项判据
+npm run verify:dom        # 有原生 DOM 宿主实测，14 项判据
 npm run verify:all        # 以上两套 + verify:visual
 ```
 
