@@ -220,15 +220,34 @@ function printBoot(data) {
         : `   ← 回退程序化图形（界面会显得简陋）${data.atlasError ? `：${data.atlasError}` : '（未上报原因）'}`)
   );
   const t = data.touch;
-  if (t) {
+  if (t && t.hooked) {
+    // 新版自述（env.ts 的 `__motaTouch.probe()`）：坑位接管 + 画布形态。
+    const h = t.hooked;
+    console.log(
+      `      事件坑位接管 canvas=${h.canvas}  document=${h.document}  global=${h.global}` +
+        `　派发 realDispatch=${t.realDispatch} 已派发=${t.sent}`
+    );
+    const c = t.canvas;
+    if (c) {
+      console.log(
+        `      上屏画布 ctor=${c.ctor}  isHTMLCanvasElement=${c.isHTMLCanvasElement}` +
+          `  hasAddEventListener=${c.hasAddEventListener}  hasDispatchEvent=${c.hasDispatchEvent}  isConnected=${c.isConnected}`
+      );
+    }
+    if (!(h.canvas && h.document && h.global)) {
+      console.log('        ⚠️ 有坑位没接管上：那类事件送不到 Pixi（缺 canvas → 按下收不到；');
+      console.log('           缺 document → 悬停/详情面板不更新；缺 global → 抬手收不到，而 pointertap 正是抬手时生成的）。');
+    }
+    if (t.pointerBranch === false) {
+      console.log('      （本宿主没有 PointerEvent → Pixi 走 mouse 分支，派发的事件名必须是 mousedown/mousemove/mouseup）');
+    }
+  } else if (t) {
+    // 旧版自述（只有 canReal）：读完这次就请重新构建 —— 保留分支是为了让工具在
+    // 「IDE 还在跑上一份产物」时也能给出可读输出，而不是打一串 undefined。
     console.log(
       `      触摸桥 pointerBranch=${t.pointerBranch}  nativeDom=${t.nativeDom}  canReal=${t.canReal}  ` +
-        `realDispatch=${t.realDispatch}  已派发=${t.sent}`
+        `realDispatch=${t.realDispatch}  已派发=${t.sent}   ← 旧版自述（重新构建可获得坑位接管信息）`
     );
-    if (t.canReal === false && t.nativeDom === true) {
-      console.log('        ⚠️ 有原生 DOM 却派发不了真事件：上屏画布不是宿主真 canvas，');
-      console.log('           合成事件到不了 Pixi 挂在原生 document / window 上的监听 —— 表现就是「点不动」。');
-    }
   } else {
     console.log('      触摸桥：未上报（wx 缺失，或 env.ts 的垫片没装上）');
   }
