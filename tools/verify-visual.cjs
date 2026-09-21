@@ -28,26 +28,8 @@
 
 const http = require('node:http');
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
-
-// playwright-core 装在 WorkBuddy 的共享 node 工作区；CJS 的 require 认 NODE_PATH，
-// ESM 不认 —— 与 shot-web.cjs / verify-minigame.cjs 同一套解析。
-const SHARED_MODULES = [
-  process.env.PLAYWRIGHT_MODULES,
-  path.join(os.homedir(), '.workbuddy/binaries/node/workspace/node_modules'),
-  path.join(__dirname, '..', 'node_modules')
-].filter(Boolean);
-for (const p of SHARED_MODULES) module.paths.push(p);
-
-let chromium;
-try {
-  ({ chromium } = require('playwright-core'));
-} catch {
-  console.error('找不到 playwright-core。已尝试：');
-  for (const p of SHARED_MODULES) console.error('  ' + p);
-  process.exit(2);
-}
+const { chromium, findChromium } = require('./lib/chromium.cjs');
 
 const ROOT = path.resolve(__dirname, '..');
 const DIST = path.join(ROOT, 'dist');
@@ -136,50 +118,6 @@ const server = http.createServer((req, res) => {
   res.writeHead(200, { 'content-type': MIME[path.extname(resolved)] || 'application/octet-stream' });
   res.end(fs.readFileSync(resolved));
 });
-
-function findChromium() {
-  try {
-    const p = chromium.executablePath();
-    if (p && fs.existsSync(p)) return p;
-  } catch {
-    /* 版本不匹配，落到兜底扫描 */
-  }
-  // 兜底：直接扫 playwright 的浏览器缓存目录。各平台路径不同，且装了也未必就在
-  // executablePath() 指向的位置（版本更新后旧的仍在），所以逐个试。
-  const caches = [
-    process.env.PLAYWRIGHT_BROWSERS_PATH,
-    path.join(os.homedir(), 'Library/Caches/ms-playwright'), // macOS
-    path.join(os.homedir(), '.cache/ms-playwright'), // Linux
-    process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'ms-playwright') : null
-  ].filter((p) => p && fs.existsSync(p));
-  const layouts = [
-    ['chrome-mac-arm64', 'Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing'],
-    ['chrome-mac-arm64', 'Chromium.app/Contents/MacOS/Chromium'],
-    ['chrome-mac', 'Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing'],
-    ['chrome-mac', 'Chromium.app/Contents/MacOS/Chromium'],
-    ['chrome-mac-x64', 'Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing'],
-    ['chrome-mac-x64', 'Chromium.app/Contents/MacOS/Chromium'],
-    ['chrome-linux', 'chrome'],
-    ['chrome-win', 'chrome.exe']
-  ];
-  for (const root of caches) {
-    const dirs = fs
-      .readdirSync(root)
-      .filter((x) => x.startsWith('chromium-'))
-      .sort()
-      .reverse();
-    for (const d of dirs) {
-      for (const [sub, rel] of layouts) {
-        const p = path.join(root, d, sub, rel);
-        if (fs.existsSync(p)) return p;
-      }
-    }
-  }
-  throw new Error(
-    '找不到可用的 Chromium。请先执行：npx playwright install chromium\n' +
-      '  若已装在别处，可用 PLAYWRIGHT_BROWSERS_PATH=<目录> 指定。'
-  );
-}
 
 // ── 结果收集 ────────────────────────────────────────────────────────
 const results = [];

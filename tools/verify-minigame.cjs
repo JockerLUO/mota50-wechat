@@ -11,35 +11,17 @@
  * 自有属性，删不掉也覆盖不了（第一版就是这么失败的，见 worker.js 文件头）。
  * Worker 是真实的无 DOM realm。
  *
- * 为什么用 .cjs：`playwright-core` 装在 WorkBuddy 的共享 node 工作区，不在本项目
- * node_modules 里。ESM 解析器不认 NODE_PATH，CJS 的 `require` 认。下面用
- * `module.paths.push` 把它加进解析路径，脚本因此可以留在仓库里。
+ * 为什么用 .cjs：浏览器相关逻辑在 `tools/lib/chromium.cjs` 里共享，那里用 CJS
+ * 的 `require.resolve(..., {paths})` 解析 WorkBuddy 的共享 node 工作区；本脚本
+ * 因此可以留在仓库里，并与其它的 Chromium 驱动脚本共用同一套定位逻辑。
  *
  * 用法：npm run verify:minigame
  */
 
 const http = require('node:http');
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
-
-// ── 解析 playwright-core ────────────────────────────────────────────
-const SHARED_MODULES = [
-  process.env.PLAYWRIGHT_MODULES,
-  path.join(os.homedir(), '.workbuddy/binaries/node/workspace/node_modules'),
-  path.join(__dirname, '..', 'node_modules')
-].filter(Boolean);
-for (const p of SHARED_MODULES) module.paths.push(p);
-
-let chromium;
-try {
-  ({ chromium } = require('playwright-core'));
-} catch {
-  console.error('找不到 playwright-core。已尝试的解析路径：');
-  for (const p of SHARED_MODULES) console.error('  ' + p);
-  console.error('可用 PLAYWRIGHT_MODULES=<node_modules 目录> 覆盖。');
-  process.exit(2);
-}
+const { chromium, findChromium } = require('./lib/chromium.cjs');
 
 const ROOT = path.resolve(__dirname, '..');
 const DIST = path.join(ROOT, 'dist-minigame');
@@ -109,50 +91,6 @@ const server = http.createServer((req, res) => {
   res.end(fs.readFileSync(file));
 });
 
-function findChromium() {
-  try {
-    const p = chromium.executablePath();
-    if (p && fs.existsSync(p)) return p;
-  } catch {
-    /* 版本不匹配时抛错，落到兜底扫描 */
-  }
-  // 兜底：直接扫 playwright 的浏览器缓存目录。各平台路径不同，且装了也未必就在
-  // executablePath() 指向的位置（版本更新后旧的仍在），所以逐个试。
-  const caches = [
-    process.env.PLAYWRIGHT_BROWSERS_PATH,
-    path.join(os.homedir(), 'Library/Caches/ms-playwright'), // macOS
-    path.join(os.homedir(), '.cache/ms-playwright'), // Linux
-    process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'ms-playwright') : null
-  ].filter((p) => p && fs.existsSync(p));
-  const layouts = [
-    ['chrome-mac-arm64', 'Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing'],
-    ['chrome-mac-arm64', 'Chromium.app/Contents/MacOS/Chromium'],
-    ['chrome-mac', 'Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing'],
-    ['chrome-mac', 'Chromium.app/Contents/MacOS/Chromium'],
-    ['chrome-mac-x64', 'Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing'],
-    ['chrome-mac-x64', 'Chromium.app/Contents/MacOS/Chromium'],
-    ['chrome-linux', 'chrome'],
-    ['chrome-win', 'chrome.exe']
-  ];
-  for (const root of caches) {
-    const dirs = fs
-      .readdirSync(root)
-      .filter((x) => x.startsWith('chromium-'))
-      .sort()
-      .reverse();
-    for (const d of dirs) {
-      for (const [sub, rel] of layouts) {
-        const p = path.join(root, d, sub, rel);
-        if (fs.existsSync(p)) return p;
-      }
-    }
-  }
-  throw new Error(
-    '找不到可用的 Chromium。请先执行：npx playwright install chromium\n' +
-      '  若已装在别处，可用 PLAYWRIGHT_BROWSERS_PATH=<目录> 指定。'
-  );
-}
-
 // ── 主流程 ──────────────────────────────────────────────────────────
 (async () => {
   await new Promise((r) => server.listen(PORT, '127.0.0.1', r));
@@ -183,6 +121,8 @@ function findChromium() {
   // ── 判定 ─────────────────────────────────────────────────────────
   const checks = [];
   const add = (name, ok, detail) => checks.push({ name, ok: !!ok, detail });
+  /** 探针自采像素重建出来的图，非空时在结尾一并报出来 */
+  let beaconFrame = null;
 
   const workerLogs = report.logs || [];
   const logErrors = workerLogs.filter((l) => l.startsWith('[error]'));
@@ -218,6 +158,17 @@ function findChromium() {
     srcs.length >= 4 && badSrc.length === 0,
     srcs.length ? srcs.join(', ') : '没有图片被加载'
   );
+  // 「路径写对了」和「图真的到手了」是两件事，必须分开断言。
+  //
+  // 图集加载失败时 `atlas.ready` 保持 false，渲染层**静默**换用 `icons.ts` 的
+  // 程序化图形 —— 画面照旧出得来，棋盘也是完整的，只是美术不对。
+  // 只看截图的话，这一条永远发现不了；而它一旦漏到线上，
+  // 表现就是「美术全没了但没人知道为什么」。
+  add(
+    '图集真的加载成功（不是静默回退成程序化图形）',
+    probe.atlasReady === true,
+    probe.atlasReady === true ? 'atlas.ready = true' : 'atlas.ready = false —— 当前画面是程序化图形，不是美术'
+  );
 
   add('离屏画布确实拿到了（createCanvas ≥ 2 次）', report.canvasCreates >= 2, `createCanvas × ${report.canvasCreates}`);
   add('场景图里有精灵', report.spriteCount > 20, `Sprite 节点 ${report.spriteCount} 个`);
@@ -227,6 +178,95 @@ function findChromium() {
     naturallyGone.includes('document') && naturallyGone.includes('window') && naturallyGone.length >= 10,
     `${naturallyGone.length} 个：${naturallyGone.join(', ')}`
   );
+
+  // ── 工程配置（这两条看着像「配置检查」，其实是环境正确性判据）────────
+  //
+  // 开发者工具是**按 appid 的 `gameApp` 属性**决定项目类型的，`compileType` 只表达意图：
+  //   checkAppIdTypeVaild()：选了小游戏 → appid.gameApp 必须为 true，否则报错并回退
+  //   refreshMenuSelectedWithCorrectAppID()：回退动作就是 selectMenu("miniprogram")
+  // 回退后编译管线走小程序那条路，去找 `app.json` —— 而小游戏只需要 `game.json`。
+  // 于是症状是「导入后报『未找到 app.json』，无法调试」，和产物本身毫无关系。
+  //
+  // `touristappid` 是**小程序**的游客号（小游戏的是 wx6ac3f5090a6b99c5），
+  // 写进小游戏工程必然触发上面这条链。判据放在这里，是为了让这个坑
+  // 在本地就红掉，而不是等导入 IDE 才由人发现。
+  const projectConfigPath = path.join(DIST, 'project.config.json');
+  let projectConfig = null;
+  try {
+    projectConfig = JSON.parse(fs.readFileSync(projectConfigPath, 'utf8'));
+  } catch {
+    projectConfig = null;
+  }
+  add(
+    'project.config.json 声明 compileType=game',
+    projectConfig && projectConfig.compileType === 'game',
+    projectConfig ? `compileType=${projectConfig.compileType}` : '读不到 / 不是合法 JSON'
+  );
+  add(
+    'appid 没被写成小程序游客号（touristappid）',
+    !!projectConfig && projectConfig.appid !== 'touristappid',
+    !projectConfig
+      ? '-'
+      : projectConfig.appid
+        ? `appid=${projectConfig.appid}（须是「小游戏」类型账号，否则工具仍会判成小程序）`
+        : 'appid 留空 —— 导入时由 IDE 取「小游戏」测试号'
+  );
+
+  // ── 产物语法地板 ────────────────────────────────────────────────────
+  //
+  // 这条判据的由来是一次**只有微信侧才能发现的失败**：代码在上传/预览时会先过一遍
+  // 微信云端的语法检查，而那个检查器不接受 ES2020 语法。症状是在 IDE 里点「编译」
+  // 立刻失败，且与游戏逻辑毫无关系：
+  //
+  //   task type:upload exec error Error: invalid file: game.js, 13:9
+  //   SyntaxError: Unexpected token .        ← 指向 `wx?.request?.(` 里的 `?`
+  //
+  // 报错码是服务端的 `DEV_COMPILE_INVALID_FILE`（-80057）。根因是
+  // `vite.minigame.config.ts` 里写过的 `target: 'es2020'` —— 那个字段只管**本地**
+  // 打包，管不到云端这一步。现在两边都钉在 ES2015。
+  //
+  // 一个可用的旁证：报错精确停在文件里**第一个** ES2020 token 上（第 13 行），
+  // 而它前面 12 行的箭头函数、`const` 都过了 —— 说明检查器的地板落在
+  // ES2015 与 ES2020 之间，ES2015 是它明确能吃下的。
+  //
+  // 判定手法：**不能直接 grep**。`?.` / `??` 在注释和字符串里是合法文本
+  // （pixi 的 JSDoc 里就有一处 `exec(value)?.[1] ?? '1'`，worker 源码常量里还有
+  // `async function`），裸 grep 必然假报。这里改用 esbuild 以**地板目标复算一遍**：
+  // 产物里若真有高于地板的语法，复算会把它降掉 → token 计数变少 → 判负；
+  // 而注释/字符串里的同名字符串在两边原样保留 → 计数相同 → 不误伤。
+  const SYNTAX_FLOOR = 'es2015'; // ⚠️ 必须与 vite.minigame.config.ts 的 build.target 一致
+  {
+    const raw = fs.readFileSync(path.join(DIST, 'game.js'), 'utf8');
+    const norm = (s) => s.replace(/\s+/g, '');
+    const cnt = (s, p) => s.split(p).length - 1;
+    // `**` 刻意不在列表里：JSDoc 的 `/**` 本身就含它，打印器对注释的重排会改变计数。
+    const PATTERNS = ['?.', '??', 'catch{'];
+
+    let lowered = null;
+    let lowerErr = null;
+    try {
+      lowered = (await require('esbuild').transform(raw, { target: SYNTAX_FLOOR, loader: 'js', minify: false })).code;
+    } catch (e) {
+      lowerErr = e;
+    }
+
+    if (!lowered) {
+      add(
+        `产物语法不高于 ${SYNTAX_FLOOR}`,
+        false,
+        `无法用 esbuild 复算（esbuild 是 vite 的传递依赖，缺失时本判据失效）：${lowerErr && lowerErr.message}`
+      );
+    } else {
+      const drift = PATTERNS.map((p) => [p, cnt(norm(raw), p), cnt(norm(lowered), p)]).filter(([, a, b]) => a !== b);
+      add(
+        `产物语法不高于 ${SYNTAX_FLOOR}（微信云端检查器的地板）`,
+        drift.length === 0,
+        drift.length
+          ? drift.map(([p, a, b]) => `${p}: ${a}→${b}`).join('  ') + '（被降级 = 产物里存在高于地板的语法）'
+          : `${(raw.length / 1024).toFixed(0)}KB 复算无差异；${PATTERNS.join(' / ')} 计数不变`
+      );
+    }
+  }
 
   const moves = report.moves || [];
   const moved = moves.filter((m) => m.moved);
@@ -274,6 +314,74 @@ function findChromium() {
     moved.length > 0 && wrongDir.length === 0,
     wrongDir.length ? `有 ${wrongDir.length} 次跑反了：${JSON.stringify(wrongDir)}` : '全部正确'
   );
+
+  // ── 取证探针（只有 `--mode wxbeacon` 的产物才有）──────────────────
+  //
+  // 这里考的不是游戏，而是**取证链路本身**。
+  //
+  // 背景：IDE 的服务端口默认关闭，在外部驱动不了模拟器；唯一可靠的观测手段是
+  // 「让游戏把结果写进小游戏存储」，再由 IDE 落到 WeappStorage/*.json。
+  // 那条通道一旦写坏，在 IDE 里的表现是「什么都没收到」—— 和「探针根本没跑」
+  // 长得一模一样，而 IDE 里没法调试它。所以放在这里先验一遍：
+  // 本地过了，IDE 里的结论才有依据。
+  const bs = report.beaconStorage || {};
+  const bsKeys = Object.keys(bs).sort();
+  if (bsKeys.length) {
+    const parse = (s) => {
+      try {
+        return JSON.parse(s || 'null');
+      } catch {
+        return null;
+      }
+    };
+    const timeline = parse(bs.__motaBeacon);
+    const pxRec = parse(bs.__motaBeaconPx);
+
+    add(
+      '取证：时间线是合法 JSON 数组',
+      Array.isArray(timeline) && timeline.length > 0,
+      Array.isArray(timeline) ? `${timeline.length} 条：${timeline.map((r) => r.stage).join(' → ')}` : '解析失败'
+    );
+    const stages = Array.isArray(timeline) ? timeline.map((r) => r.stage) : [];
+    // `shim` / `hostModule` 是**模块求值期**的两个埋点（见 pixi-adapter.ts / host.ts）：
+    // 顶层异常时入口函数体根本跑不到，时间线会只剩一条 `module`，
+    // 有这两个点才能把「六个 import 的黑盒」切成三段。
+    const LADDER = ['module', 'shim', 'hostModule', 'host', 'probe', 'boot'];
+    add(
+      '取证：时间线覆盖 module → shim → hostModule → host → probe → boot',
+      LADDER.every((s) => stages.includes(s)),
+      stages.join(' → ')
+    );
+    add(
+      '取证：像素记录尺寸自洽（px 长度 = cols×rows×6）',
+      !!pxRec && typeof pxRec.px === 'string' && pxRec.px.length === pxRec.cols * pxRec.rows * 6,
+      pxRec ? `${pxRec.cols}×${pxRec.rows}，${pxRec.px.length} 字符` : '没有像素记录'
+    );
+    add(
+      '取证：时间线里不带像素（否则会被 140KB 挤爆）',
+      Array.isArray(timeline) && timeline.every((r) => !r.px),
+      '两块分开存：时间线一个键、像素一个键'
+    );
+    add(
+      '取证：两个键都远低于单键 1MB 上限',
+      Object.values(bs).every((t) => t.length < 256 * 1024),
+      bsKeys.map((k) => `${k}=${(bs[k].length / 1024).toFixed(0)}KB`).join('  ')
+    );
+
+    // 用**共享的** PNG 编码器把探针自己的像素网格出成图。
+    // 这一步的意义是让「网格 → 图」这一段在本地先跑通：
+    // 到了 IDE 里如果出不来图，问题就一定在数据（没采集到），不在渲染。
+    if (pxRec && typeof pxRec.px === 'string' && pxRec.px.length === pxRec.cols * pxRec.rows * 6) {
+      const { pngFromHexGrid } = require('./lib/png.cjs');
+      const { png, width, height } = pngFromHexGrid(pxRec.px, pxRec.cols, pxRec.rows, 3);
+      const dir = path.join(OUT, 'wx-beacon');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'minigame-frame.png'), png);
+      beaconFrame = `assets/preview/wx-beacon/minigame-frame.png（${width}×${height}，探针自采）`;
+    }
+  } else {
+    console.log('  （产物没带取证探针；要看这一组判据请用 npm run build:minigame:beacon）\n');
+  }
 
   // ── 输出 ─────────────────────────────────────────────────────────
   console.log('\n══ 小游戏产物 · 无 DOM 环境实测（宿主 = Web Worker）══\n');
@@ -326,6 +434,7 @@ function findChromium() {
     for (const l of workerLogs.slice(0, 20)) console.log('    ' + l);
   }
 
+  if (beaconFrame) console.log(`\n  探针自采的首帧：${beaconFrame}`);
   console.log(
     `\n${failed === 0 ? '✅ 全部通过' : `❌ ${failed} 条不通过`}（截图：assets/preview/minigame-board.png）\n`
   );

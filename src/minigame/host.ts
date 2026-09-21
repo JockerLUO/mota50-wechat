@@ -19,6 +19,7 @@
 
 import type { Host, RenderCanvas } from '../host';
 import { g, getReservedCanvas, patchDisplayCanvas, wxApi } from './env';
+import { beaconStage } from './beacon';
 
 interface SystemInfo {
   pixelRatio?: number;
@@ -95,3 +96,8 @@ export function createMiniGameHost(): Host {
     }
   };
 }
+
+// 取证：模块求值期的第二个埋点（另一个在 `pixi-adapter.ts`）。
+// 收到它 = 「env + pixi + 适配器 + 本模块」都求值完了，还没炸；
+// 没收到它而收到了 `shim` = 炸在 `host/probe/app` 这三个 import 里。详见 beacon.ts。
+beaconStage('hostModule');

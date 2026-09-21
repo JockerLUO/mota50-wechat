@@ -76,6 +76,15 @@ const report = {
   canvasLedger: [],
   canvasStacks: [],
   webglInfo: null,
+  /**
+   * 取证探针写进小游戏存储的东西（只记 `__motaBeacon*` 两个键）。
+   *
+   * 为什么要在无 DOM 校验里管这件事：探针的**网络通道要求取证服务端恰好在监听**，
+   * 而 IDE 只在点「编译」时重载游戏 —— 那一刻服务端在不在取决于人和机器的时序。
+   * 所以真正可靠的那条通道是**存储**（IDE 会把它落到 WeappStorage/*.json）。
+   * 与其到了 IDE 里才发现存储通道写坏了，不如在这里先验一遍。
+   */
+  beaconStorage: {},
   logs
 };
 const step = (m) => report.steps.push(m);
@@ -279,7 +288,39 @@ addEventListener('unhandledrejection', (e) => fail(`[unhandledrejection] ${e.rea
         report.bootFailed = o;
       },
       showToast: () => {},
-      request: () => fail('wx.request 被调用了（本项目不该走网络）')
+      /**
+       * 不变式仍然是「**游戏逻辑**不发网络请求」。但 `src/minigame/beacon.ts`
+       * 是**测试基础设施**，它的请求只去回环地址的取证端点。
+       *
+       * 这里把它写成一条显式的例外规则、而不是干脆放宽整条守卫，是因为两种做法的
+       * 信息量差很多：一刀切会让「探针开着时整个校验变红」，逼人把探针关掉
+       * （于是丢掉它存在的意义）；而「只准去回环且只准那两个路径」既放行了探针，
+       * 又照样拦住任何真的业务请求 —— 项目里一旦有人加了真实网络调用，这里还是会红。
+       */
+      request: (opts) => {
+        const url = String(opts?.url ?? '');
+        if (/^http:\/\/127\.0\.0\.1:\d+\/(beacon|shot)$/.test(url)) {
+          report.beaconRequests = (report.beaconRequests || 0) + 1;
+          return;
+        }
+        fail(`wx.request 被调用了（本项目不该走网络）：${url}`);
+      },
+      /**
+       * 实现存储 API。小游戏本来就有，这里补齐有两个作用：
+       *   ① 让取证探针的**落盘通道**在本地就能被验证（它才是 IDE 里可靠的那条路）
+       *   ② 复现单键 1MB 上限 —— 探针的像素记录约 140KB，越界应当当场暴露
+       */
+      setStorageSync: (key, value) => {
+        const text = typeof value === 'string' ? value : JSON.stringify(value);
+        if (text.length > 1024 * 1024) {
+          fail(`wx.setStorageSync('${key}') 单键超过 1MB（${text.length} 字节）—— 真机上会失败`);
+        }
+        if (String(key).startsWith('__motaBeacon')) report.beaconStorage[key] = text;
+      },
+      getStorageSync: (key) => {
+        const text = report.beaconStorage[key];
+        return text === undefined ? '' : text;
+      }
     };
 
     // ── 5. 装载产物（importScripts 是宿主用来装载的，不是游戏依赖的 API）
@@ -457,6 +498,22 @@ addEventListener('unhandledrejection', (e) => fail(`[unhandledrejection] ${e.rea
   } catch (err) {
     fail(`harness 抛错：${(err && err.stack) || err}`);
   } finally {
+    // ── 若产物带取证探针，先等它把首帧采样写进存储，再交报告 ──
+    //
+    // 探针按「等 90 帧」取画面（≈1.5s，WebGL 的绘制缓冲在跨帧后不保证还有内容，
+    // 所以必须在同一个 rAF 回调里 render + readPixels，见 beacon.ts）。
+    // 不显式等它，报告就会在像素记录之前发出去 —— 而「像素网格能不能落进存储」
+    // 正是本地要验的那一件事，等不到就等于没验。
+    if (Object.keys(report.beaconStorage).length) {
+      const pxDeadline = Date.now() + 12000;
+      while (Date.now() < pxDeadline && !report.beaconStorage.__motaBeaconPx) await sleep(100);
+      step(
+        report.beaconStorage.__motaBeaconPx
+          ? '取证探针首帧采样已落存储'
+          : '取证探针 12s 内没写出像素记录'
+      );
+    }
+
     // 先把报告发回去，再试图截一帧（transferToImageBitmap 会清掉画布，必须放最后做）
     report.canvasStacks = canvasStacks;
     postMessage({ type: 'report', report });

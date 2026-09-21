@@ -231,13 +231,9 @@ export function patchDisplayCanvas(canvas: Any, width: number, height: number): 
   // 先登记：合成事件的 target 要用它（见 MiniMouseEvent 的说明）
   displayElement = canvas;
   patchGetContext(canvas);
-  canvas.addEventListener = (type: string, fn: (ev: Any) => void) => canvasBus.addEventListener(type, fn);
-  canvas.removeEventListener = (type: string, fn: (ev: Any) => void) => canvasBus.removeEventListener(type, fn);
-  canvas.dispatchEvent = (ev: Any) => canvasBus.dispatchEvent(ev);
-  // EventSystem 读 domElement.style（设 touchAction / cursor），缺了会抛
-  if (!canvas.style) canvas.style = {};
-  canvas.isConnected = true;
-  canvas.getBoundingClientRect = () => ({
+
+  /** 逻辑尺寸的 rect —— 小游戏这边必须自己造（见下面的公式说明）。 */
+  const logicalRect = () => ({
     x: 0,
     y: 0,
     left: 0,
@@ -247,6 +243,38 @@ export function patchDisplayCanvas(canvas: Any, width: number, height: number): 
     width,
     height
   });
+
+  if (nativeDom) {
+    // 原生 DOM 宿主：**只补宿主真正缺的那几样**，能读到原生值就一律不碰。
+    // `addEventListener` / `isConnected` 在真元素上都是只读或原型方法，
+    // 硬设要么抛（`Cannot set property isConnected of #<Node>`，实测撞到过），
+    // 要么把 pixi 的事件收进没人派发的 canvasBus（画面正常、点不动）。
+    if (!canvas.style) canvas.style = {};
+    let rect: Any = null;
+    try {
+      rect = canvas.getBoundingClientRect();
+    } catch {
+      /* 拿不到就当没有 */
+    }
+    if (!rect || !rect.width) {
+      // 画布不在文档流时原生 rect 全 0，而 pixi 的 `mapPositionToPoint` 要拿
+      // `rect.width` 当倍率 —— 除零会让所有坐标变成 NaN。
+      try {
+        canvas.getBoundingClientRect = logicalRect;
+      } catch {
+        /* 只读就认了 */
+      }
+    }
+    return canvas;
+  }
+
+  canvas.addEventListener = (type: string, fn: (ev: Any) => void) => canvasBus.addEventListener(type, fn);
+  canvas.removeEventListener = (type: string, fn: (ev: Any) => void) => canvasBus.removeEventListener(type, fn);
+  canvas.dispatchEvent = (ev: Any) => canvasBus.dispatchEvent(ev);
+  // EventSystem 读 domElement.style（设 touchAction / cursor），缺了会抛
+  if (!canvas.style) canvas.style = {};
+  canvas.isConnected = true;
+  canvas.getBoundingClientRect = logicalRect;
   return canvas;
 }
 
@@ -441,7 +469,91 @@ function readSystemInfo(): Any {
  * 平台若自带 `navigator.userAgent`（真机可能有），保留它，只补齐缺的字段 ——
  * 那会让 `isSafari()` / `isMobile()` 的判断更贴近真实机型。
  */
+/**
+ * 某个全局键能不能被覆盖。做法是**试赋值**：只读属性在严格模式下赋值会抛，
+ * 可写属性则悄无声息 —— 而且赋的是它自己，没有任何副作用。
+ *
+ * 兜底的 `defineProperty` 只给 `value`，不碰其它特性 ——
+ * 按规范这叫「原样重设」，不会把原本 `configurable:false` 的键打开后门。
+ */
+function canOverride(key: string): boolean {
+  try {
+    g[key] = g[key];
+    return true;
+  } catch {
+    /* 严格模式下只读属性赋值必抛 */
+  }
+  try {
+    Object.defineProperty(g, key, { value: g[key] });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 宿主是不是**已经有原生 DOM**（微信开发者工具的模拟器 / 浏览器）。
+ *
+ * 这个判据决定了垫片该「装」还是该**让路**。本项目的产物要面对四种宿主：
+ *
+ * | 宿主 | `document` | 事件从哪来 | 谁派发 |
+ * |---|---|---|---|
+ * | Node / vm（离线校验的降级模式） | 无 | 垫片 | 触摸桥 |
+ * | Web Worker（`verify:minigame` 用的） | 无 | 垫片 | 触摸桥 |
+ * | **真机小游戏** | 无 | 垫片 | 触摸桥 |
+ * | **IDE 模拟器 / 浏览器** | **有** | **原生** | **宿主自己** |
+ *
+ * 前三者的差异只是「谁在跑 JS」，垫片行为一致，所以一直没暴露问题；
+ * 第四种被漏掉了 —— 而它恰恰最容易被当成基准（"IDE 里跑通了，真机应该也行"）。
+ *
+ * ## 第四种宿主有两个必须区别对待的事实
+ *
+ * **① 硬覆盖会抛，而且一抛就黑屏。**
+ * `document` / `navigator` 在 `window` 上是 `[LegacyUnforgeable]` 的**只读**自有属性。
+ * 产物 IIFE 顶部有 `"use strict"`，于是 `g.document = doc` 直接抛：
+ *   `TypeError: Cannot set property document of #<Window> which has only a getter`
+ * 更要命的是 `installNavigator()` 排在 `installGlobals()` 第一位 —— 它先抛，
+ * 后面的 `document`/`MouseEvent`/rAF 兜底、以及紧随 `installGlobals()` 的
+ * `reserveDisplayCanvas()` **全都不会执行**。没有上屏画布，表现就是**纯黑屏**，
+ * 而窗口里一条报错都没有（异常进了 IDE 的控制台，那个控制台不落盘）。
+ * 实测复现：真 Chromium + wx 桩 → `pageerror: Cannot set property navigator of
+ * #<Window> which has only a getter`，`GameGlobal.mota` 始终没有出现。
+ *
+ * **② 原生 DOM 比垫片完整，硬装上去反而更糟。**
+ * 就算侥幸装上了，`document.addEventListener` 会收进我们的 `documentBus`，
+ * 而原生事件永远不会派发到那里 —— 结果是「画面有了但点不动」。
+ * 让 pixi 走浏览器分支才是正确的。
+ *
+ * 判据取 `document`：前三者里它根本不存在，第四种里它是只读属性，两头都不会误判。
+ */
+export const nativeDom: boolean = typeof g.document !== 'undefined' && !canOverride('document');
+
+/**
+ * 装一个全局，装不上就认怂。
+ *
+ * 存在的意义是**隔离**：任何一个键覆盖失败都不能连坐后面的键。
+ * 这条约束是实测逼出来的 —— `navigator` 一抛，它后面的全部失效。
+ */
+function safeAssign(key: string, value: unknown): boolean {
+  try {
+    g[key] = value;
+    return true;
+  } catch {
+    /* 落到 defineProperty */
+  }
+  try {
+    Object.defineProperty(g, key, { value, configurable: true, writable: true });
+    return true;
+  } catch {
+    console.warn(`[minigame] 无法安装全局 ${key}（宿主已有不可覆盖的实现，改用宿主原生的）`);
+    return false;
+  }
+}
+
 function installNavigator(): void {
+  // 原生 DOM 宿主：navigator 是完备的（真 UA 反而让 isMobile/isSafari 判得更准），
+  // 而且它在 window 上是只读属性 —— 碰它只会抛。让路。
+  if (nativeDom) return;
   let synthesized = 'WeChatMiniGame';
   let platform = '';
   const info = readSystemInfo();
@@ -451,12 +563,12 @@ function installNavigator(): void {
   }
   const existing = g.navigator;
   const hasUA = existing && typeof existing.userAgent === 'string' && existing.userAgent.length > 0;
-  g.navigator = {
+  safeAssign('navigator', {
     userAgent: hasUA ? existing.userAgent : synthesized,
     platform: existing?.platform ?? platform,
     maxTouchPoints: existing?.maxTouchPoints ?? 1,
     gpu: null
-  };
+  });
 }
 
 let installed = false;
@@ -464,21 +576,34 @@ let installed = false;
 export function installGlobals(): void {
   // navigator 要排在最前：它是 pixi 模块求值期唯一会碰到的东西
   installNavigator();
-  g.document = doc;
-  g.MouseEvent = MiniMouseEvent;
-  g.addEventListener = (type: string, fn: (ev: Any) => void) => globalBus.addEventListener(type, fn);
-  g.removeEventListener = (type: string, fn: (ev: Any) => void) => globalBus.removeEventListener(type, fn);
-  g.dispatchEvent = (ev: Any) => globalBus.dispatchEvent(ev);
 
   // Pixi `_transferMouseData` 会调 performance.now()。小游戏不一定有。
-  if (!g.performance) g.performance = { now: () => Date.now() };
+  if (!g.performance) safeAssign('performance', { now: () => Date.now() });
 
   // 小游戏有 requestAnimationFrame；这个兜底是给「用 Node/vm 跑同一份产物」的
   // 离线校验用的，让同一条代码路径在没有 rAF 的宿主里也能跑。
   if (typeof g.requestAnimationFrame !== 'function') {
-    g.requestAnimationFrame = (cb: (t: number) => void) => setTimeout(() => cb(g.performance.now()), 16);
-    g.cancelAnimationFrame = (id: Any) => clearTimeout(id);
+    safeAssign('requestAnimationFrame', (cb: (t: number) => void) => setTimeout(() => cb(g.performance.now()), 16));
+    safeAssign('cancelAnimationFrame', (id: Any) => clearTimeout(id));
   }
+
+  if (nativeDom) {
+    // 原生 DOM 宿主：事件由宿主自己派发，垫片**让路**。
+    // 这里不装 document/addEventListener/MouseEvent，理由见 `nativeDom` 的注释
+    // （一装就抛，侥幸装上反而变成「点不动」）。pixi 走浏览器分支即可。
+    //
+    // 注意 `installed` 照样要置位：`assertInstalled()` 问的是「环境有没有就绪」，
+    // 而不是「垫片有没有装上」—— 让路也是一种就绪。
+    installed = true;
+    return;
+  }
+
+  // 以下三项各自独立：任何一个装不上都不能连坐其余（这是实测踩出来的约束）
+  safeAssign('document', doc);
+  safeAssign('MouseEvent', MiniMouseEvent);
+  safeAssign('addEventListener', (type: string, fn: (ev: Any) => void) => globalBus.addEventListener(type, fn));
+  safeAssign('removeEventListener', (type: string, fn: (ev: Any) => void) => globalBus.removeEventListener(type, fn));
+  safeAssign('dispatchEvent', (ev: Any) => globalBus.dispatchEvent(ev));
 
   installed = true;
 }
@@ -509,6 +634,10 @@ export function assertInstalled(): void {
  * 小游戏没有悬停，不补的话右下的详情面板永远不会更新 —— 触摸设备上那等于废掉了。
  */
 export function installTouchBridge(): void {
+  // 原生 DOM 宿主（IDE 模拟器）：事件本来就有，不需要桥。
+  // 桥过去也没用 —— pixi 那边监听的是原生 document / window / canvas，
+  // 而我们的 wx.onTouch* 只会把事件送进 EventBus。
+  if (nativeDom) return;
   if (!wxApi) return;
 
   const first = (e: Any) => e?.changedTouches?.[0] ?? e?.touches?.[0];

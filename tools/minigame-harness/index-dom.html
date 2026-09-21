@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>小游戏产物 · 有原生 DOM 的宿主实测</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: #14141a;
+      }
+      canvas {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <!--
+      这一页是 worker.js 的**对照组**，两个宿主缺一不可：
+
+        worker.js  → 无 DOM（≈ 真机小游戏）
+        本页       → 有原生 DOM（≈ 微信开发者工具的模拟器 / 任何浏览器）
+
+      为什么必须两个都测：这两边的**代码路径不同**，而差异恰恰只在一边暴露。
+      实测踩到的那次是这样的 —— `document` / `navigator` 在 `window` 上是
+      `[LegacyUnforgeable]` 的只读属性，产物 IIFE 顶部又是 `"use strict"`，
+      于是 `g.navigator = {...}` 直接抛 TypeError；它排在 `installGlobals()` 第一位，
+      一抛就把后面的 document 垫片、rAF 兜底、以及紧随其后的「抢上屏画布」全部带走
+      —— **纯黑屏，且窗口里一条报错都没有**。而这在 Worker 宿主里永远不会发生
+      （那边本来就没有 document 可覆盖）。
+
+      wx 桩写在这一页里而不是 worker.js 里，因为两者的取用方式根本不同：
+      IDE 模拟器里 `wx.createCanvas()` 给的是**已经挂到页面上、玩家真的看得见**的
+      真 canvas，而 Worker 里给的是 OffscreenCanvas。桩要如实反映这一点
+      —— 不在文档流里的 canvas，`isConnected` 和 `getBoundingClientRect()` 都是废的，
+      那样测出来的坐标映射是假的。
+    -->
+    <script src="/wx-stub.js"></script>
+    <script src="/game.js"></script>
+    <script>
+      // 报告给驱动脚本：本页只提供「宿主事实」，判据全部在 verify-dom-host.cjs 里。
+      window.__domHostReady = true;
+    </script>
+  </body>
+</html>

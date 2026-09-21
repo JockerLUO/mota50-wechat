@@ -17,7 +17,7 @@
 | **规则层** | ✅ 战斗公式、钥匙经济学、商店档位、商人交易、卷轴/道具效果（`core/` 不依赖 PixiJS，可脱离画面单测） |
 | **渲染层** | ✅ HUD + 11×11 棋盘 + 商店/商人/传送面板 + 楼层浏览模式；16×16 图集（CC0 素材） |
 | **Web 端** | ✅ `npm run build` |
-| **微信小游戏端** | ✅ `npm run build:minigame` → 单文件 `game.js`，1.8 MB / gzip 408 KB |
+| **微信小游戏端** | ✅ `npm run build:minigame` → 单文件 `game.js`，2.0 MB / gzip 424 KB |
 | **验证体系** | ✅ 数据校验 + 无 DOM 环境实测 + 真实 WebGL 渲染回归，全部脚本化 |
 | **可玩性** | ⚠️ 数据层完备，但**剧情事件表尚未重建**：49→50 的传送未实现，故当前版本无法通关（见[已知缺口](#已知缺口)） |
 
@@ -38,6 +38,43 @@ npm run dev          # 开发服务器，浏览器打开后即可玩
 ```
 
 点击棋盘寻路移动，方向键/`WASD` 也可直接走位；走到怪物、门、道具、NPC 上触发交互。
+
+### 在微信开发者工具里跑（有两个必踩的坑）
+
+```bash
+npm run build:minigame        # 产出 dist-minigame/
+```
+
+然后在开发者工具**项目列表**里选**小游戏** → 导入 `dist-minigame`。
+导入对话框的 AppID 请点旁边的「**或使用测试账号：小游戏**」，或填自己申请的小游戏 AppID。
+
+**坑一：项目类型由 appid 决定，不由 `compileType` 决定。**
+**不要填 `touristappid`**：那是**小程序**的游客号。开发者工具是按 appid 的 `gameApp`
+属性决定项目类型的（`compileType` 只表达意图），appid 属于小程序侧时，工具会把工程
+判成小程序、改去找 `app.json`，于是报「未找到 app.json，无法调试」——和产物本身无关。
+
+**坑二：产物语法不能高于 ES2015。** 代码在上传/预览时会先过一遍微信**云端**的语法检查，
+它不接受 ES2020 语法（可选链 `?.`、空合并 `??`），撞上了点「编译」立刻报：
+
+```
+task type:upload exec error Error: invalid file: game.js, 13:9
+SyntaxError: Unexpected token .
+```
+
+所以 `vite.minigame.config.ts` 的 `build.target` 钉在 `es2015`（它只管**本地**打包，
+管不到云端那一步 —— 这意味着本地 `verify:*` 全绿也发现不了它）。
+`npm run verify:minigame` 里有一条判据专门守这个地板。
+
+**坑三：IDE 模拟器里「编译」黑屏，可能不是产物本身的问题。**
+微信开发者工具的模拟器是「有 wx 也有原生 DOM」的第四种环境：`document` / `navigator`
+在 `window` 上是只读属性，产物里硬覆盖会抛 `TypeError`。
+这个错误**不进 IDE 日志文件**，只出现在 IDE 控制台，所以看起来「没报错但画面全黑」。
+本项目的 `env.ts` 已改成「能装则装、装不上就让路」：有原生 DOM 时走浏览器分支，
+不再黑屏。`npm run verify:dom` 就是专门复现/断言这一类宿主的。
+
+三个坑的复现、判定链路与自查命令，见
+[`docs/wechat-minigame.md`](docs/wechat-minigame.md) 的「在微信开发者工具里打开」、
+「验证：两种宿主，两套判据」与「语法地板」三节。
 
 ### 调试钩子
 
@@ -92,7 +129,9 @@ reference/mota50/        GPL-3.0 参考源码归档 + 溯源说明（不参与�
 | `npm run assets` | 由 `assets/raw` 重建图集与 `MANIFEST.json` |
 | `npm run import` | 由归档参考源码重建 `data/` |
 | `npm run validate` | 数据校验器 |
-| `npm run verify:minigame` | 无 DOM 环境实测（15 项判据，退出码 0/1） |
+| `npm run verify:minigame` | 无 DOM 环境实测（23 项判据 = 18 常驻 + 5 取证，退出码 0/1） |
+| `npm run verify:dom` | 有原生 DOM 宿主实测（11 项判据，退出码 0/1） |
+| `npm run verify:all` | 以上两套 + `verify:visual` 一键跑完 |
 | `npm run verify:visual` | 真实 WebGL 渲染回归（8 项判据，退出码 0/1） |
 | `npm run shot` | 真机渲染截图取证 |
 | `npm run typecheck` | `tsc --noEmit` |
@@ -123,7 +162,7 @@ npx playwright install chromium
 | [`docs/mota50-numeric-system.md`](docs/mota50-numeric-system.md) | 原版数值体系：战斗公式、商店定价、钥匙经济学、领域夹击 |
 | [`docs/data-spec.md`](docs/data-spec.md) | 数据格式规范：地形图例、实体、效果算子词汇表 |
 | [`docs/ui-prototype.md`](docs/ui-prototype.md) | 界面层结构与实现、调试钩子、待办 |
-| [`docs/wechat-minigame.md`](docs/wechat-minigame.md) | 小游戏适配：三种运行环境的差异与 API 替换 |
+| [`docs/wechat-minigame.md`](docs/wechat-minigame.md) | 小游戏适配：三种运行环境的差异、API 替换，**开发者工具导入（项目类型由 appid 决定）**、**产物语法地板** |
 | [`docs/assets.md`](docs/assets.md) | 素材从哪来、怎么加工、运行时怎么用 |
 | [`docs/source-review.md`](docs/source-review.md) | 参考源码调研与转换对照 |
 | [`docs/known-gaps.md`](docs/known-gaps.md) | **数据缺口与待决策项（做运行时之前先看这份）** |

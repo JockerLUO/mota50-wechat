@@ -1,0 +1,132 @@
+[
+  {
+    "stage": "module",
+    "t": 0,
+    "data": {
+      "hasWx": true,
+      "wxKeys": 483,
+      "hasGameGlobal": true,
+      "hasWindow": false,
+      "hasDocument": false,
+      "hasWorkerGlobalScope": false,
+      "hasRAF": true,
+      "hasPerformance": false
+    }
+  },
+  {
+    "stage": "wxError",
+    "t": 830,
+    "message": "message=MiniProgramError\nScript error.\nError: Script error.\nScript error.\nEmpty stack, maybe muted error. (xweb=false)",
+    "arg2": null,
+    "shape": "[object Object]",
+    "keys": [
+      "message",
+      "stack"
+    ],
+    "stack": ""
+  },
+  {
+    "stage": "module",
+    "t": 1,
+    "data": {
+      "hasWx": true,
+      "wxKeys": 500,
+      "hasGameGlobal": true,
+      "hasWindow": false,
+      "hasDocument": false,
+      "hasWorkerGlobalScope": false,
+      "hasRAF": true,
+      "hasPerformance": false
+    }
+  },
+  {
+    "stage": "wxError",
+    "t": 19,
+    "message": "message=MiniProgramError\nScript error.\nError: Script error.\nScript error.\nEmpty stack, maybe muted error. (xweb=false)",
+    "arg2": null,
+    "shape": "[object Object]",
+    "keys": [
+      "message",
+      "stack"
+    ],
+    "stack": ""
+  },
+  {
+    "stage": "module",
+    "t": 0,
+    "data": {
+      "hasWx": true,
+      "wxKeys": 500,
+      "hasGameGlobal": true,
+      "hasWindow": true,
+      "hasDocument": true,
+      "hasWorkerGlobalScope": false,
+      "hasRAF": true,
+      "hasPerformance": true
+    }
+  },
+  {
+    "stage": "wxError",
+    "t": 10,
+    "message": "message=MiniProgramError\nCannot set property isConnected of [object Node] which has only a getter\nTypeError: Cannot set property isConnected of [object Node] which has only a getter\n    at patchDisplayCanvas (http://127.0.0.1:29350/game/game.js:411:24)\n    at reserveDisplayCanvas (http://127.0.0.1:29350/game/game.js:631:22)\n    at http://127.0.0.1:29350/game/game.js:639:3\n    at http://127.0.0.1:29350/game/game.js:51376:3\n    at Module.d (http://127.0.0.1:29350/__dev__/WAGameSubContext.js:1:151462)\n    at p (http://127.0.0.1:29350/__dev__/WAGameSubContext.js:1:132040)\n    at http://127.0.0.1:29350/__dev__/WAGameSubContext.js:1:137592\n    at Object.runWith (http://127.0.0.1:29350/__dev__/WAGameSubContext.js:1:136261)\n    at P (http://127.0.0.1:29350/__dev__/WAGameSubContext.js:1:137574)\n    at ide:///package/__APP__/game.js:1:1",
+    "arg2": null,
+    "shape": "[object Object]",
+    "keys": [
+      "message",
+      "stack"
+    ],
+    "stack": ""
+  },
+  {
+    "stage": "module",
+    "t": 0,
+    "data": {
+      "hasWx": true,
+      "wxKeys": 500,
+      "hasGameGlobal": true,
+      "hasWindow": true,
+      "hasDocument": true,
+      "hasWorkerGlobalScope": false,
+      "hasRAF": true,
+      "hasPerformance": true
+    }
+  },
+  {
+    "stage": "wxError",
+    "t": 25,
+    "message": "message=MiniProgramError\nCannot destructure property 'userAgent' of 'DOMAdapter.get(...).getNavigator(...)' as it is undefined.\nTypeError: Cannot destructure property 'userAgent' of 'DOMAdapter.get(...).getNavigator(...)' as it is undefined.\n    at isSafari (http://127.0.0.1:29350/game/game.js:34410:13)\n    at http://127.0.0.1:29350/game/game.js:42804:34\n    at http://127.0.0.1:29350/game/game.js:51390:3\n    at Module.d (http://127.0.0.1:29350/__dev__/WAGameSubContext.js:1:151462)\n    at p (http://127.0.0.1:29350/__dev__/WAGameSubContext.js:1:132040)\n    at http://127.0.0.1:29350/__dev__/WAGameSubContext.js:1:137592\n    at Object.runWith (http://127.0.0.1:29350/__dev__/WAGameSubContext.js:1:136261)\n    at P (http://127.0.0.1:29350/__dev__/WAGameSubContext.js:1:137574)\n    at ide:///package/__APP__/game.js:1:1\n    at doWhenAllScriptLoaded (ide:///getmainpackage.js:58:21)",
+    "arg2": null,
+    "shape": "[object Object]",
+    "keys": [
+      "message",
+      "stack"
+    ],
+    "stack": ""
+  },
+  {
+    "stage": "module",
+    "t": 1,
+    "data": {
+      "hasWx": true,
+      "wxKeys": 500,
+      "hasGameGlobal": true,
+      "hasWindow": true,
+      "hasDocument": true,
+      "hasWorkerGlobalScope": false,
+      "hasRAF": true,
+      "hasPerformance": true
+    }
+  },
+  {
+    "stage": "wxError",
+    "t": 19,
+    "message": "message=MiniProgramError\nCannot destructure property 'userAgent' of 'DOMAdapter.get(...).getNavigator(...)' as it is undefined.\nTypeError: Cannot destructure property 'userAgent' of 'DOMAdapter.get(...).getNavigator(...)' as it is undefined.\n    at isSafari (http://127.0.0.1:29350/game/game.js:34410:13)\n    at http://127.0.0.1:29350/game/game.js:42804:34\n    at http://127.0.0.1:29350/game/game.js:51402:3\n    at Module.d (http://127.0.0.1:29350/__dev__/WAGameSubContext.js:1:151462)\n    at p (http://127.0.0.1:29350/__dev__/WAGameSubContext.js:1:132040)\n    at http://127.0.0.1:29350/__dev__/WAGameSubContext.js:1:137592\n    at Object.runWith (http://127.0.0.1:29350/__dev__/WAGameSubContext.js:1:136261)\n    at P (http://127.0.0.1:29350/__dev__/WAGameSubContext.js:1:137574)\n    at ide:///package/__APP__/game.js:1:1\n    at doWhenAllScriptLoaded (ide:///getmainpackage.js:58:21)",
+    "arg2": null,
+    "shape": "[object Object]",
+    "keys": [
+      "message",
+      "stack"
+    ],
+    "stack": ""
+  }
+]

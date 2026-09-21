@@ -2,9 +2,9 @@
 
 本文记录把本项目的 PixiJS 8 游戏跑进微信小游戏环境的过程、依据与结论。
 
-- 产物：`dist-minigame/game.js`（单文件 IIFE，约 1.96 MB / gzip 416 KB）
+- 产物：`dist-minigame/game.js`（单文件 IIFE，约 2.00 MB / gzip 424 KB）
 - 构建：`npm run build:minigame`
-- 验证：`npm run verify:minigame`（无 DOM 环境实测，15 项判据，退出码 0/1）
+- 验证：`npm run verify:minigame`（无 DOM 环境实测，23 项判据 = 18 常驻 + 5 取证，退出码 0/1）
 
 ---
 
@@ -295,43 +295,124 @@ touchstart 时**先**补一个 `mousemove`：网页上指针本来就会先移�
 
 ---
 
-## 6. 验证：无 DOM 环境实测
+## 6. 验证：两种宿主，两套判据
 
 ```bash
-npm run verify:minigame     # 15 项判据，退出码 0/1
+npm run verify:minigame   # 无 DOM 宿主（Web Worker），23 项判据 = 18 常驻 + 5 取证
+npm run verify:dom        # 有原生 DOM 宿主（IDE 模拟器同类），11 项判据
+npm run verify:all        # 以上两者 + verify:visual
 ```
 
-**宿主用 Web Worker，不用普通页面。** 第一版是在页面上删 `document` 来伪装，
-直接失败：按 HTML 规范 `document` 在 window 上是 `[LegacyUnforgeable]` 的
-**自有属性** —— `delete` 无效、`defineProperty` 抛错、
-`globalThis.document = xxx` 在严格模式下抛
-「Cannot set property document of #<Window> which has only a getter」。
+**小游戏产物要跑在两类差异极大的宿主上，两类路径都必须测。**
 
-而 **Web Worker 天生就是一个没有 DOM 的 JS realm**，这正是小游戏的处境，
-且**不需要伪造** —— 不用伪造的东西就没法「假装通过」。
+- **无 DOM 宿主**：用 Web Worker 模拟真机小游戏。
+  第一版只测了这一种，结果在 IDE 里一点「编译」直接黑屏 —— 因为 IDE 是另一套环境。
+- **有原生 DOM 宿主**：用真 Chromium 页面模拟微信开发者工具的 IDE 模拟器。
+  这是 `verify:dom` 要补的那一块。
 
-有一个小动作很关键：用 `delete` 抹掉 `self.WorkerGlobalScope`
-（**不能**赋 `undefined`，否则 `in` 依然为真，随后 `instanceof undefined` 抛
-「Right-hand side of 'instanceof' is not an object」），
-迫使 Pixi 加载 `browserAll` —— 也就是小游戏实际走的那条路径。
+### 为什么必须两种都测
 
-### 判据（全部是数据，不是「看着对」）
+微信开发者工具的模拟器不是「无 DOM + wx」的简单叠加，而是 **「有 wx、也有原生 DOM」**
+的第四种环境。`document` / `navigator` 在 `window` 上是 `[LegacyUnforgeable]` 的
+只读自有属性，而产物 IIFE 顶部有 `"use strict"`。
+于是一条在其它三种宿主里永远不会出现的报错把它炸黑了：
+
+```
+TypeError: Cannot set property navigator of #<Window> which has only a getter
+```
+
+`installGlobals()` 把 `navigator` 排在第一位，它一抛，后面的 document 垫片、rAF 兜底、
+以及紧随其后的 `reserveDisplayCanvas()`（抢上屏画布）全部**中断**；
+没有上屏画布，表现就是**纯黑屏，而且窗口里一条报错都没有**（异常进了 IDE 的控制台，
+那个控制台不落盘）。
+
+修复方式是「**能装则装，装不上就让路**」：有原生 DOM 时，垫片不硬覆盖
+`document` / `navigator` / `addEventListener` / canvas 事件方法，让 Pixi 走浏览器分支。
+
+### 判据（无 DOM 宿主，全部是数据，不是「看着对」）
 
 ```
 ✅ 无报错 / 无异常                       ✅ 启动没有弹「启动失败」
 ✅ 渲染器是 webgl（不是静默降级的 canvas）  ✅ 分辨率 = 设备像素比 3
 ✅ 帧缓冲里有实际画面（非背景色像素 > 30%） ✅ 画面不是纯色块（颜色种类 > 20）
-✅ 图集走包内相对路径（无前导斜杠、无 hash） ✅ 离屏画布确实拿到了（createCanvas ≥ 2 次）
-✅ 场景图里有精灵                        ✅ 宿主本来就没有 DOM（不用伪造）
-✅ 上屏画布 = wx.createCanvas() 的第一块   ✅ 触摸点击精确落到预期格子（含远距离格）
-✅ 越界点击被正确忽略                    ✅ 触摸事件能驱动游戏
+✅ 图集走包内相对路径（无前导斜杠、无 hash） ✅ 图集真的加载成功（非静默回退程序化图形）
+✅ 离屏画布确实拿到了（createCanvas ≥ 2 次）   ✅ 场景图里有精灵
+✅ 宿主本来就没有 DOM（不用伪造）            ✅ project.config.json 声明 compileType=game
+✅ appid 没被写成小程序游客号              ✅ 产物语法不高于 es2015（云端检查器的地板）
+✅ 上屏画布 = wx.createCanvas() 的第一块    ✅ 触摸点击精确落到预期格子（含远距离格）
+✅ 越界点击被正确忽略                      ✅ 触摸事件能驱动游戏
 ✅ 移动方向与点击方向一致
 ```
 
-（当前实测全部通过：非背景色像素 74.7%、7804 种颜色、150 个精灵节点、
-5/5 次点击逐格命中。）
+（当前实测全部通过：非背景色像素 74.7%、6662 种颜色、150 个精灵节点、
+5/5 次点击逐格命中，atlas.ready=true。）
 
-### 两条关于「怎么判」的经验
+### 有原生 DOM 宿主的判据
+
+`npm run verify:dom` 用真 Chromium 页面 + wx 桩，核心判据只有一条：
+**原生 `document` / `navigator` 没有被垫片替换，同时游戏还能正常启动。**
+
+```
+✅ 原生 document 仍是真货（createElement / body.appendChild 都在）
+✅ 原生 navigator 未被替换（userAgent 仍是浏览器原值）
+✅ 页面没有未捕获异常
+✅ GameGlobal.mota 已暴露（游戏启动成功）
+✅ 渲染器是 webgl                        ✅ 分辨率 = 设备像素比 3
+✅ 上屏画布 = wx.createCanvas() 的第一块    ✅ 离屏画布 ≥ 2 次
+✅ 取证时间线覆盖 module → shim → hostModule → host → probe → boot
+✅ 帧缓冲里有实际画面（非背景色像素 > 30%） ✅ 画面不是纯色块（颜色种类 > 20）
+```
+
+注意第 8 条（图集）在 `verify:dom` 里**只记录、不判负**：有 DOM 时 Pixi 会走
+`createImageBitmap` 分支，那条分支在一个 blob worker 里 `fetch(src)`，
+blob worker 的 base URL 是 `blob:null/...`，**相对路径无法解析**，于是图集失败、
+回退程序化图形；真机没有 Worker，走的是 `Image` 分支（经 DOMAdapter 落到
+`wx.createImage()`），包内相对路径正常。所以这是**宿主差异**，不是产物缺陷。
+
+### 一个必须记住的事实：**IDE 模拟器 ≠ 真机**（它有 `window` / `document`）
+
+探针在真实 IDE 模拟器里采回来的 `module` 记录（落盘在
+`assets/preview/wx-beacon/stages.json`）：
+
+```json
+{ "stage": "module", "t": 0,
+  "data": { "hasWx": true, "wxKeys": 500, "hasGameGlobal": true,
+            "hasWindow": true, "hasDocument": true,
+            "hasWorkerGlobalScope": false, "hasRAF": true } }
+```
+
+`hasWindow` / `hasDocument` 都是 `true` —— 而**真机小游戏里这两个必须是 `false`**。
+也就是说模拟器是「有 wx、也有 DOM」的第四种环境，它既不等于真机，也不等于浏览器。
+由此两条推论：
+
+- 「在 IDE 里跑通了」**不能**推出「真机跑得通」，反之亦然 —— 所以无 DOM 实测
+  （本节，Worker 宿主）和真机截图各有不可替代的位置。
+- 排查「某段代码走了哪条分支」时，**直接看这条 `module` 记录**，比任何推断都准。
+  它是探针装的第一个点，早于一切环境判断代码。
+
+### 顶层异常怎么定位：模块求值期的埋点阶梯
+
+入口 `main.ts` 的函数体跑不到时（六个 import 里任何一个在**求值期**抛错），
+时间线会**只剩一条 `module`** —— 看不出炸在哪一段。所以另外埋了两个点，
+把 import 段切成三段：
+
+```
+module →（env + pixi）→ shim →（host / probe / app 模块）→ hostModule → 入口函数体 → host → probe → boot
+```
+
+两个埋点分别在 `pixi-adapter.ts` 与 `host.ts` 的模块体末尾（都是纯副作用模块，
+位置天然对得上 import 顺序）。缺哪一段，故障就在那一段里。
+
+### 采异常时的坑：`wx.onError` 的参数形状因基础库而异
+
+真机上是 `(msg: string, stack: string)`，而**本机 IDE 给的是一个普通对象**。
+第一版探针直接写 `String(msg)`，采回来的是 `"[object Object]"` ——
+等于白采一轮（只知道「13ms 处炸了」，不知道炸的是什么）。
+现在统一走 `describe()` 兜底（先挑 `message`/`errMsg`/`stack` 等已知字段，
+再 JSON，再退回 own keys），并把**原始形状**（`Object.prototype.toString` 与 key 列表）
+一起报上来：形状本身就是事实，下次遇到新基础库可以直接照它加分支。
+
+### 三条关于「怎么判」的经验
 
 **① 分开判「事件送到了哪」与「游戏有没有动」。**
 这两件事的症状在自动化里长得一模一样（「点了一下，人没动」），
@@ -348,16 +429,26 @@ npm run verify:minigame     # 15 项判据，退出码 0/1
 「命中但没动」在这里是**正确行为**，所以判据只对界内目标断言「命中」，
 不要求「走过」。
 
+**③ 「产物里不许有某段文本」这类判据，不能靠裸 grep。**
+语法地板那条判据（见 §7）第一版写成了 `grep -c '?.' game.js`，直接假报：
+`?.` / `??` 在**注释和字符串**里是合法文本 —— pixi 的 JSDoc 里就有一处
+`Resolver.RETINA_PREFIX.exec(value)?.[1] ?? '1'`，worker 源码常量里还有
+`async function`。而到了 IDE 那边，浏览器 / Chromium 更不会替你发现这个差别：
+本地 Node 和 Chromium 都支持 ES2020，`npm test`、`npm run verify:*` 全绿，
+**只有微信那台云端检查器会红灯**。
+现在改用「以地板目标复算并比对 token 计数」：真有高于地板的**语法**时，
+复算会把它降掉 → 计数变少 → 判负；注释/字符串里的同名字符串两边原样保留 → 不误伤。
+
 ---
 
 ## 7. 产物与发布
 
 ```
 dist-minigame/
-  game.js               1.96 MB（gzip 416 KB）单文件 IIFE
+  game.js               2.00 MB（gzip 424 KB）单文件 IIFE
   game.json             小游戏配置
   project.config.json   开发者工具配置
-  assets/*.png          4 张图集（38.5 KB），包内相对路径
+  assets/*.png          4 张图集（39.2 KB），包内相对路径
 ```
 
 `vite.minigame.config.ts` 要点：
@@ -367,6 +458,41 @@ dist-minigame/
 - `base: ''` → 配合 `getBaseUrl: () => ''`，保证 `assets/*.png` 是包内相对路径。
 - `atlasPlainUrl()` 插件把 `assets/atlas/*.png` 的 import 改写成字符串字面量，
   避免 Vite 产出带 hash 的 URL（小游戏里就是文件名）。
+
+### 语法地板：产物不能高于 ES2015（**镜像云端检查器实测**）
+
+**这不是保守偏好，是被一次失败钉出来的。**
+
+产物原本按 `target: 'es2020'` 打，理由是「小游戏侧 WebGL2 本身要求 iOS≥14 /
+基础库≥2.15，运行时门槛已经高于 ES2020 的语法门槛」。这个推理漏掉了关键一环：
+**代码在上传/预览时会先过一遍微信云端的语法检查**，而那个检查器不接受 ES2020 语法。
+在 IDE 里点「编译」后立刻失败：
+
+```
+task type:upload exec error Error: invalid file: game.js, 13:9
+SyntaxError: Unexpected token .          ← 指向 `wx?.request?.(` 里的 `?`
+```
+
+- `invalid file: <文件>, <行>:<列>` 是**服务端**返回的 errmsg（错误码
+  `DEV_COMPILE_INVALID_FILE` = -80057）；DevTools 的 `upload.parseError` 收到后
+  用 sourcemap 把它渲染成 code frame 再给人看。rollup 的 `target` 只影响**本地**
+  打包产物，管不到这一步 —— 所以「本地全绿」和「IDE 能跑」之间差着这一环。
+- 一个很有用的旁证：报错停在文件里**第一个** ES2020 token 上（第 13 行），
+  而它前面 12 行的箭头函数与 `const` 都过了。所以检查器的地板落在
+  **ES2015 与 ES2020 之间**，而 ES2015 是它明确能吃下的 —— 于是 `build.target`
+  取 `es2015`：任何能接受 ES2015 的检查器都必然接受本产物。
+- 代价：async/await 降级成「生成器 + `__async` 辅助」，对象展开变成
+  `Object.assign`，可选链/空合并变成三元。包体 1.95 → 2.00 MB（+2.5%），语义不变。
+
+**`setting.es6` 为什么保持 `false`。** 开发者工具里那个「ES6 转 ES5」开关
+（`project.config.json` 的 `setting.es6`）同样能把代码降到 ES5，但那意味着
+**IDE 里跑的是 babel 的输出、不是你验证过的那份产物**。语法地板放在构建期更可控：
+一份产物、一处断言、`npm run verify:minigame` 里就会红。
+
+⚠️ 三处必须对齐：`build.target`（打包时降级）、`tools/verify-minigame.cjs` 的
+`SYNTAX_FLOOR`（断言产物）、`setting.es6: false`（不让 IDE 再降一遍）。
+改了 `build.target` 就要同步改 `SYNTAX_FLOOR`：判据是拿 `SYNTAX_FLOOR`
+去复算产物的，地板定高了会漏判，定低了会假报。
 
 ### `game.json`
 
@@ -396,12 +522,112 @@ Pixi 8 的着色器全是 `#version 300 es`（GLSL ES 3.00），渲染器**只�
 
 ---
 
-## 8. 复现命令
+## 8. 在微信开发者工具里打开：项目类型由 **appid** 决定，不由 `compileType` 决定
+
+导入 `dist-minigame` 后一编译就报：
+
+```
+Error: app.json: 在项目根目录未找到 app.json
+File: app.json
+```
+
+小游戏明明只要 `game.json`，为什么要找 `app.json`？因为**工具压根没把这个工程当小游戏**。
+
+（把类型改对之后紧接着会撞上的下一个坑是**语法地板**：产物里若有 ES2020 语法，
+云端编译服务会以 `invalid file: game.js` 拦下 —— 见 §7「语法地板」那节。）
+
+### 判定链路（本机 wechatwebdevtools 36.6.0 / IDE 界面版本 2.02.2608070 实测）
+
+`project.config.json` 的 `compileType` 有四个取值，小游戏是 `game` —— 我们写的一直是 `game`。
+但导入时的类型校验根本不看它，看的是 **appid 在服务端返回的 `gameApp` 属性**：
+
+```js
+// 导入对话框 project-creation 组件
+async checkAppIdTypeVaild(t) {          // t = 该 appid 的 attr
+  const e = t.gameApp;
+  return this.props.type !== ProjectType.MiniGame || e
+    ? (this.props.type !== ProjectType.MiniProgram || !e || (this.hintError(...), !1))
+    : (this.hintError(...), !1);        // ← 选小游戏但 gameApp=false：直接拦下
+}
+```
+
+拦下之后的回退动作写在 `refreshMenuSelectedWithCorrectAppID()` 里：
+
+```js
+if (!t.gameApp && d /* d = 当前选的是小游戏 */) {
+  this.props.entranceActions.selectMenu('miniprogram');   // ← 自动切回小程序
+}
+```
+
+于是编译端记下一行日志，这就是本坑的指纹：
+
+```
+[BuilderFactory] shouldCreate=true requestId=14 reason=compileType changed old=game new=weapp
+```
+
+`old=game` 是我们文件里写的（工具读到了），`new=weapp` 是它自己改的。
+之后管线按小程序跑 → 找 `app.json` → 报错。
+
+### 关键：**测试号（沙箱）是分类型的**
+
+取号接口是 `fetchSandboxAccount(tab)`，`tab` 只取 `miniprogram` / `minigame` 两个值 ——
+「小程序测试号」和「小游戏测试号」是**两个不同的 appid**。
+
+本机上那个容易被顺手拿来用的 `wxa075fdefa9d0a322` 是**小程序**测试号，证据就在工具自己的缓存里：
+
+```bash
+# 工具把 appid 属性缓存在 WeappLocalData 下，直接数一遍就知道有没有小游戏账号
+cd "$HOME/Library/Application Support/微信开发者工具"/*/WeappLocalData
+grep -o '"gameApp":true' *.json | wc -l    # → 0
+grep -o '"gameApp":false' *.json | wc -l   # → 2
+# appid=wxa075fdefa9d0a322  appName=xxx的接口测试号  gameApp=false  isSandbox=true
+```
+
+`gameApp: true` 的出现次数是 **0** —— 也就是说该账号名下**一个小游戏类型的 appid 都没有**，
+所以它无论怎么导入都会被判成小程序。
+
+### 正确的导入方式
+
+1. 在开发者工具的**项目列表**窗口选**小游戏**，再「导入项目」；
+2. 目录选 `dist-minigame`；类型必须是**小游戏**（这一点在导入对话框里就要选对，
+   项目窗口里的「更换开发模式」只有「公众号网页调试 / 小程序调试」，改不了这个）；
+3. **AppID 别填 `touristappid`** —— 那是小程序的游客号（小游戏的游客号是
+   `wx6ac3f5090a6b99c5`），同样 `gameApp: false`。用输入框旁的
+   **「或使用测试账号：小程序 / 小游戏」**，点**小游戏**，工具会去
+   `fetchSandboxAccount('minigame')` 取一个小游戏测试号；也可以填自己申请的小游戏 AppID。
+4. 这样 `compileType` 才会真的停在 `game`，编译走 `game.json`，不再找 `app.json`。
+
+模板里 `appid` 因此**故意留空**：导入时 `onDetectionChange()` 会拿
+`project.config.json` 里的 appid 去校验，预填一个错的只会被回退，不如空着让对话框自己取号。
+
+### 两个顺带的反直觉点
+
+- **别信存储里的 `compileType`。** `reduxPersist:projectList` 里存的是**导入时的意图**（可能是
+  `game`），`project2_<项目绝对路径>` 才是**实际生效**的那份（已被服务端属性改写成 `weapp`）。
+  两个键会打架，看日志比看存储直接。
+- **`miniprogramRoot` 不是线索。** 小游戏工程也用它，工具自己会把它归一成 `""`。
+
+排错时先看日志，一眼就能定位：
+
+```bash
+grep -E "compileType changed|app.json" \
+  "$HOME/Library/Application Support/微信开发者工具"/*/WeappLog/logs/*.log
+```
+
+---
+
+## 9. 复现命令
 
 ```bash
 npm run build:minigame    # 构建产物（含 tsc --noEmit）
-npm run verify:minigame  # 无 DOM 环境实测，15 项判据
+npm run verify:minigame   # 无 DOM 环境实测，23 项判据
+npm run verify:dom        # 有原生 DOM 宿主实测，11 项判据
+npm run verify:all        # 以上两套 + verify:visual
 ```
 
-验证截图落在 `assets/preview/minigame-board.png` —— 那是一帧从无 DOM 宿主里
-`transferToImageBitmap()` 出来的真实画面，可以和判据互相印证。
+- `assets/preview/minigame-board.png`：无 DOM 宿主里 `transferToImageBitmap()` 出来的画面。
+- `assets/preview/dom-host.png`：有原生 DOM 宿主（IDE 模拟器同类）里的页面截图。
+- `assets/preview/wx-beacon/dom-host-frame.png`：有 DOM 宿主里探针自采的首帧像素网格。
+
+三套画面用途不同：无 DOM 那套保证真机路径，有 DOM 那套保证 IDE 路径，
+网格那套把「画面是不是纯黑 / 纯色块」变成可离线重建的数据。

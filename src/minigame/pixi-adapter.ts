@@ -11,6 +11,7 @@
 
 import { DOMAdapter } from 'pixi.js';
 import { assertInstalled, createOffscreenCanvas, g, wxApi } from './env';
+import { beaconStage } from './beacon';
 
 /**
  * `getWebGLRenderingContext()` 在 Pixi 里有 3 处调用点，全都是**用 `instanceof` 判版本**：
@@ -153,3 +154,11 @@ assertInstalled();
 // 同样是副作用：本模块是入口里第一个 import pixi 的模块，
 // 在它求值时 `./env` 已经装好了全局垫片。这一步之后 `../app` 才会求值。
 installDomAdapter();
+
+// 取证：模块**求值期**的埋点。顶层异常是本项目最难查的一类故障 ——
+// 入口 `main.ts` 的函数体还没跑到，所以 `host`/`probe`/`boot` 三个阶段一个都不会出现，
+// 采回来的时间线会**只有一条 module**，看不出炸在哪一段 import 里。
+// 这里按 import 顺序铺两个埋点（本文件 + `host.ts`），把「六个 import 的黑盒」
+// 切成三段：`module`→（env + pixi）→`shim`→（host/probe/app 模块）→`hostModule`→入口函数体。
+// 非取证构建里 `beaconStage` 是空实现（第一行 return），不影响正式产物行为。
+beaconStage('shim');

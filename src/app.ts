@@ -30,7 +30,7 @@ import {
   useItem
 } from './game/engine';
 import { Board } from './render/board';
-import { loadAtlas } from './render/atlas';
+import { atlas, loadAtlas } from './render/atlas';
 import {
   DetailPanel,
   FloorPanel,
@@ -228,7 +228,14 @@ export class Game {
       // 换成名字后，`=== 'webgl'` 这个断言不需要任何额外解释。
       rendererType: RendererType[this.app.renderer.type]?.toLowerCase() ?? `unknown(${this.app.renderer.type})`,
       resolution: this.app.renderer.resolution,
-      screen: { w: this.app.renderer.width, h: this.app.renderer.height }
+      screen: { w: this.app.renderer.width, h: this.app.renderer.height },
+      // 图集是不是**真的**加载成功了。
+      //
+      // 这一条单列出来，是因为「URL 格式对」和「图真的加载到了」是两回事：
+      // 前者只能证明路径写法没错，加载失败时 `ready` 保持 false，渲染层静默换用
+      // `icons.ts` 的程序化图形 —— 画面照旧出得来，只是美术不对。
+      // 也就是说这一条失败时**看不出任何异常**，只能靠显式断言。
+      atlasReady: atlas.ready
     };
   }
 

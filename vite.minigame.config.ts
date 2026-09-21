@@ -42,16 +42,66 @@ function atlasPlainUrl(): Plugin {
   };
 }
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   // 小游戏里没有「base URL」概念；留空让 Rollup 不生成相对 URL 辅助代码
   base: '',
   plugins: [atlasPlainUrl()],
+
+  /**
+   * 启动取证探针的开关（见 `src/minigame/beacon.ts`）。
+   *
+   * 用 `mode` 而不是 `process.env` 是因为本文件不引 node 内置类型（见文件头）。
+   * 关掉时 `__MOTA_WX_BEACON__` 是字面量 `false`，`beacon.ts` 里每个函数都在
+   * 第一行返回，整块会被 Rollup 摇掉 —— 正式产物里不留探针代码。
+   */
+  define: {
+    __MOTA_WX_BEACON__: JSON.stringify(mode === 'wxbeacon')
+  },
   build: {
     outDir: 'dist-minigame',
-    emptyOutDir: true,
-    // ES2020：小游戏侧 WebGL2 本身就要求 iOS≥14 / 基础库≥2.15，
-    // 这个门槛已经高于 ES2020 的语法要求（可选链等）。
-    target: 'es2020',
+    /**
+     * ⚠️ 刻意**不**清空产物目录。
+     *
+     * 微信开发者工具会把 appid 写进 `dist-minigame/project.config.json`，并额外生成
+     * `project.private.config.json` —— 那两个文件描述的是「谁在跑这个工程」，
+     * 不是构建产物。清空 = 每次重建都把它们抹掉，表现是「重建一次，IDE 里就得重新选一次
+     * appid」，而且不报错，只是下次打开工程多一个说不清的提示。
+     *
+     * 代价是残留文件，所以「哪些文件该在包里」这件事改由
+     * `tools/copy-minigame-assets.mjs` 显式负责（它会清掉不再需要的图集）。
+     * 这其实比 vite 的盲目清空更安全：小游戏主包有 4MB 上限，
+     * 「包里只有什么」本来就该是一条明确断言，而不是「反正清空了」。
+     */
+    emptyOutDir: false,
+    /**
+     * ES2015 —— 这个值不是「保守偏好」，是被**微信云端的语法检查**实测卡出来的。
+     *
+     * 原先写的是 `es2020`，理由是「小游戏侧 WebGL2 本身要求 iOS≥14 / 基础库≥2.15，
+     * 运行时门槛已经高于 ES2020 的语法门槛」。这个推理漏掉了关键一环：
+     * **代码在上传/预览时会过一次云端语法检查，而那个检查器不接受 ES2020 语法。**
+     * 表现是在 IDE 里点「编译」后立刻失败：
+     *
+     *   task type:upload exec error Error: invalid file: game.js, 13:9
+     *   SyntaxError: Unexpected token .        ← 指向 `wx?.request?.(` 里的 `?`
+     *
+     * 错误码是服务端的 `DEV_COMPILE_INVALID_FILE`（-80057）；DevTools 的
+     * `upload.parseError` 收到后会拿 sourcemap 把它渲染成 code frame 给用户看。
+     * rollup 的 `target` 只影响**本地**打包产物，管不到这一步。
+     *
+     * 复现与反证：产品里第 1–12 行（箭头函数、`const`、`satisfies` 之外的普通 ES2015）
+     * 都能过，报错精确停在文件里**第一个** ES2020 token 上 —— 说明检查器的地板
+     * 在 ES2015 与 ES2020 之间，而 ES2015 是它明确能吃下的（箭头函数/const 已过）。
+     * 所以这里取 ES2015：任何能接受 ES2015 的检查器都必然接受本产物。
+     *
+     * 代价：async/await 被降级成「生成器 + `__async` 辅助函数」、对象展开变成
+     * `Object.assign`、`?.`/`??` 变成三元。语义不变，包体略涨。
+     *
+     * ⚠️ 改这个值时**必须同步**改 `tools/verify-minigame.cjs` 里的
+     * `SYNTAX_FLOOR` —— 那条判据会用 esbuild 以该目标复算 token 计数，
+     * 计数一旦对不上就说明产物里混进了高于地板的语法。两处对齐，IDE 报错才会
+     * 提前变成「本地构建期就红」。
+     */
+    target: 'es2015',
     minify: false,
     chunkSizeWarningLimit: 4000,
     lib: {
@@ -67,4 +117,4 @@ export default defineConfig({
       }
     }
   }
-});
+}));

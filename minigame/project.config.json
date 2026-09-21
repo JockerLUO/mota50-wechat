@@ -1,9 +1,9 @@
 {
-  "appid": "touristappid",
+  "appid": "",
   "projectname": "mota50-minigame",
   "compileType": "game",
-  "miniprogramRoot": "./",
-  "description": "魔塔 50 层 —— 微信小游戏。src 在仓库根，本目录是构建产物 dist-minigame 的模板。",
+  "miniprogramRoot": "",
+  "description": "魔塔 50 层 —— 微信小游戏。src 在仓库根，本目录是构建产物 dist-minigame 的模板。appid 故意留空：开发者工具是按 appid 的 gameApp 属性决定项目类型的，compileType 只表达意图。填 touristappid（那是小程序的游客号）会让工具把工程判成小程序、改去找 app.json，报「未找到 app.json，无法调试」。导入时请点 AppID 旁的「小游戏」测试号，或填自己申请的小游戏 AppID。详见 docs/wechat-minigame.md §8。",
   "setting": {
     "es6": false,
     "enhance": false,
