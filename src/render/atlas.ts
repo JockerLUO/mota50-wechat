@@ -14,7 +14,7 @@
  *    宁可画得朴素，也不能白屏。
  */
 
-import { Assets, Rectangle, Texture } from 'pixi.js';
+import { Assets, ImageSource, Rectangle, Texture } from 'pixi.js';
 import manifestJson from '../../assets/MANIFEST.json';
 import actorsUrl from '../../assets/atlas/actors.png';
 import itemsUrl from '../../assets/atlas/items.png';
@@ -217,10 +217,112 @@ const ATLAS_URLS: Record<string, string> = {
   items: itemsUrl
 };
 
+/** 小游戏 `wx.createImage()` 的返回值 —— 只声明我们用到的那几个字段。 */
+interface WxImage {
+  src: string;
+  onload: ((ev?: unknown) => void) | null;
+  onerror: ((err?: unknown) => void) | null;
+  width: number;
+  height: number;
+}
+
+/**
+ * 拿 `wx.createImage`（不在小游戏环境里则返回 null）。
+ *
+ * 用 `globalThis.wx` 而不是 import 小游戏环境模块：本文件是**网页端与小游戏共用**的，
+ * 一旦 import `src/minigame/*`，网页端构建也会被拖进那套垫片。
+ */
+function wxCreateImage(): (() => WxImage) | null {
+  const host = globalThis as { wx?: { createImage?: () => WxImage } };
+  const fn = host.wx?.createImage;
+  return typeof fn === 'function' ? fn.bind(host.wx) : null;
+}
+
+/**
+ * 用 `wx.createImage()` 加载一张图集。
+ *
+ * ⚠️ **必须有超时**。`wx.createImage()` 的 `onerror` 在某些失败形态下不触发
+ * （路径写错、包内文件缺失、真机上解码失败各有不同表现），而没有 `onerror`
+ * 就意味着这个 Promise 永远 pending —— `atlas.load()` 会一直等下去，
+ * 而它是 `await` 在 `Game.create()` 里的，表现成**卡在启动、既无画面也无报错**。
+ * 宁可让图集失败（回退程序化图形），也不能让「锦上添花」把启动拖死。
+ */
+function loadImageViaWx(url: string, create: () => WxImage, timeoutMs = 8000): Promise<WxImage> {
+  return new Promise((resolve, reject) => {
+    let done = false;
+    const finish = (fn: () => void) => {
+      if (done) return;
+      done = true;
+      fn();
+    };
+    let img: WxImage;
+    try {
+      img = create();
+    } catch (err) {
+      reject(err);
+      return;
+    }
+    const timer = setTimeout(() => finish(() => reject(new Error(`wx.createImage 超时（${timeoutMs}ms）：${url}`))), timeoutMs);
+    img.onload = () => finish(() => { clearTimeout(timer); resolve(img); });
+    img.onerror = (err) =>
+      finish(() => {
+        clearTimeout(timer);
+        reject(new Error(`wx.createImage 失败：${url} ${err === undefined ? '' : String(err)}`));
+      });
+    img.src = url;
+  });
+}
+
+/**
+ * 加载一张图集 —— **小游戏端刻意不走 `Assets.load`**。
+ *
+ * ## 为什么不能交给 Pixi 自己选
+ *
+ * `loadTextures` 的实现是「宿主有什么就用什么」：
+ *
+ *     if (globalThis.createImageBitmap && config.preferCreateImageBitmap) {
+ *         src = await WorkerManager.loadImageBitmap(url, asset);   // 在 blob worker 里 fetch
+ *         // 或 loadImageBitmap(url) → DOMAdapter.get().fetch(url) → createImageBitmap(blob)
+ *     } else {
+ *         src = DOMAdapter.get().createImage();  src.src = url;    // ← 这条才对
+ *     }
+ *
+ * 坏在第一条分支的两个前提在小游戏里都站不住：
+ *   - `WorkerManager` 那支在 **blob worker** 里 `fetch('assets/xxx.png')`，而 blob worker 的
+ *     base URL 是 `blob:null/...` —— **相对路径解析不了**，直接 404；
+ *   - `loadImageBitmap` 那支要 `DOMAdapter.fetch` + `response.blob()` + `createImageBitmap`，
+ *     我们确实给了 `fetch`（走 `wx.request`），但 `wx.request` 是网络请求、
+ *     读不了**包内文件**，而且小游戏里没有 `Blob`。
+ *
+ * 于是「能不能加载出图集」取决于宿主**碰巧**有没有 `createImageBitmap`：
+ * 有（PC 端微信、桌面浏览器内核）→ 走进坏支路 → 静默回退程序化图形（玩家看到的就是「界面简陋」）；
+ * 没有（部分真机）→ 走进对支路 → 正常。这种「同一份产物在不同宿主表现不同」的差异
+ * 不该由宿主能力抽签决定，所以这里显式指定唯一一条路径：
+ * **`wx.createImage()` + `ImageSource`**，它读的是包内相对路径，真机与 IDE 都通。
+ *
+ * 网页端（没有 `wx`）保持 `Assets.load` —— 那条路在浏览器里本来就是对的。
+ */
+async function loadAtlasTexture(url: string): Promise<Texture> {
+  const create = wxCreateImage();
+  if (!create) return Assets.load<Texture>(url);
+  const img = await loadImageViaWx(url, create);
+  // `alphaMode` 与 Pixi `loadTextures` 的取值保持一致，避免同图两条路径产出不同的源状态。
+  const source = new ImageSource({ resource: img as never, alphaMode: 'premultiply-alpha-on-upload' });
+  return new Texture({ source });
+}
+
 class Atlas {
   private sources: Record<string, Texture> = {};
   private cache = new Map<string, Texture>();
   private ok = false;
+  /**
+   * 最近一次加载失败的原因 —— 供探针上报。
+   *
+   * 存在的理由：`ready=false` 是**静默回退**，画面上只是「变朴素了」，
+   * 在真机上根本看不出是加载失败还是本来就没素材。把原因带出来，
+   * 才能区分「路径不对 / 宿主不给加载 / 超时」这几种完全不同的故障。
+   */
+  lastError: string | null = null;
 
   get ready(): boolean {
     return this.ok;
@@ -235,7 +337,9 @@ class Atlas {
   async load(): Promise<void> {
     try {
       const names = Object.keys(ATLAS_URLS);
-      const loaded = await Promise.all(names.map((n) => Assets.load<Texture>(ATLAS_URLS[n])));
+      // 走 `loadAtlasTexture` 而不是 `Assets.load`：小游戏端必须避开 Pixi 那条
+      // 「有 createImageBitmap 就 fetch」的分支（理由见该函数的注释）。
+      const loaded = await Promise.all(names.map((n) => loadAtlasTexture(ATLAS_URLS[n])));
       names.forEach((n, i) => {
         const tex = loaded[i];
         // ★ 关键：关掉线性插值。少了这一行，放大后全是毛边。
@@ -244,10 +348,12 @@ class Atlas {
         this.sources[n] = tex;
       });
       this.ok = true;
+      this.lastError = null;
     } catch (err) {
       this.ok = false;
       this.sources = {};
       this.cache.clear();
+      this.lastError = err instanceof Error ? err.message : String(err);
       // 只警告不抛：调用方会看到 ready=false 并走兜底分支
       console.warn('[atlas] 图集加载失败，回退到程序化图形：', err);
     }

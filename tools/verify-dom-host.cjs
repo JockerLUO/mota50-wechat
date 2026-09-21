@@ -361,20 +361,124 @@ function analyzePixels(rec) {
   );
   add('离屏画布确实拿到了（createCanvas ≥ 2 次）', state.canvases.length >= 2, `createCanvas × ${state.canvases.length}`);
 
-  // 图集这一条**故意不作为失败判据**，只如实记录。
+  // ★ 图集：从「只记录、不计入判据」升级为**硬判据**（2026-09-21）。
   //
-  // 它不是产物的问题，是宿主差异：有 DOM 时 Pixi 走 `createImageBitmap` 分支，
-  // 而那条分支在一个 blob worker 里 `fetch(src)` —— blob worker 的 base URL 是
-  // `blob:null/...`，**相对路径无法解析**，于是图集失败、静默回退程序化图形。
-  // 真机没有 Worker，走的是 `Image` 分支（经 DOMAdapter 落到 `wx.createImage()`），
-  // 包内相对路径正常。所以「IDE 里美术是矢量图」推不出「真机也没美术」，
-  // 反过来也一样 —— 这正是两种宿主必须分开测的理由。
-  console.log(
-    `  ${snap.atlasReady ? '✅' : 'ℹ️ '} 图集加载状态（宿主差异，不计入判据）  —— ` +
-      (snap.atlasReady
-        ? 'atlas.ready = true'
-        : 'atlas.ready = false：Pixi 走了 createImageBitmap 分支，在 blob worker 里解析不了相对路径')
+  // 原先不计入的理由是「宿主差异」：有 DOM 时 Pixi 走 `createImageBitmap` 分支，
+  // 那条分支在 blob worker 里 `fetch(src)` —— base URL 是 `blob:null/...`，
+  // 相对路径解析不了，于是图集失败、静默回退程序化图形。当时把它当成「环境的锅」。
+  //
+  // 但用户实测反馈是：**PC 端微信预览「界面简陋」**——同一份产物在另一类宿主里
+  // 也退回了程序化图形。这就说明「宿主差异」这个解释是错的：游戏素材加载不该由
+  // 宿主碰巧有没有 `createImageBitmap` 抽签决定。
+  // 现在 `atlas.ts` 在小游戏端显式走 `wx.createImage()` + `ImageSource`，
+  // 唯一依赖只剩「包内相对路径」—— 那是所有宿主都必须支持的东西。
+  //
+  // 所以这条判据要**跟着变成红/绿**：它现在守的正是「素材有没有真的用上」。
+  // 只在 `atlas.ready=false` 时可能漏掉一类情况 —— 静默回退（画面只是变朴素、
+  // 没有任何报错），所以 `atlasError` 也一起打出来，便于区分失败原因。
+  add(
+    '图集加载成功（素材真的用上了，不是回退程序化图形）',
+    snap.atlasReady === true,
+    snap.atlasReady === true
+      ? 'atlas.ready = true'
+      : `atlas.ready = false${snap.atlasError ? `　原因：${snap.atlasError}` : ''}`
   );
+
+  // ── 触摸 → 游戏：本侧**原本一条判据都没有**（2026-09-21 补）──────────
+  //
+  // 无 DOM 的 Worker 宿主早就有「派发触摸 → 勇者移动」的端到端判据
+  // （见 worker.js 第 9 节），有 DOM 的这一侧却只有「画面出来了」。
+  // 于是「IDE 模拟器预览点不动」在本地四套校验里**永远报绿** ——
+  // 探针能证明画面渲染了，证明不了玩家能不能碰它。
+  //
+  // 这条判据的设计要点是**把失败拆开报**（`__probe().lastBoardClick` 专为此存在）：
+  //     监听器 0 个               → 事件桥没装（`nativeDom` 那一侧提前 return 了）
+  //     有监听器、但没命中任何格   → 事件没走到 Pixi（分支/目标对象不匹配）
+  //     命中了但不是那格          → 走到了，坐标映射偏了（漏 resolution 会整体偏约 4 格）
+  //     命中对了但没移动          → 事件链没问题，是那格本来就走不过去（游戏规则）
+  // 合成一条「点不动」会把这四种混成一个现象，修法完全不同。
+  const touch = await page.evaluate(async () => {
+    const g = globalThis;
+    const game = g.GameGlobal && g.GameGlobal.mota && g.GameGlobal.mota.game;
+    if (!game || typeof g.__tap !== 'function') return { ok: false, reason: '没有 game 或 wx 桩没提供 __tap' };
+    const board = game.board;
+    const cell = board.cellPx;
+    // 四个相邻方向：floor 1 起点 (5,10) 周围有连通空地，四个方向都试，
+    // 只要有一格是路就足以证明「事件链 + 坐标映射」是对的（可走与否是游戏规则）。
+    const probes = [
+      ['down', 0, 1],
+      ['up', 0, -1],
+      ['left', -1, 0],
+      ['right', 1, 0]
+    ];
+    const results = [];
+    let listeners = null;
+    for (const [name, dx, dy] of probes) {
+      const before = game.__probe();
+      const target = { x: before.pos.x + dx, y: before.pos.y + dy };
+      const p = board.toGlobal({ x: (target.x + 0.5) * cell, y: (target.y + 0.5) * cell });
+      listeners = g.__tap(p.x, p.y);
+      const t0 = performance.now();
+      while (performance.now() - t0 < 3000 && game.walking) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      const after = game.__probe();
+      const hit = after.lastBoardClick || null;
+      results.push({
+        dir: name,
+        target,
+        hit,
+        arrived: !!hit && hit.x === target.x && hit.y === target.y,
+        moved: after.pos.x !== before.pos.x || after.pos.y !== before.pos.y
+      });
+    }
+    return {
+      ok: true,
+      listeners,
+      results,
+      // 取 `probe()` 的结果而不是 `__motaTouch` 本身：钩子/画布形态要**现算**才准
+      //（上屏画布是游戏起来之后才有的），`__motaTouch` 上的静态字段是安装当刻的快照。
+      facts: g.__motaTouch && typeof g.__motaTouch.probe === 'function' ? g.__motaTouch.probe() : null
+    };
+  });
+
+  if (touch.ok) {
+    const arrived = touch.results.filter((r) => r.arrived);
+    const moved = touch.results.filter((r) => r.moved);
+    const detail = touch.results.map((r) => `${r.dir}→${r.hit ? `(${r.hit.x},${r.hit.y})` : '无'}`).join(' ');
+    add(
+      '触摸桥装上了（wx.onTouchStart 至少有一个监听器）',
+      touch.listeners > 0,
+      `监听器 ${touch.listeners} 个${touch.listeners ? '' : '（0 = 事件桥根本没装，玩家必然点不动）'}`
+    );
+    // ★ 这一条是「模拟器点不动」的护栏。
+    //
+    // 小游戏的触摸只能从 wx.onTouch* 来，而 Pixi 会把监听挂到 canvas / document /
+    // globalThis 上 —— 三处都得接到总线，缺一处就有一类事件送不到
+    //（缺 canvas → 按下收不到；缺 document → 悬停/详情面板不更新；缺 global → 抬手收不到，
+    // 而 pointertap 正是在抬手时才生成的）。
+    const hooked = touch.facts && touch.facts.hooked;
+    add(
+      'Pixi 的事件坑位已接管到总线（canvas / document / global）',
+      !!(hooked && hooked.canvas && hooked.document && hooked.global),
+      hooked
+        ? `canvas=${hooked.canvas} document=${hooked.document} global=${hooked.global}`
+        : '拿不到 __motaTouch（垫片没装上）'
+    );
+    add(
+      '触摸送到棋盘上（lastBoardClick 命中点的那一格）',
+      arrived.length > 0,
+      `${arrived.length}/${touch.results.length} 命中　${detail}`
+    );
+    add(
+      '触摸能驱动游戏（至少一个方向让勇者移动）',
+      moved.length > 0,
+      `${moved.length}/${touch.results.length} 移动　${moved.map((r) => r.dir).join(',') || '一个都没动'}`
+    );
+    if (touch.facts) console.log(`  触摸桥机制: ${JSON.stringify(touch.facts)}`);
+  } else {
+    add('触摸判据可执行', false, touch.reason);
+  }
 
   // ── 取证判据（只有 --mode wxbeacon 的产物才有）──────────────────
   const timeline = Array.isArray(state.timeline) ? state.timeline : null;

@@ -196,6 +196,44 @@ function printShim(data) {
   );
 }
 
+/**
+ * `boot` 段的字段要**逐条**打，不能用通用的 `JSON.stringify(...).slice(0, 220)`。
+ *
+ * 原因很具体：这一段的字段顺序是「渲染器 → 分辨率 → 屏幕 → 楼层 → 位置 → 血量 →
+ * 图集 → 触摸桥」，而后两项恰好是排查「素材没上 / 点不动」时唯一要看的东西 ——
+ * 它们排在末尾，被 220 字符的截断正好丢掉（本轮就是这么漏掉 `touch` 的）。
+ *
+ * 另外这两项各自的「不好看的值」都值得单独提示，因为它们的失败形态都是**静默**的：
+ *   - `atlasReady=false`：画面只是变朴素（回退程序化图形），不报错；
+ *   - `canReal=false` 且 `nativeDom=true`：上屏画布不是宿主真 canvas，
+ *     我们合成的真事件到不了 Pixi 挂在原生 document/window 上的监听 → 点不动。
+ */
+function printBoot(data) {
+  const j = (v) => JSON.stringify(v);
+  console.log('  [boot] 启动快照');
+  console.log(`      rendererType=${data.rendererType}  resolution=${data.resolution}  屏幕=${j(data.screen)}`);
+  console.log(`      floor=${data.floor}（显示 ${data.displayFloor}）  位置=${j(data.pos)}  hp=${data.hp}`);
+  console.log(
+    `      图集 atlasReady=${data.atlasReady}` +
+      (data.atlasReady
+        ? ''
+        : `   ← 回退程序化图形（界面会显得简陋）${data.atlasError ? `：${data.atlasError}` : '（未上报原因）'}`)
+  );
+  const t = data.touch;
+  if (t) {
+    console.log(
+      `      触摸桥 pointerBranch=${t.pointerBranch}  nativeDom=${t.nativeDom}  canReal=${t.canReal}  ` +
+        `realDispatch=${t.realDispatch}  已派发=${t.sent}`
+    );
+    if (t.canReal === false && t.nativeDom === true) {
+      console.log('        ⚠️ 有原生 DOM 却派发不了真事件：上屏画布不是宿主真 canvas，');
+      console.log('           合成事件到不了 Pixi 挂在原生 document / window 上的监听 —— 表现就是「点不动」。');
+    }
+  } else {
+    console.log('      触摸桥：未上报（wx 缺失，或 env.ts 的垫片没装上）');
+  }
+}
+
 function printTimeline(records) {
   console.log('\n── 时间线 ──');
   const stages = records.map((r) => r.stage);
@@ -209,8 +247,13 @@ function printTimeline(records) {
   console.log('');
   for (const r of records) {
     // module 与 shim 各自有专用打印（见 printModule / printShim）：
-    // 前者字段太多要挑重点，后者的 bare 清单必须完整不许截断。
+    // 前者字段太多要挑重点，后者的 bare 清单必须完整不许截断；
+    // boot 也有专用打印（图集 / 触摸桥两项不能被 220 字符截掉）。
     if (r.stage === 'module' || r.stage === 'shim') continue;
+    if (r.stage === 'boot' && r.data) {
+      printBoot(r.data);
+      continue;
+    }
     const t = r.t != null ? `t=${r.t}` : '';
     if (r.message || r.stack) {
       console.log(`  [${r.stage}] ${t}`);

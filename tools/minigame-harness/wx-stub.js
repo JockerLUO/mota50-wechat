@@ -29,6 +29,8 @@
 
   var calls = [];
   var storage = {};
+  /** 触摸回调登记表。派发在文件末尾的 `__touch` / `__tap`，见那里对「为什么必须非空」的说明。 */
+  var handlers = { start: [], move: [], end: [], cancel: [] };
   var info = {
     windowWidth: 390,
     windowHeight: 844,
@@ -177,11 +179,29 @@
       note('onUnhandledRejection');
     },
 
-    // ── 触摸：IDE 里是鼠标转的，这里只登记，不主动派发 ────────────
-    onTouchStart: function () {},
-    onTouchMove: function () {},
-    onTouchEnd: function () {},
-    onTouchCancel: function () {},
+    // ── 触摸：**必须真的注册回调**（见文件末尾 `__touch` 的说明）──────────
+    //
+    // 这里原先写的是 `function () {}` —— 空实现，回调直接被丢掉。
+    // 后果是**事件链从来没有被这一侧测过**：`wx.onTouchStart` 是这条路径上
+    // 唯一的入口，空实现等于把整条链路（触摸 → 桥 → Pixi → pointertap）挖掉了，
+    // 于是「画面正常但点不动」这类故障在有 DOM 的宿主里永远报绿。
+    // （2026-09-21 用户实测：IDE 模拟器预览点不动，而本地四套校验全绿。）
+    onTouchStart: function (cb) {
+      handlers.start.push(cb);
+      note('onTouchStart');
+    },
+    onTouchMove: function (cb) {
+      handlers.move.push(cb);
+      note('onTouchMove');
+    },
+    onTouchEnd: function (cb) {
+      handlers.end.push(cb);
+      note('onTouchEnd');
+    },
+    onTouchCancel: function (cb) {
+      handlers.cancel.push(cb);
+      note('onTouchCancel');
+    },
     offTouchStart: function () {},
     offTouchMove: function () {},
     offTouchEnd: function () {},
@@ -193,6 +213,55 @@
     offHide: function () {},
     onWindowResize: function () {},
     offWindowResize: function () {}
+  };
+
+  // ── 触摸派发：本页唯一的「玩家动作」入口 ─────────────────────────────
+  //
+  // 用法（驱动脚本侧的判据都走它）：
+  //     window.__tap(x, y)          // 一次完整点击（touchstart + touchend）
+  //     window.__touch('move', x, y)
+  //
+  // ## 为什么这件事不能省，以及为什么要**返回监听器个数**
+  //
+  // `wx.onTouch*` 是小游戏侧唯一的输入来源。这一页原来把它写成空实现，
+  // 于是「触摸 → 事件桥 → Pixi 的 pointertap」整条链在本宿主里**从未被执行过**：
+  // 四套校验全绿，而 IDE 模拟器上玩家点不动。判据缺一条，故障就藏一层。
+  //
+  // 返回值是给判据用的**诊断信息**，不是装饰：
+  //     0 → 事件桥根本没装（`nativeDom` 那一侧提前 return 了，或 wx 没拿到）
+  //     >0 → 桥装上了，接下来才是「事件能不能走到 Pixi」的问题
+  // 这两种情况的修法完全不同，合并成「点不动」一个现象会白查很久。
+  function touchPoint(x, y) {
+    return {
+      clientX: x,
+      clientY: y,
+      pageX: x,
+      pageY: y,
+      identifier: 0,
+      force: 1,
+      timeStamp: performance.now()
+    };
+  }
+
+  globalThis.__touch = function (phase, x, y) {
+    var t = touchPoint(x, y);
+    var ev = {
+      type: 'touch' + phase,
+      // 真实事件里 touchend/touchcancel 的 `touches` 是空的（手指已抬起），
+      // 而 `changedTouches` 才有那根手指 —— 桥读的是 changedTouches，别填错。
+      touches: phase === 'end' || phase === 'cancel' ? [] : [t],
+      changedTouches: [t],
+      timeStamp: t.timeStamp
+    };
+    var list = handlers[phase] || [];
+    for (var i = 0; i < list.length; i += 1) list[i](ev);
+    return list.length;
+  };
+
+  globalThis.__tap = function (x, y) {
+    var n = globalThis.__touch('start', x, y);
+    globalThis.__touch('end', x, y);
+    return n;
   };
 
   // 小游戏里 GameGlobal 就是全局对象本身

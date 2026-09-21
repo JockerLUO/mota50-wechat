@@ -235,7 +235,10 @@ export class Game {
       // 前者只能证明路径写法没错，加载失败时 `ready` 保持 false，渲染层静默换用
       // `icons.ts` 的程序化图形 —— 画面照旧出得来，只是美术不对。
       // 也就是说这一条失败时**看不出任何异常**，只能靠显式断言。
-      atlasReady: atlas.ready
+      atlasReady: atlas.ready,
+      // 图集失败的原因。`ready=false` 本身是**静默回退**（画面只是变朴素），
+      // 真机上光看画面分不出「加载失败」与「本来就没素材」—— 把原因带出来。
+      atlasError: atlas.lastError
     };
   }
 

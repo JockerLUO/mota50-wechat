@@ -71,6 +71,87 @@ export const canvasBus = new EventBus();
 export const documentBus = new EventBus();
 export const globalBus = new EventBus();
 
+/**
+ * Pixi 会注册的事件类型 —— 只有这几个坑位需要接到我们自己的总线上。
+ *
+ * 列表来自 `events/EventSystem.mjs` 的 `_addEventListeners()`（mouse 与 pointer 两个分支
+ * 加 touch 附加项，一次性全列上，免得将来 pixi 换分支时漏一个）：
+ *
+ *     document   ← mousemove / pointermove
+ *     domElement ← mousedown / mouseout / mouseover / wheel（pointer 分支同理）
+ *     globalThis ← mouseup / pointerup
+ *     附加       ← touchstart / touchmove / touchend（`supportsTouchEvents` 为真时）
+ *
+ * 只拦这些、其余原样转发，是为了把对宿主的影响限制在「Pixi 真正用到的那几个类型」上 ——
+ * 这几个对象（`document` / `window`）是宿主的，我们只借坑位，不做整体替换。
+ */
+const PIXI_EVENT_TYPES = [
+  'mousedown',
+  'mouseup',
+  'mousemove',
+  'mouseout',
+  'mouseover',
+  'wheel',
+  'pointerdown',
+  'pointerup',
+  'pointermove',
+  'pointerout',
+  'pointerover',
+  'touchstart',
+  'touchend',
+  'touchmove'
+];
+
+/**
+ * 把宿主对象上的 `addEventListener` / `removeEventListener` **选择性**接到某个总线上。
+ *
+ * ## 为什么必须做这件事（而不是「有原生 DOM 就让路」）
+ *
+ * 小游戏的输入**只能从 `wx.onTouch*` 来**（真机如此，IDE 模拟器也如此：模拟器把鼠标
+ * 转成 wx 触摸事件，上屏画布是原生视图，不受页面 DOM 事件系统管辖）。而 Pixi 会把监听
+ * 注册到原生 `document` / `window` / canvas 上 —— 那些对象**永远收不到**小游戏的触摸。
+ * 不给它换目标，玩家看到的就是「画面完全正常、就是点不动」。
+ *
+ * ## 为什么是「选择性 hook」而不是整体替换
+ *
+ * `document` / `window` 是宿主的东西，我们只借 Pixi 用到的类型（见 `PIXI_EVENT_TYPES`），
+ * 其余调用原样转发给原生实现 —— 宿主自己的监听行为不变。整体替换会把宿主的事件
+ * 一并吞掉，那是在解决一个问题的同时制造另一个。
+ *
+ * ## 时机
+ *
+ * 本文件是入口第一个 import、比 pixi 先求值，而 Pixi 的注册发生在**渲染器构造时**
+ * （`EventSystem.setTargetElement()` → `_addEventListeners()`）—— 中间隔着整个模块求值，
+ * 所以「在模块顶层就 hook 好」是完全来得及的。等到游戏起来再换就晚了。
+ */
+function hookEventTarget(obj: Any, bus: EventBus): boolean {
+  if (!obj || typeof obj.addEventListener !== 'function') return false;
+  const rawAdd = obj.addEventListener;
+  const rawRemove = obj.removeEventListener;
+  const ours = (type: string) => PIXI_EVENT_TYPES.indexOf(type) >= 0;
+  try {
+    obj.addEventListener = function (type: string, fn: (ev: Any) => void, opts?: Any): void {
+      if (ours(type)) {
+        bus.addEventListener(type, fn);
+        return;
+      }
+      return rawAdd.call(this, type, fn, opts);
+    };
+    obj.removeEventListener = function (type: string, fn: (ev: Any) => void, opts?: Any): void {
+      if (ours(type)) {
+        bus.removeEventListener(type, fn);
+        return;
+      }
+      return rawRemove.call(this, type, fn, opts);
+    };
+  } catch (err) {
+    // 不可写 / 不可扩展的宿主对象 —— 不强行改，由 `installTouchBridge` 走「合成真事件」兜底。
+    console.warn('[minigame] 无法接管事件目标，改用合成事件兜底：', err);
+    return false;
+  }
+  return true;
+}
+
 // ── MouseEvent 替身 ─────────────────────────────────────────────────
 
 /**
@@ -102,6 +183,16 @@ export const globalBus = new EventBus();
 let displayElement: Any = null;
 
 /**
+ * 宿主对象上的事件坑位接管成功了吗（见 `hookEventTarget`）。
+ *
+ * 供 `installTouchBridge()` 决定「还要不要合成真事件兜底」：
+ * 全接管成功 → 总线一条路就够；有对象没接管上 → 它的监听还在原生实现上，得补真事件。
+ */
+let hookedDocument = false;
+let hookedGlobal = false;
+let hookedCanvas = false;
+
+/**
  * 合成事件必须带上 `target` —— 这一条**不是可选的**，它决定了点击能不能变成 tap。
  *
  * Pixi `EventSystem._onPointerUp` 里：
@@ -125,6 +216,8 @@ export class MiniMouseEvent {
   type: string;
   clientX: number;
   clientY: number;
+  pageX = 0;
+  pageY = 0;
   button: number;
   buttons: number;
   isTrusted = false;
@@ -133,6 +226,33 @@ export class MiniMouseEvent {
   target: Any = null;
   currentTarget: Any = null;
   timeStamp: number;
+  // ── 下面这些是「真 PointerEvent 有、我们的替身也得有」的字段 ──────────
+  //
+  // Pixi 的 `_bootstrapEvent` / `_transferMouseData` 会把它们**逐个读出来**
+  // 赋到联邦事件上（`event.altKey = nativeEvent.altKey` 这种）。读不到不是抛错，
+  // 而是把一个 `undefined` 灌进联邦事件 —— 平时看不出来，等某个判据或滤镜
+  // 恰好用它参与算术时，才会以 NaN 的形式在很远的地方冒出来。
+  // 补齐的成本是几行，而追一个 NaN 的成本是几小时。
+  pointerId = 1;
+  pointerType = 'mouse';
+  isPrimary = true;
+  width = 1;
+  height = 1;
+  tiltX = 0;
+  tiltY = 0;
+  twist = 0;
+  tangentialPressure = 0;
+  pressure = 0.5;
+  movementX = 0;
+  movementY = 0;
+  layerX = 0;
+  layerY = 0;
+  offsetX = 0;
+  offsetY = 0;
+  altKey = false;
+  ctrlKey = false;
+  metaKey = false;
+  shiftKey = false;
 
   constructor(type: string, init: Record<string, Any> = {}) {
     this.type = type;
@@ -147,6 +267,13 @@ export class MiniMouseEvent {
       this.srcElement = displayElement;
     }
     this.timeStamp = init.timeStamp ?? (g.performance?.now?.() ?? Date.now());
+    // `pageX/pageY` 缺省与 client 一致 —— 省略会让 Pixi 写出 `page.x = undefined`。
+    if (init.pageX == null) this.pageX = this.clientX;
+    if (init.pageY == null) this.pageY = this.clientY;
+    if (init.layerX == null) this.layerX = this.clientX;
+    if (init.layerY == null) this.layerY = this.clientY;
+    if (init.offsetX == null) this.offsetX = this.clientX;
+    if (init.offsetY == null) this.offsetY = this.clientY;
   }
 
   preventDefault(): void {}
@@ -245,10 +372,22 @@ export function patchDisplayCanvas(canvas: Any, width: number, height: number): 
   });
 
   if (nativeDom) {
-    // 原生 DOM 宿主：**只补宿主真正缺的那几样**，能读到原生值就一律不碰。
-    // `addEventListener` / `isConnected` 在真元素上都是只读或原型方法，
-    // 硬设要么抛（`Cannot set property isConnected of #<Node>`，实测撞到过），
-    // 要么把 pixi 的事件收进没人派发的 canvasBus（画面正常、点不动）。
+    // 原生 DOM 宿主：**只补宿主真正缺的那几样**，能读到原生值就一律不碰
+    //（`isConnected` 在真元素上是只读的，硬设会抛 —— 实测撞到过
+    //  `Cannot set property isConnected of #<Node>`）。
+    //
+    // ⚠️ 但 `addEventListener` 这一项**必须接管**（2026-09-21 实测修正）。
+    //
+    // 上一版认为「真元素上是原型方法，硬设要么抛、要么把 pixi 的事件收进没人派发的
+    // canvasBus（画面正常、点不动）」，于是让路了。这个推理一半对一半错：
+    //   - 「会抛」只在 `isConnected` 那类**只读访问器属性**上成立；`addEventListener`
+    //     是原型方法，实例上赋值只是 shadow 一个自有属性，不抛。
+    //   - 「收了没人派发」是**当时**的事实（那时触摸桥在 nativeDom 下整体让路），
+    //     但那是「桥的问题」，不该让事件目标去背 —— 桥一装上，canvasBus 就有人派发了。
+    //
+    // 而让路的代价是致命的：小游戏的触摸只能从 `wx.onTouch*` 来，宿主原生对象
+    // 永远收不到，pixi 的 `mousedown` 便挂在一个不会响的地方 —— **点不动**。
+    hookedCanvas = hookEventTarget(canvas, canvasBus);
     if (!canvas.style) canvas.style = {};
     let rect: Any = null;
     try {
@@ -271,6 +410,8 @@ export function patchDisplayCanvas(canvas: Any, width: number, height: number): 
   canvas.addEventListener = (type: string, fn: (ev: Any) => void) => canvasBus.addEventListener(type, fn);
   canvas.removeEventListener = (type: string, fn: (ev: Any) => void) => canvasBus.removeEventListener(type, fn);
   canvas.dispatchEvent = (ev: Any) => canvasBus.dispatchEvent(ev);
+  // 这一分支是「整体替换」，等价于 hook 成功 —— 记上，供触摸桥判断要不要补真事件。
+  hookedCanvas = true;
   // EventSystem 读 domElement.style（设 touchAction / cursor），缺了会抛
   if (!canvas.style) canvas.style = {};
   canvas.isConnected = true;
@@ -752,21 +893,41 @@ export function installGlobals(): void {
   installDocument();
 
   if (nativeDom) {
-    // 原生 DOM 宿主：事件由宿主自己派发，垫片**让路**。
-    // 这里不装 addEventListener/MouseEvent，理由见 `nativeDom` 的注释
-    // （一装就抛，侥幸装上反而变成「点不动」）。pixi 走浏览器分支即可。
+    // 原生 DOM 宿主：`document` / `MouseEvent` 这类**垫片让路** —— 宿主有更好的实现，
+    // 硬装会抛（`document` / `navigator` 在 window 上是只读自有属性），
+    // 而 `installNavigator()` 排在 `installGlobals()` 第一位，一抛就把后面全部带走
+    //（含「抢上屏画布」），表现是**纯黑屏、且窗口里一条报错都没有**。
+    //
+    // ⚠️ 但**事件**不能让路（2026-09-21 实测修正，代价是「模拟器预览点不动」）。
+    //
+    // 小游戏的输入只能从 `wx.onTouch*` 来 —— IDE 模拟器也不例外（模拟器把鼠标转成
+    // wx 触摸事件，上屏画布是原生视图，不受页面 DOM 事件系统管辖）。而 Pixi 会把
+    // 监听注册到原生 `document` / `window` 上，那些对象永远不会响。
+    // 所以这里把 Pixi 用到的事件类型接到我们的总线上，由 `installTouchBridge()` 派发。
+    //
+    // 安全性：只拦 `PIXI_EVENT_TYPES` 那 14 个类型，其余调用原样转发给原生实现，
+    // 宿主自己的监听行为不变（见 `hookEventTarget`）。
     //
     // 注意 `installed` 照样要置位：`assertInstalled()` 问的是「环境有没有就绪」，
     // 而不是「垫片有没有装上」—— 让路也是一种就绪。
+    hookedDocument = hookEventTarget(g.document, documentBus);
+    hookedGlobal = hookEventTarget(g, globalBus);
     installed = true;
     return;
   }
 
   // 以下三项各自独立：任何一个装不上都不能连坐其余（这是实测踩出来的约束）
   safeAssign('MouseEvent', MiniMouseEvent);
-  safeAssign('addEventListener', (type: string, fn: (ev: Any) => void) => globalBus.addEventListener(type, fn));
+  hookedGlobal = safeAssign('addEventListener', (type: string, fn: (ev: Any) => void) =>
+    globalBus.addEventListener(type, fn)
+  );
   safeAssign('removeEventListener', (type: string, fn: (ev: Any) => void) => globalBus.removeEventListener(type, fn));
   safeAssign('dispatchEvent', (ev: Any) => globalBus.dispatchEvent(ev));
+  // 这一分支里 `document` 是 `installDocument()` 造的替身（它的 `addEventListener`
+  // 接的是 `documentBus`），`globalThis` 是上面那两句 —— 三处都在总线上。
+  // 标记出来，与 nativeDom 分支的 hook 结果**同义**：都是「事件已接到总线」，
+  // 供触摸桥与判据统一判读（否则要分两种宿主写两套判据，正是这一轮踩的坑）。
+  hookedDocument = true;
 
   installed = true;
 }
@@ -783,45 +944,230 @@ export function assertInstalled(): void {
   }
 }
 
-// ── 触摸 → 事件总线 ────────────────────────────────────────────────
+// ── 触摸 → 事件 ────────────────────────────────────────────────────
 
 /**
- * 把 `wx.onTouch*` 桥接成 Pixi 期望的鼠标事件。
+ * 把 `wx.onTouch*` 桥接成 Pixi 听得懂的事件。
  *
- * 三个去向必须和 Pixi 注册的位置一一对应：
- *   touchstart → canvas 上的 mousedown
- *   touchmove  → document 上的 mousemove
- *   touchend   → globalThis 上的 mouseup
+ * ## ⚠️ 这一条**不能**按 `nativeDom` 让路（2026-09-21 实测打回来的第二次）
  *
- * 另外 touchstart 时**先**补一个 mousemove：网页上指针本来就会先移动再按下，
+ * 上一版的开头是 `if (nativeDom) return;`，注释写着「原生 DOM 宿主事件本来就有」——
+ * 这个前提在小游戏里**不成立**：
+ *
+ *   | 宿主 | 玩家在画面上点一下，事件从哪来 |
+ *   |---|---|
+ *   | 真机小游戏 | `wx.onTouch*`（唯一来源） |
+ *   | **IDE 模拟器** | **`wx.onTouch*`** —— 模拟器把鼠标/触摸转成 wx 触摸事件，<br>上屏画布是**原生视图**，不受页面 DOM 事件系统管辖 |
+ *   | 浏览器网页端 | 原生 DOM 事件（但那不是本产物的运行环境） |
+ *
+ * 也就是说：**只要有 `wx`，输入就只能从 `wx.onTouch*` 来**。`nativeDom` 能说明
+ * 「宿主有原生 DOM 对象」，但推不出「玩家点的东西会经过那些对象」。
+ * 判据用错在这一条上，代价是「画面完全正常、就是点不动」——而它在本项目的
+ * 四套校验里**一条判据都碰不到**（有 DOM 那一侧的 `wx.onTouch*` 桩原本是空实现），
+ * 只能等用户在 IDE 里肉眼发现。
+ *
+ * ## 「送到哪儿」的答案：**先把监听挪到我们自己的对象上**
+ *
+ * 第一版（本轮）想的是「按宿主挑一条路送」：有原生 DOM 就合成真事件、否则进总线。
+ * 这条思路在 IDE 上被实测打回来了 —— 探针回传的事实是
+ * `pointerBranch=false nativeDom=true canReal=false`：
+ * 模拟器**没有** `PointerEvent`（pixi 走 mouse 分支），有原生 DOM，
+ * 而上屏画布 `instanceof HTMLCanvasElement === false`（是原生视图、不是页面里的画布元素），
+ * 于是「派发真事件」这条路过不去，总线那条又没人听 —— 两条路都断。
+ *
+ * 所以正确做法是**先统一监听位置**：用 `hookEventTarget` 把 canvas / document /
+ * globalThis 上 Pixi 用到的事件类型接到我们的总线（这一步在模块求值期完成，
+ * 早于 Pixi 的注册），然后无论什么宿主都只派发到三份 EventBus。
+ * 这样「有 DOM / 无 DOM」走的是同一条路径 —— 「PC 端能点、模拟器不能点」这种分叉
+ * 从根上消失了，而不是被逐个宿主打补丁。
+ *
+ * 合成真事件（`dispatchReal`）保留为**兜底**：万一某个宿主对象不可写、hook 失败，
+ * 它还能把事件送到原生监听上。两条都发不会重复触发 —— 其中一条必然是空操作。
+ *
+ * 事件**类型**由 Pixi 走哪条分支决定（见 `pointerBranch`）：宿主有 `PointerEvent`
+ * 时它挂 `pointerdown/move/up`，没有才挂 `mouse*`。派发的事件名必须与之一致。
+ *
+ * 另外 touchstart 时**先**补一个 move：网页上指针本来就会先移动再按下，
  * 小游戏没有悬停，不补的话右下的详情面板永远不会更新 —— 触摸设备上那等于废掉了。
  */
 export function installTouchBridge(): void {
-  // 原生 DOM 宿主（IDE 模拟器）：事件本来就有，不需要桥。
-  // 桥过去也没用 —— pixi 那边监听的是原生 document / window / canvas，
-  // 而我们的 wx.onTouch* 只会把事件送进 EventBus。
-  if (nativeDom) return;
   if (!wxApi) return;
+
+  /**
+   * Pixi 走哪个事件分支 —— 由它**构造 EventSystem 那一刻**的全局决定：
+   *
+   *     this.supportsPointerEvents = !!globalThis.PointerEvent;
+   *     this.supportsTouchEvents   = 'ontouchstart' in globalThis;
+   *
+   * 本文件比 pixi 先求值（入口第一个 import），所以现在读到的就是它将来读到的。
+   * ⚠️ 别改成「按 nativeDom 猜」：IDE 模拟器（有原生 DOM）里 `PointerEvent` 也存在，
+   * 但真机小游戏/Worker 宿主里两者都没有 —— 这两件事会分叉，分开判才不会错。
+   */
+  const pointerBranch = typeof g.PointerEvent === 'function';
+  const onDown = pointerBranch ? 'pointerdown' : 'mousedown';
+  const onMove = pointerBranch ? 'pointermove' : 'mousemove';
+  const onUp = pointerBranch ? 'pointerup' : 'mouseup';
 
   const first = (e: Any) => e?.changedTouches?.[0] ?? e?.touches?.[0];
 
-  const ev = (type: string, t: Any) =>
-    new MiniMouseEvent(type, {
+  /** 送进我们的 EventBus —— **主路径**。Pixi 的监听要么在垫片对象上（无 DOM 宿主），
+   *  要么被 `hookEventTarget` 接到了总线上（有 DOM 宿主），两种情况都走这里。 */
+  const dispatchBus = (bus: EventBus, type: string, t: Any, pressed: boolean): void => {
+    bus.dispatchEvent(
+      new MiniMouseEvent(type, {
+        clientX: t?.clientX ?? 0,
+        clientY: t?.clientY ?? 0,
+        button: 0,
+        buttons: pressed ? 1 : 0,
+        pointerType: pointerBranch ? 'touch' : 'mouse',
+        isPrimary: true,
+        pointerId: 1,
+        timeStamp: t?.timeStamp
+      })
+    );
+  };
+
+  /**
+   * 兜底：合成**真事件**，分别派发到画布 / document / globalThis。
+   *
+   * 只在「hook 没成功、Pixi 的监听还留在原生对象上」时才需要 —— 但它必须留着，
+   * 因为某些宿主对象不可写（`hookEventTarget` 会返回 false），那时这是唯一能送到的路。
+   *
+   * ## 为什么三个目标分开派发
+   *
+   * Pixi 的三处注册分别在 `canvas`（down）、`document`（move）、`globalThis`（up）上。
+   * 只派发到画布、指望它冒泡过去，依赖两个前提：画布真的在当前文档树里、且与监听者
+   * 属于同一个 realm。IDE 模拟器里这两条都不保证（上屏画布是原生视图，实测
+   * `el instanceof HTMLCanvasElement === false`）。分开派发把这层依赖去掉。
+   *
+   * ## ⚠️ 派发到 document / window 时必须补 `composedPath`
+   *
+   * 那种事件的 `target` 是 document / window 本身，而 Pixi 的 `_onPointerUp` 用它判
+   * 「是不是画布外」：`target !== this.domElement` → 事件名被改成 `pointerupoutside`，
+   * 而 `EventBoundary` **只在 `pointerup` 上生成 `pointertap`** —— 所有按钮与棋盘格
+   * 会一起失效（画面、悬停都正常，只有「点击」不生效）。
+   * Pixi 优先读 `nativeEvent.composedPath()[0]`，所以补一个返回 `[画布]` 的方法即可。
+   */
+  const dispatchReal = (type: string, t: Any, pressed: boolean): boolean => {
+    if (!nativeDom) return false;
+    const el = displayElement;
+    if (!el || typeof el.dispatchEvent !== 'function' || typeof g.MouseEvent !== 'function') return false;
+    const Ctor = pointerBranch ? g.PointerEvent : g.MouseEvent;
+    if (typeof Ctor !== 'function') return false;
+    const init: Any = {
       clientX: t?.clientX ?? 0,
       clientY: t?.clientY ?? 0,
       button: 0,
-      buttons: type === 'mouseup' ? 0 : 1,
-      timeStamp: t?.timeStamp
-    });
+      buttons: pressed ? 1 : 0,
+      bubbles: true,
+      cancelable: true,
+      composed: true
+    };
+    if (pointerBranch) {
+      init.pointerId = 1;
+      init.pointerType = 'touch';
+      init.isPrimary = true;
+    }
+    let ok = false;
+    for (const target of [el, g.document, g]) {
+      if (!target || typeof target.dispatchEvent !== 'function') continue;
+      try {
+        const ev = new Ctor(type, init);
+        if (target !== el) {
+          try {
+            Object.defineProperty(ev, 'composedPath', { value: () => [el] });
+          } catch {
+            /* 不可扩展的事件对象：那就只能接受 target 偏差 */
+          }
+        }
+        target.dispatchEvent(ev);
+        ok = true;
+      } catch (err) {
+        // 单个目标失败不连坐其余：内核之间对 init 字段的宽容度不同。
+        console.warn(`[minigame] 合成 ${type} 到 ${target === el ? 'canvas' : 'document/window'} 失败：`, err);
+      }
+    }
+    return ok;
+  };
+
+  /**
+   * 一次触摸事件 → 两个去向。
+   *
+   * 两条**都发**，而且不会重复触发：
+   *   - hook 成功时 —— 原生监听已不存在（同名类型被我们接管了），真事件派发变成空操作；
+   *   - hook 失败时 —— 总线上没有 Pixi 的监听，bus 派发变成空操作。
+   * 与其在启动时猜哪条路通，不如两条都走：成本是每次触摸多一次 no-op。
+   *
+   * 三份 bus 与 Pixi 的三处注册一一对应（canvas ← down、document ← move、globalThis ← up）。
+   */
+  const emit = (phase: 'down' | 'move' | 'up', t: Any): void => {
+    const pressed = phase !== 'up';
+    const realType = phase === 'down' ? onDown : phase === 'move' ? onMove : onUp;
+    const bus = phase === 'down' ? canvasBus : phase === 'move' ? documentBus : globalBus;
+    dispatchBus(bus, realType, t, pressed);
+    facts.realDispatch = dispatchReal(realType, t, pressed) || facts.realDispatch === true;
+  };
+
+  /** 诊断事实：本地判据与 IDE 探针都读它，用来区分「桥没装 / 装了但送法不对」。 */
+  const facts: Any = {
+    pointerBranch,
+    nativeDom,
+    realDispatch: null as boolean | null,
+    sent: 0,
+    /**
+     * 现算一遍此刻的事实。
+     *
+     * ⚠️ 不能在模块顶层算好：上屏画布要到 `reserveDisplayCanvas()` 才拿到，
+     * 而本函数在它**之前**执行 —— 那会儿算出来必然是空，报给探针就成了假证据。
+     * 这个函数由采集方（`main.ts` 的 boot 埋点）在游戏起来之后调用，结论才有意义。
+     */
+    probe: (): Any => ({
+      pointerBranch,
+      nativeDom,
+      // 三个事件坑位的接管情况 —— 全 true 表示「总线一条路就够」
+      hooked: { canvas: hookedCanvas, document: hookedDocument, global: hookedGlobal },
+      /**
+       * 上屏画布到底长什么样。
+       *
+       * 这一项是 2026-09-21 那次排障留下的：IDE 里实测
+       * `el instanceof HTMLCanvasElement === false`，但 pixi 又能把监听挂上去 ——
+       * 说明它是个「有 addEventListener / dispatchEvent 但不是当前 realm 的 canvas」
+       * 的对象。只记这俩能力（而不纠结它是什么类型），下次判断才有据可依。
+       */
+      canvas: displayElement
+        ? {
+            ctor: displayElement.constructor?.name ?? null,
+            hasDispatchEvent: typeof displayElement.dispatchEvent === 'function',
+            hasAddEventListener: typeof displayElement.addEventListener === 'function',
+            isHTMLCanvasElement:
+              typeof g.HTMLCanvasElement === 'function' ? displayElement instanceof g.HTMLCanvasElement : null,
+            isConnected: displayElement.isConnected ?? null
+          }
+        : null,
+      realDispatch: facts.realDispatch,
+      sent: facts.sent
+    })
+  };
+  g.__motaTouch = facts;
 
   wxApi.onTouchStart?.((e: Any) => {
     const t = first(e);
-    documentBus.dispatchEvent(ev('mousemove', t));
-    canvasBus.dispatchEvent(ev('mousedown', t));
+    facts.sent += 1;
+    emit('move', t);
+    emit('down', t);
   });
-  wxApi.onTouchMove?.((e: Any) => documentBus.dispatchEvent(ev('mousemove', first(e))));
-  wxApi.onTouchEnd?.((e: Any) => globalBus.dispatchEvent(ev('mouseup', first(e))));
-  wxApi.onTouchCancel?.((e: Any) => globalBus.dispatchEvent(ev('mouseup', first(e))));
+  wxApi.onTouchMove?.((e: Any) => {
+    facts.sent += 1;
+    emit('move', first(e));
+  });
+  wxApi.onTouchEnd?.((e: Any) => {
+    facts.sent += 1;
+    emit('up', first(e));
+  });
+  wxApi.onTouchCancel?.((e: Any) => {
+    facts.sent += 1;
+    emit('up', first(e));
+  });
 }
 
 // ── 上屏画布预订 ──────────────────────────────────────────────────

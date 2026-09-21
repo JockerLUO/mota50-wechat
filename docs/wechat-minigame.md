@@ -1108,15 +1108,115 @@ intro 选对象的判据改成了「`createElement` 是不是函数」（**可�
 
 ---
 
+### 9.10 第八个错：**「模拟器里画面正常，但点不动」**（输入的唯一来源是 `wx.onTouch*`）
+
+**现象**（用户实测）：IDE 模拟器预览跑起来了、画面完整，玩家点它没反应；
+同一份产物在 PC 端微信预览里**能点**。
+
+**根因**：`env.ts` 的 `installTouchBridge()` 开头写着 `if (nativeDom) return;` ——
+「宿主有原生 DOM 就让路」。这个前提在小游戏里**不成立**：
+
+| 宿主 | 玩家在画面上点一下，事件从哪来 |
+|---|---|
+| 真机小游戏 | `wx.onTouch*`（唯一来源） |
+| **IDE 模拟器** | **`wx.onTouch*`** —— 模拟器把鼠标/触摸转成 wx 触摸事件；上屏画布是**原生视图**，不受页面 DOM 事件系统管辖 |
+| PC 端微信（无 DOM） | `wx.onTouch*` |
+
+也就是说：**只要有 `wx`，输入就只能从 `wx.onTouch*` 来**。`nativeDom` 能说明「宿主有原生
+DOM 对象」，但推不出「玩家点的东西会经过那些对象」。让路的代价是：Pixi 的监听挂在原生
+`canvas` / `document` / `globalThis` 上，而 wx 的触摸被我们扔进没人听的总线里 ——
+**画面、悬停都正常，只有「点击」不生效**。
+
+**为什么这套判据以前全绿**：`verify:dom` 那一侧的 `wx.onTouch*` 桩原本是
+`function () {}` —— 空实现，把整条链路（触摸 → 桥 → Pixi → `pointertap`）**挖掉了**。
+无 DOM 那侧有端到端判据，有 DOM 这侧一条都没有。**判据缺一条，故障就藏一层。**
+
+**修法：先把监听位置统一，再谈派发。**
+
+不是「按宿主挑一条路送」，而是**在模块求值期（早于 Pixi 注册）把 Pixi 用到的
+事件类型接到我们自己的总线**（`hookEventTarget`：canvas / document / globalThis 三处，
+只拦 `PIXI_EVENT_TYPES` 那 14 个类型，其余原样转发，宿主自己的监听不受影响），
+然后一律派发到三份 `EventBus`。有 DOM 与无 DOM 就此走同一条路径 ——
+「PC 端能点、模拟器不能点」这种分叉从根上消失，而不是逐个宿主打补丁。
+
+合成真事件（`dispatchReal`）保留为**兜底**（宿主对象不可写时的最后一条路）；
+两条都发不会重复（其中一条必然是空操作）。
+
+**IDE 落盘给出的三条事实**（`boot` 段的 `touch` 栏，本轮据此定方案）：
+
+```
+pointerBranch=false   nativeDom=true   canReal=false   realDispatch=null
+canvas: { ctor: "...", isHTMLCanvasElement: false }
+```
+
+- `pointerBranch=false`：模拟器里**没有** `PointerEvent` → Pixi 走 **mouse 分支**
+  （挂 `mousedown` / `mousemove` / `mouseup`）。派发类型必须与之一致。
+- `nativeDom=true`：有原生 DOM、`document` 不可覆盖。
+- `isHTMLCanvasElement=false`：**上屏画布不是页面里的画布元素**（原生视图）。
+  所以「合成真事件派发到画布」这条路在 IDE 里走不通 —— 这是第一版修法被实测打回的原因。
+
+> 三条都**不能靠推理得到**，只能读回宿主事实。这也是为什么 `touch` 自述要写进探针：
+> 它不是装饰，是「这次修法在这个宿主里到底成不成立」的唯一判据来源。
+
+**新判据**（`verify:dom` 从 17 → 22 项，这一侧原本 0 条触摸判据）：
+
+| 判据 | 守的是什么 |
+|---|---|
+| 触摸桥装上了（`wx.onTouchStart` 监听器 > 0） | 桥有没有装。**返回 0 是诊断信息**，不是装饰 |
+| Pixi 的事件坑位已接管（canvas / document / global） | 三处缺一处就有一类事件送不到：缺 canvas → 按下收不到；缺 document → 悬停/详情面板不更新；缺 global → **抬手收不到，而 `pointertap` 正是抬手时生成的** |
+| 触摸送到棋盘上（`lastBoardClick` 命中点的那格） | 事件链 + 坐标映射（漏 `resolution` 会整体偏约 4 格） |
+| 触摸能驱动游戏（至少一个方向让勇者移动） | 端到端。与「命中」分开判：命中对了但没移动 = 那格本来走不通（游戏规则） |
+
+---
+
+### 9.11 第九个错：**「PC 端预览界面简陋」**（素材加载别被宿主能力牵着走）
+
+**现象**：PC 端微信预览里游戏能玩，但界面朴素 —— 图集没上，回退成了程序化图形。
+
+**根因**：Pixi 的 `loadTextures` 是「宿主有什么就用什么」：
+
+```js
+if (globalThis.createImageBitmap && config.preferCreateImageBitmap) {
+    src = await WorkerManager.loadImageBitmap(url, asset);   // blob worker 里 fetch(src)
+    // 或 loadImageBitmap(url) → DOMAdapter.get().fetch(url) + response.blob() + createImageBitmap
+} else {
+    src = DOMAdapter.get().createImage();  src.src = url;    // ← 只有这条对
+}
+```
+
+第一条分支的两个前提在小游戏里都站不住：blob worker 的 base URL 是 `blob:null/...`，
+**相对路径解析不了**；`wx.request` 是网络请求、读不了**包内文件**，而且小游戏没有 `Blob`。
+于是「素材能不能上」取决于宿主**碰巧**有没有 `createImageBitmap` ——
+桌面内核（PC 端微信、本地 Chromium）有 → 走进坏支路 → 静默回退。
+
+**修法**：`atlas.ts` 在小游戏端**显式**走 `wx.createImage()` + `ImageSource`，
+不再交给 `Assets.load` 去猜。网页端（无 `wx`）保持 `Assets.load`。
+
+两个容易漏的细节：
+
+- **必须有超时**。`wx.createImage()` 的 `onerror` 在部分失败形态下不触发，而没有 `onerror`
+  就意味着 Promise 永远 pending —— 而 `atlas.load()` 是 `await` 在 `Game.create()` 里的，
+  表现成**卡在启动、既无画面也无报错**。宁可图集失败（回退程序化图形），也不能拖死启动。
+- **失败要带原因**（`atlas.lastError` → 探针 `boot` 段的 `atlasError`）。
+  `ready=false` 是**静默回退**：画面上只是「变朴素了」，真机上根本分不出
+  「路径不对 / 宿主不给加载 / 超时」这几种完全不同的故障。
+
+**那条判据也要跟着升级**：`verify:dom` 里原本写着「图集加载状态（宿主差异，不计入判据）」，
+理由是「环境的锅」。但 PC 端预览同样退化了 —— 说明「宿主差异」这个解释是错的：
+**游戏素材加载不该由宿主能力抽签决定**。现在它是硬判据（`图集加载成功`），
+它守的正是「素材有没有真的用上」。
+
+---
+
 ## 10. 复现命令
 
 ```bash
 npm run build:minigame    # 构建产物（含 tsc --noEmit）
 npm run verify:sandbox    # 干净 V8（node:vm）宿主实测，9 项判据（含裸标识符视图 ×7）
-npm run verify:minigame   # 无 DOM 环境实测，30 项判据（含禁 unsafe-eval ×3）
-npm run verify:dom        # 有原生 DOM 宿主实测，17 项判据（含禁 unsafe-eval ×3）
+npm run verify:minigame   # 无 DOM 环境实测，30 项判据（含禁 unsafe-eval ×3、触摸端到端）
+npm run verify:dom        # 有原生 DOM 宿主实测，22 项判据（含触摸端到端 ×4、图集 ×1）
 npm run verify:visual     # 渲染层回归，8 项判据
-npm run verify:all        # 以上四套，共 64 项判据
+npm run verify:all        # 以上四套，共 69 项判据
 ```
 
 另有两个不在四套之列的取证工具 —— 它们读的都是**工具自己落盘的状态**，

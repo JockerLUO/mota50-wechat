@@ -32,6 +32,21 @@ import { Game } from '../app';
 
 const log = (...args: unknown[]) => console.log('[mota]', ...args);
 
+/**
+ * 取触摸桥的自述（`env.ts` 里挂的 `globalThis.__motaTouch`）。
+ *
+ * 用 try/catch 包着是因为它只在垫片装成功后才存在 —— 而「取不到」本身也是证据
+ * （说明 wx 没拿到、或 env 没装上），所以返回 null 而不是抛。
+ */
+function readTouchFacts(): unknown {
+  try {
+    const facts = (globalThis as { __motaTouch?: { probe?: () => unknown } }).__motaTouch;
+    return typeof facts?.probe === 'function' ? facts.probe() : null;
+  } catch {
+    return null;
+  }
+}
+
 // ── 顺序硬约束（详见 host.ts 注释）──────────────────────────────────
 // ① 先抢走上屏画布 —— 只有第一次 wx.createCanvas() 才是上屏那块
 try {
@@ -76,7 +91,13 @@ if (!probe.ok) {
         // IDE 有 `createImageBitmap`，Pixi 会走它的 bitmap 分支（在 blob worker 里
         // fetch 相对路径），而真机没有 Worker，走的是 Image 分支。两条路径不同，
         // 所以「IDE 里美术是矢量图」并不代表「真机也没美术」。
-        atlasReady: snapshot.atlasReady
+        atlasReady: snapshot.atlasReady,
+        atlasError: snapshot.atlasError ?? null,
+        // 触摸桥在**这个宿主**里实际选了哪条路（见 env.ts 的 installTouchBridge）。
+        // 这一项是给「模拟器/真机点不动」这类问题准备的：`canReal=false` 意味着
+        // 上屏画布不是宿主真 canvas，我们派发的合成事件到不了 Pixi 挂在原生
+        // document/window 上的监听 —— 那时要换机制（遮蔽宿主监听），而不是继续猜。
+        touch: readTouchFacts()
       });
       // 等首屏落定再取像素：取的是「玩家看到的画面」，不是 init 那一刻
       beaconShotAfter(() => game);
