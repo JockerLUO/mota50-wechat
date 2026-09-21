@@ -664,9 +664,12 @@ grep -o '"gameApp":false' *.json | wc -l   # → 2
 
 ### 两个顺带的反直觉点
 
-- **别信存储里的 `compileType`。** `reduxPersist:projectList` 里存的是**导入时的意图**（可能是
-  `game`），`project2_<项目绝对路径>` 才是**实际生效**的那份（已被服务端属性改写成 `weapp`）。
-  两个键会打架，看日志比看存储直接。
+- **`compileType` 有两个来源，会打架。** `reduxPersist:projectList` 里存的是**导入时的意图**，
+  `project2_<项目绝对路径>` 才是**实际生效**的那份。**别背结论，现读一遍最稳**：
+  2026-09-21 之前本机用的是「小程序测试号」`wxa075fdefa9d0a322`（`gameApp: false`），
+  两个键都是 `weapp`；换成**小游戏**测试号 `wxb64dbc7191c2a23e` 之后，
+  两个键都变成了 `game`，记录里的 `attr.gameApp` 也变成 `true`。用
+  `npm run ide:project` 一次看全（含 `project.config.json` 与磁盘上的 `app.json`/`game.json`）。
 - **`miniprogramRoot` 不是线索。** 小游戏工程也用它，工具自己会把它归一成 `""`。
 
 排错时先看日志，一眼就能定位：
@@ -675,6 +678,87 @@ grep -o '"gameApp":false' *.json | wc -l   # → 2
 grep -E "compileType changed|app.json" \
   "$HOME/Library/Application Support/微信开发者工具"/*/WeappLog/logs/*.log
 ```
+
+### 真机调试报 `ENOENT .../dist-minigame/app.json`：**这是工具侧状态问题，不是工程文件问题**
+
+换成小游戏测试号之后，再点「真机调试」会报：
+
+```
+Error: ENOENT: no such file or directory, open
+       '/Users/.../dist-minigame/app.json'
+```
+
+先说结论：**小游戏不该有 `app.json`，工具找不到它才是对的 —— 错的是工具把工程当成了小程序。**
+改工程文件解决不了这件事（见下），但值得把机制写清楚，因为报文和上一节那个
+「未找到 app.json」**长得像、其实不是一条路径**：
+
+| 报文 | 出处 | 含义 |
+|---|---|---|
+| `app.json: 在项目根目录未找到 app.json` | 小程序**编译管线** | 工具**确信**这是小程序（`compileType` 真的是 `weapp`） |
+| `ENOENT: no such file or directory, open '<绝对路径>/app.json'` | **打包器裸读文件** | 工具只是**没拿到类型**，就按默认的小程序分支去读 |
+
+第二条的完整链条（反解 `app.asar`，本机 wechatwebdevtools 36.6.0 得到）：
+
+```js
+// ① DevtoolsProject 构造函数：直接查表，没有兜底
+c = { weapp:"miniProgram", plugin:"miniProgramPlugin",
+      game:"miniGame",    gamePlugin:"miniGamePlugin" };
+this._type = c[e.compileType];          // compileType 缺失/拼错 → _type = undefined
+
+// ② 打包器判是不是小游戏
+function isGameApp(e) { return e.type === EProjectType.miniGame || e.type === EProjectType.miniGamePlugin; }
+...
+const J = isGameApp(n),
+      O = J ? "game.json" : "app.json",
+      N = e.join(L, O);
+let T = await IFileService.readFile(N, { encoding: "utf8" });   // ← 没有 try/catch
+```
+
+所以只要 `compileType` 不在那张表里（`undefined` / `""` / 拼成 `minigame`），
+① 得到 `undefined` → ② 判定「不是小游戏」→ 去读 `app.json` → 文件不存在 →
+**Node 的原始 ENOENT 直接冒到界面上**。
+
+**工程侧唯一要做对的事就是 `compileType` 有那个合法值**（合法值只有
+`weapp` / `game` / `plugin` / `gamePlugin`，小游戏写 `"game"`；
+`compileTypeConfig={weapp:"weapp",game:"game",...}`）。本机当前状态**是对的**：
+
+```
+compileType = "game"  →  工具内部 type = miniGame  ✅ 小游戏
+appid       = wxb64dbc7191c2a23e   attr.gameApp = true  attr.appType = 4（GAME）
+磁盘        = app.json 不存在、game.json 在位
+```
+
+那问题在哪？**在窗口层状态**。同一个工具里，工程记录与窗口状态**可以不一致**，
+而部分环节（真机调试/预览要走的那条）看的是后者：
+
+```
+工程记录 project2_<路径>      compileType = "game"        ← 对
+reduxPersist:toolbar         compileType.current = "weapp"  ← 不对
+reduxPersist:window          entrance.tab = "miniprogram"   ← 不对
+                             selectProjectOptions.tab = "miniprogram"
+```
+
+`npm run ide:project` 就是为这件事写的：一条命令把这四份状态、派生出来的内部 `type`、
+磁盘上的 `app.json`/`game.json` 和真机调试的上传情况全打出来。
+
+**修法（按代价从小到大，改工程文件无用）：**
+
+1. **工具 → 清缓存 → 清除全部缓存**，然后**完全重启**开发者工具；
+2. 还不行就**删掉工程 → 重新导入**（导入时入口窗口的 tab 要选**小游戏**，
+   AppID 用**小游戏**测试号），让四份状态一起重建；
+3. 之后 `npm run ide:project` 复查：应当只剩「窗口层不是小游戏」这一条消失。
+
+**顺带两个确认到的事实：**
+
+- **上传其实成功了。** 通知中心里有「**上传代码完成 · 编译后代码包大小：2.0 MB**」
+  （20:40:45），`previewComponent.uploadType = "remoteDebug"`、`autoUploadFailureText = ""`。
+  失败的是**之后**打开远程调试窗口那一步（`remoteDebugWindow.show = false`），
+  以及设备连接（`game-ios-debug` 的 `Device disconnected, reason: InternalError`）。
+  所以「预览」这条路是通的，真机调试卡在窗口/设备层。
+- **`game.json` 里的 `iOSHighPerformance` 别删。** 工具会警告
+  `无效的 game.json ["iOSHighPerformance"]`，但这是**它的 schema 落后** ——
+  该字段是微信小游戏**正式字段**，用来开 iOS 高性能模式
+  （需先在公众平台「生产提效包」里开通），删了反而丢掉能力。警告不影响编译。
 
 ---
 
@@ -1035,11 +1119,18 @@ npm run verify:visual     # 渲染层回归，8 项判据
 npm run verify:all        # 以上四套，共 64 项判据
 ```
 
-另有一个不在四套之列的取证工具：读 IDE 落盘的探针记录（**不需要服务端在跑**）：
+另有两个不在四套之列的取证工具 —— 它们读的都是**工具自己落盘的状态**，
+不需要任何服务进程在跑（IDE 只在点「编译」时重载游戏，那一刻服务端在不在取决于时序）：
 
 ```bash
-node tools/read-ide-storage.cjs          # 最新一份：构建号 / 宿主事实 / 裸标识符 / 时间线
-node tools/read-ide-storage.cjs --list   # 列出所有候选（带各自的构建号）
+npm run ide:storage             # 探针记录：构建号 / 宿主事实 / 裸标识符视图 / 错误时间线
+npm run ide:storage -- --list   # 列出所有候选（带各自的构建号）
+npm run ide:storage -- --png    # 把落盘的像素记录解成 assets/preview/ide-frame.png
+
+npm run ide:project             # 工程被判成什么类型：compileType → 内部 type、appid 属性、
+                                # 窗口层状态（工具栏/入口 tab）、磁盘上的 app.json/game.json、
+                                # 以及真机调试的上传到底成没成
+npm run ide:project -- --all    # 工具里登记的所有工程
 ```
 
 - `assets/preview/minigame-board.png`：无 DOM 宿主里 `transferToImageBitmap()` 出来的画面。

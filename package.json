@@ -22,7 +22,9 @@
     "typecheck": "tsc --noEmit",
     "validate": "node tools/validate-data.mjs",
     "import": "node tools/import-mota50.mjs",
-    "balance": "node tools/build-balance-check.mjs"
+    "balance": "node tools/build-balance-check.mjs",
+    "ide:storage": "node tools/read-ide-storage.cjs",
+    "ide:project": "node tools/read-ide-project.cjs"
   },
   "dependencies": {
     "pixi.js": "^8.6.6"
