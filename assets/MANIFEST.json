@@ -1,6 +1,6 @@
 {
   "meta": {
-    "generatedAt": "2026-09-21T03:32:37+00:00",
+    "generatedAt": "2026-09-21T14:05:37+00:00",
     "generator": "tools/build-assets.py",
     "baseTile": 16,
     "cell": 32,
@@ -2276,7 +2276,7 @@
             "h": 26
           }
         ],
-        "left": [
+        "right": [
           {
             "x": 68,
             "y": 0,
@@ -2328,7 +2328,7 @@
             "h": 26
           }
         ],
-        "right": [
+        "left": [
           {
             "x": 204,
             "y": 0,
@@ -2382,7 +2382,7 @@
             "h": 26
           }
         ],
-        "left": [
+        "right": [
           {
             "x": 356,
             "y": 0,
@@ -2434,7 +2434,7 @@
             "h": 26
           }
         ],
-        "right": [
+        "left": [
           {
             "x": 21,
             "y": 27,
@@ -2464,9 +2464,9 @@
       "src": "ArMM1998 / Zelda-like tilesets and sprites — character.png",
       "dirOrder": [
         "down",
-        "left",
+        "right",
         "up",
-        "right"
+        "left"
       ]
     },
     "npcs": {

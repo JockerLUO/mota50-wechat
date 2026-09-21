@@ -67,6 +67,10 @@ export interface NpcDef {
   name: string;
   sprite?: string;
   effects?: ItemEffect[];
+  /** 游戏内点击 NPC 时说的角色化台词（优先于 note） */
+  talk?: string;
+  /** 按楼层变化的台词；key 为楼层数字字符串 */
+  talkByFloor?: Record<string, string>;
   note?: string;
   goodsByFloor?: Record<string, unknown>;
 }

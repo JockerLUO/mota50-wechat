@@ -76,6 +76,7 @@ export class Board extends Container {
   readonly span: number;
 
   private hooks: BoardHooks;
+  private parapetLayer = new Container();
   private terrainLayer = new Container();
   private entityLayer = new Container();
   private overlay = new Graphics();
@@ -110,11 +111,13 @@ export class Board extends Container {
     this.span = cellPx * 11;
     this.hooks = hooks;
 
+    this.buildParapet();
+
     const bg = new Graphics();
     bg.roundRect(-6, -6, this.span + 12, this.span + 12, 14).fill(T.panel);
     bg.roundRect(-6, -6, this.span + 12, this.span + 12, 14).stroke({ width: 1, color: T.panelBorder });
 
-    this.addChild(bg, this.terrainLayer, this.entityLayer, this.heroLayer, this.overlay);
+    this.addChild(this.parapetLayer, bg, this.terrainLayer, this.entityLayer, this.heroLayer, this.overlay);
     this.buildTerrain();
     this.buildHero();
 
@@ -141,6 +144,56 @@ export class Board extends Container {
       if (x < 0 || y < 0 || x > 10 || y > 10) return;
       this.hooks.onClick?.(x, y);
     });
+  }
+
+  /**
+   * 棋盘外沿的高塔外檐：城垛 + 墙柱 + 石基。
+   *
+   * 它只作为场景装饰存在，不参与玩法：
+   * - 不占用 11×11 棋盘格子；
+   * - 不接收点击（Board 的 hitArea 仍是 0,0,span,span）；
+   * - 不遮挡任何实体或地形，放在最底层。
+   *
+   * 用程序化图形而不是贴图：外檐是「框架」不是「格子」，贴图旋转拼接容易
+   * 在四角留下缝隙；graphics 可以保证与当前主题色完全咬合。
+   */
+  private buildParapet(): void {
+    const g = new Graphics();
+    const S = this.cellPx;
+    const span = this.span;
+    const o = 14; // 外檐厚度
+    const topH = 10; // 城垛高度
+    const baseH = 8; // 底部石基高度
+
+    // 1) 外墙主体
+    g.rect(-o, -o, span + o * 2, span + o * 2).fill(T.wallDark);
+
+    // 2) 顶部城垛：把外沿宽度均分成 11 段，与内部列对齐；偶数段凸起、奇数段凹下
+    const topW = (span + o * 2) / 11;
+    for (let i = 0; i < 11; i++) {
+      const x = -o + i * topW;
+      const merlon = i % 2 === 0;
+      const h = merlon ? topH : topH * 0.55;
+      // 凸起用墙本色（比主体稍亮），凹口用更深的阴影，形成砖石层次感
+      const color = merlon ? T.wall : shade(T.wallDark, -0.22);
+      g.rect(x, -o - h, topW, h).fill(color);
+    }
+
+    // 3) 左右墙柱砖纹
+    const brickH = S * 0.22;
+    for (let i = 0; i < 11; i++) {
+      const y = i * S + S * 0.12;
+      // 左柱
+      g.rect(-o + 2, y, o - 4, brickH).fill(i % 2 === 0 ? T.wall : T.wallDark);
+      // 右柱
+      g.rect(span + 2, y, o - 4, brickH).fill(i % 2 === 0 ? T.wall : T.wallDark);
+    }
+
+    // 4) 底部石基
+    g.rect(-o, span, span + o * 2, baseH).fill(T.wallDark);
+    g.rect(-o, span, span + o * 2, 2).fill({ color: shade(T.wallDark, -0.3), alpha: 0.6 });
+
+    this.parapetLayer.addChild(g);
   }
 
   private buildTerrain(): void {
@@ -359,29 +412,14 @@ export class Board extends Container {
       view.monsterId = id;
       view.frameIdx = -1;
 
-      // 脚下的可行性名牌先定尺寸，精灵才好站在它上面。
-      //
-      // 为什么必须让精灵站上去，而不是压着精灵画：实测所有怪物素材的**下留白都是 0**
-      // （帧是底对齐归一化的，脚正好贴格子底沿），所以任何贴在格子底部的名牌
-      // 都会切掉怪物的脚 —— 蝙蝠会变成「只剩耳朵和翅膀」。而**上留白有 0–6px**，
-      // 上移是有余量的。
-      const fs = Math.max(7, S * 0.22);
-      const plateH = fs + 3;
+      // 怪物脚下的**战斗评级指示灯**只占很小空间；精灵脚仍要踩在格内。
+      // 素材下留白为 0，所以脚的位置由指示灯高度决定，避免切脚。
+      const plateH = Math.max(7, S * 0.22) + 3;
       const plateY = S - plateH - 1;
-      const standY = plateY + 1; // 精灵的脚落在名牌上沿
+      const standY = plateY + 1;
       //
-      // ⚠️ 已知代价：精灵因此**向上溢出格子**。格子 32px、普通怪物精灵正好 32px
-      // （16×16 素材 × drawScale 2），再叠一块 ~10px 的名牌，并集就有 42px。
-      // 实测（`tools/verify-visual.cjs` A5a）每一只怪都向上溢出 10px。
-      //
-      // 为什么不让精灵缩到能连名牌一起塞进 32px：那需要精灵 ≤22px，而 16px 素材
-      // 只能整数倍放大，22px 意味着 1.375 倍 —— 像素画会被插值糊掉。宁可溢出。
-      //
-      // 只有**第 0 行**会露出这个代价：棋盘上沿（LAYOUT.board.y = 100）到 HUD 下沿
-      // （LAYOUT.hud.h = 96）只有 4px 余量，面板再往上顶就会被 HUD 盖住。
-      // 实测（同一次 A5a）第 0 行怪物精灵的不透明像素从 y≈94.3 开始，
-      // 而面板上沿在 y=94 —— 也就是**刚好贴着上边框，并没有真的画到框外**。
-      // 结论：这是被量过的、有界的观感问题，不是缺陷；动手前请先看 A5a 的数字。
+      // 名字不再画在怪物下方（玩家要求底部不要有名称），完整名称与评级详情
+      // 已显示在右侧详情面板。
 
       const tex = atlas.ready ? atlas.monster(id, 'idle', 0) : null;
       if (tex) {
@@ -415,48 +453,19 @@ export class Board extends Container {
       }
       c.addChild(over);
 
-      // 名牌：**等级色底片 + 白字名字**，一个元素同时承担「能不能打」和「是什么」。
-      //
-      // 为什么不是「右上角一个指示灯 + 底下一个名牌」两个元素：
-      // 网格只有 32px，而普通怪物精灵（16×16 × drawScale 2）落屏正好 32×32 ——
-      // 一格塞不下三样东西。原来的做法是在精灵之外**再叠**一个浮在头顶的圆点，
-      // 结果是圆点压在精灵头上，还紧贴邻格的名牌，看上去弄不清属于谁；
-      // 名牌又盖住精灵的脚。三个元素互相打架。
-      //
-      // 合成一个之后占位反而更小（原来「名牌 22 + 圆点 10」的并集宽 24.5，
-      // 现在就是一块 22 宽的牌子），归属不再有歧义，精灵头顶也空了出来。
-      //
-      // 用等级色而不是家族色当底，是因为两者的信息价值不对等：
-      // 家族一眼就能从精灵身上看出来（同族靠换色做阶差），
-      // 而「这一击下去要掉多少血」是数值门玩法里真正要一眼看到的，
-      // 且它在棋盘上没有别的表达途径。家族色因此挪到兜底分支里（取不到评级时用）。
+      // 怪物脚下的**战斗评级指示灯**：只保留一个小色点，不写名字。
+      // 名字在详情面板里已经完整显示；格子只有 32px，底部再加字会切脚或压到邻格。
       const grade = this.hooks.gradeFor?.(id);
       const style = grade ? GRADE_STYLE[grade] : null;
-      const label = new Text({
-        text: shortName(mon.name),
-        style: {
-          fontFamily: '"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif',
-          fontSize: fs,
-          fontWeight: '700',
-          fill: T.onDark
-        }
-      });
-      label.anchor.set(0.5);
-      const plateW = Math.min(S - 1, label.width + 8);
-      const plateX = cx - plateW / 2;
-      const plateColor = style ? style.color : shade(pal.body, -0.62);
-      const chip = new Graphics();
-      chip
-        .roundRect(plateX, plateY, plateW, plateH, plateH * 0.32)
-        .fill({ color: shade(plateColor, -0.16), alpha: 0.9 });
-      // 描一圈更暗的边。等级色饱和度不低，压在同色系地砖上会「洇」进背景；
-      // 描边把名牌和地砖分开，在浅色地面与深色墙面上都能立住。
-      chip
-        .roundRect(plateX, plateY, plateW, plateH, plateH * 0.32)
-        .stroke({ width: 1, color: shade(plateColor, -0.55), alpha: 0.95 });
-      label.x = cx;
-      label.y = plateY + plateH / 2;
-      c.addChild(chip, label);
+      const dotW = Math.max(6, Math.round(S * 0.2));
+      const dotH = Math.max(4, Math.round(S * 0.12));
+      const dotY = S - dotH - 2;
+      const dotColor = style ? style.color : shade(pal.body, -0.62);
+      const dot = new Graphics();
+      // Pixi v8 用 `label` 而不是 `name`；设 `name` 会触发弃用警告。
+      dot.label = 'gradeDot';
+      dot.roundRect(Math.round(cx - dotW / 2), dotY, dotW, dotH, dotH / 2).fill(dotColor);
+      c.addChild(dot);
     } else if (type === 'item') {
       const item = data.items[id];
       if (!item) return view;

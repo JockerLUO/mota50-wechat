@@ -101,13 +101,46 @@ const server = http.createServer((req, res) => {
 
   const consoleMsgs = [];
   page.on('pageerror', (e) => consoleMsgs.push(`[pageerror] ${e.message}`));
-  page.on('console', (m) => {
+  page.on('console', async (m) => {
     if (m.type() !== 'error' && m.type() !== 'warning') return;
     if (m.text().includes('favicon')) return; // 浏览器自动请求，与本次无关
-    consoleMsgs.push(`[${m.type()}] ${m.text()}`);
+    // 警告有时是 Error 对象，m.text() 只给 stack；把 args 也 stringify 出来
+    const args = await Promise.all(
+      m.args().map((h) =>
+        h.evaluate((a) => {
+          if (a === undefined) return 'undefined';
+          if (a === null) return 'null';
+          if (typeof a === 'object' && a !== null && a.stack) return a.toString() + '\n' + a.stack;
+          try {
+            return typeof a === 'object' ? JSON.stringify(a) : String(a);
+          } catch {
+            return '[object]';
+          }
+        })
+      )
+    );
+    consoleMsgs.push(`[${m.type()}] ${args.join(' ')}`);
   });
 
   await page.goto(base, { waitUntil: 'load', timeout: 30000 });
+  await page.evaluate(() => {
+    const orig = console.warn;
+    console.warn = (...args) => {
+      const s = args
+        .map((a) => {
+          if (a === undefined) return 'undefined';
+          if (a === null) return 'null';
+          if (typeof a === 'object' && a.stack) return a.stack;
+          try {
+            return typeof a === 'object' ? JSON.stringify(a) : String(a);
+          } catch {
+            return '[object]';
+          }
+        })
+        .join(' ');
+      orig('WARN-CAPTURED:', s);
+    };
+  });
 
   const report = await Promise.race([
     resultPromise,

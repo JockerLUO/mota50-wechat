@@ -874,7 +874,9 @@ def gen_icon(kind: str) -> Image.Image:
 # 这张表不是规整网格：角色比 16px 格子高，且不同行带的帧距不一样。
 # 所以先按投影找出「行带」，再在每个行带里按列投影切帧，而不是硬套 16 的倍率。
 
-HERO_DIRS = ["down", "left", "up", "right"]
+HERO_DIRS = ["down", "right", "up", "left"]
+# NPC 素材的行带顺序与勇者不同：NPC_test.png 四行是 下/左/上/右
+NPC_DIRS = ["down", "left", "up", "right"]
 
 
 def slice_armm_rows(path: Path, row_specs):
@@ -1428,7 +1430,7 @@ def main() -> int:
             push_actor(f"hero.attack.{d}.{fi}", im, {"group": "hero", "anim": "attack", "dir": d, "frame": fi})
 
     for npc_id, (dk, lt) in NPC_STYLE.items():
-        for di, d in enumerate(HERO_DIRS):
+        for di, d in enumerate(NPC_DIRS):
             for fi, fr in enumerate(npc_frames[di]):
                 im = bottom_center(ramp(fr, dk, lt), 16, 26)
                 push_actor(f"npc.{npc_id}.{d}.{fi}", im, {"group": "npc", "npc": npc_id, "dir": d, "frame": fi})

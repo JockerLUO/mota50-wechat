@@ -350,7 +350,9 @@ export class DetailPanel extends Container {
       const npc = data.npcs[target.id];
       this.title.text = `${npc?.name ?? target.id}　${coord}`;
       this.badgeText.text = '';
-      this.pool.set(0, npc?.note ?? '', T.ink);
+      const shownFloor = opts.shownFloor ?? state.floor;
+      const line = npc?.talkByFloor?.[String(shownFloor)] ?? npc?.talk ?? npc?.note ?? '';
+      this.pool.set(0, line, T.ink);
       const goods = npc?.goodsByFloor as Record<string, { goods?: unknown[]; gifts?: unknown[] }> | undefined;
       const rows = goods?.[String(shownFloor)];
       if (rows) {
@@ -579,14 +581,21 @@ export class Pill extends Container {
   private active: boolean;
   private w: number;
 
-  constructor(text: string, width: number, private onClick: () => void, active = false) {
+  /**
+   * @param width 固定宽度，或 `'auto'` 按文字实际宽度 + 边距自适应。
+   *              中文在不同字体下的实际宽度与「字符数 × 12」常有偏差，
+   *              用 Text 实测宽度比硬算更稳，能避免右侧被切掉。
+   */
+  constructor(text: string, width: number | 'auto', private onClick: () => void, active = false) {
     super();
-    this.w = width;
     this.active = active;
     this.t = label(text, 11, T.ink, '700');
     this.t.anchor.set(0.5);
-    this.t.x = width / 2;
-    this.t.y = 9;
+    this.w = width === 'auto' ? Math.ceil(this.t.width) + 24 : width;
+    this.t.x = this.w / 2;
+    // 按钮高度 26，文字垂直居中；Pixi Text 的锚点在几何中心，
+    // 但不同字体的 descent 会让底部笔画冒出去，所以留 1px 余量偏上。
+    this.t.y = LAYOUT.toolbar.h / 2 - 0.5;
     this.addChild(this.bg, this.t);
     this.eventMode = 'static';
     this.cursor = 'pointer';
@@ -621,11 +630,10 @@ export class Toolbar extends Container {
     const { x, y } = LAYOUT.toolbar;
     let cx = x;
     const mk = (text: string, fn: () => void, active = false): Pill => {
-      const w = text.length * 12 + 20;
-      const p = new Pill(text, w, fn, active);
+      const p = new Pill(text, 'auto', fn, active);
       p.x = cx;
       p.y = y;
-      cx += w + 6;
+      cx += p.width + 6;
       this.addChild(p);
       return p;
     };

@@ -464,9 +464,19 @@ export function step(state: GameState, data: GameData, dir: Dir): StepResult {
     if (ent.type === 'npc') {
       const npc = data.npcs[ent.id];
 
+      /** 取 NPC 当前该说的台词：楼层特定 > 通用 talk > note > 兜底 */
+      const npcLine = (n: typeof npc): string => {
+        if (!n) return `${ent.id} 站在这里。`;
+        const floorLine = n.talkByFloor?.[String(floor)];
+        if (floorLine) return floorLine;
+        if (n.talk) return n.talk;
+        if (n.note) return n.note;
+        return `${n.name} 站在这里。`;
+      };
+
       // 商店（sourceId 39）：三选一买属性，走 core/shop.mjs 的递增定价
       if (npc?.sourceId === SHOP_SOURCE_ID) {
-        const msg = `${npc.name}：花钱可以立刻变强，但价格每买一次都会涨。`;
+        const msg = `${npc.name}：${npcLine(npc)}`;
         pushLog(state, msg, 'talk');
         return { kind: 'talk', moved: false, message: msg, openUi: 'shop' };
       }
@@ -475,13 +485,13 @@ export function step(state: GameState, data: GameData, dir: Dir): StepResult {
       if (npc?.sourceId === MERCHANT_SOURCE_ID) {
         const offers = merchantOffers(state, data, floor);
         if (offers.length > 0) {
-          const msg = `${npc.name}：看看货？（本层 ${offers.length} 项）`;
+          const msg = `${npc.name}：${npcLine(npc)}`;
           pushLog(state, msg, 'talk');
           return { kind: 'talk', moved: false, message: msg, openUi: 'merchant' };
         }
       }
 
-      const msg = npc?.note ? `${npc.name}：${npc.note}` : `${npc?.name ?? ent.id} 站在这里。`;
+      const msg = `${npc?.name ?? ent.id}：${npcLine(npc)}`;
       pushLog(state, msg, 'talk');
       // NPC 不可踩踏：对话后勇者留在原地
       return { kind: 'talk', moved: false, message: msg };

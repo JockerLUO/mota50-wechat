@@ -131,10 +131,24 @@ const CLIP_EXPR = {
 
   const problems = [];
   page.on('pageerror', (e) => problems.push(`[pageerror] ${e.message}`));
-  page.on('console', (m) => {
+  page.on('console', async (m) => {
     if (m.type() !== 'error' && m.type() !== 'warning') return;
     if (m.text().includes('favicon')) return;
-    problems.push(`[${m.type()}] ${m.text()}`);
+    const args = await Promise.all(
+      m.args().map((h) =>
+        h.evaluate((a) => {
+          if (a === undefined) return 'undefined';
+          if (a === null) return 'null';
+          if (typeof a === 'object' && a !== null && a.stack) return a.toString() + '\n' + a.stack;
+          try {
+            return typeof a === 'object' ? JSON.stringify(a) : String(a);
+          } catch {
+            return '[object]';
+          }
+        })
+      )
+    );
+    problems.push(`[${m.type()}] ${args.join(' ')}`);
   });
 
   await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'load', timeout: 30000 });

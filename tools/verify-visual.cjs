@@ -20,7 +20,7 @@
  *   A2 假墙不泄漏：`w` 格必须与「同位置真墙」走同一条规则（隐藏通路设计的命门）
  *   A3 无空键：不许出现 `?字符` 这种「没映射」的兜底态
  *   A4 变体是活的：地面/墙身键在棋盘上确实用到了多个变体（防止变体路径被绕过）
- *   A5 怪物布局：非 BOSS 精灵装得进一格；每只怪有且只有一个名牌，且名牌在格内
+ *   A5 怪物布局：非 BOSS 精灵装得进一格；每只怪有且只有一个战斗评级指示灯，且指示灯在格内
  *   A6 BOSS 与倍数：drawScale > 2 的必须是玩法上的 BOSS（不许有「巨大的杂兵」）
  *
  * 用法：node tools/verify-visual.cjs [--verbose]（先 npm run build）
@@ -283,17 +283,17 @@ function check(name, ok, detail) {
         const S = b.cellPx;
         const isSp = (n) => n && n.texture !== undefined && n.anchor !== undefined;
         const isTx = (n) => n && typeof n.text === 'string' && n.style !== undefined;
+        // 生产构建会压缩类名（Graphics → H），所以不能看 constructor.name；
+        // 渲染层给指示灯设置了唯一的 label='gradeDot'（Pixi v8 用 label 不用 name），直接按 label 找。
+        const isPlate = (n) => n && n.label === 'gradeDot';
         const out = [];
         for (const v of b.entityViews) {
           if (!v.node || !v.monsterId) continue;
           const sp = (v.node.children || []).find(isSp);
-          const tx = (v.node.children || []).find(isTx);
-          const nTx = (v.node.children || []).filter(isTx).length;
-          const nPlates = (v.node.children || []).filter(
-            (n) => n.constructor && n.constructor.name && !isSp(n) && !isTx(n)
-          ).length;
+          const plate = (v.node.children || []).find(isPlate);
+          const nPlates = (v.node.children || []).filter(isPlate).length;
           const gb = sp ? sp.getBounds() : null;
-          const tb = tx ? tx.getBounds() : null;
+          const pb = plate ? plate.getBounds() : null;
           const cellL = b.x + v.x * S;
           const cellT = b.y + v.y * S;
           out.push({
@@ -307,12 +307,11 @@ function check(name, ok, detail) {
             spriteBottom: gb ? gb.maxY : null,
             spriteTop: gb ? gb.minY : null,
             spriteH: gb ? gb.height : null,
-            textCount: nTx,
-            name: tx ? tx.text : null,
-            textL: tb ? tb.minX : null,
-            textR: tb ? tb.maxX : null,
-            textT: tb ? tb.minY : null,
-            textB: tb ? tb.maxY : null
+            plateCount: nPlates,
+            plateL: pb ? pb.minX : null,
+            plateR: pb ? pb.maxX : null,
+            plateT: pb ? pb.minY : null,
+            plateB: pb ? pb.maxY : null
           });
         }
         return out;
@@ -334,22 +333,22 @@ function check(name, ok, detail) {
         if (!boss && m.spriteH > m.S + 0.01) {
           layoutBad.push({ id: m.id, cell: [m.x, m.y], why: `精灵高 ${m.spriteH}px > 格子 ${m.S}px` });
         }
-        if (m.textCount !== 1) {
-          noPlate.push({ id: m.id, cell: [m.x, m.y], textCount: m.textCount });
+        if (m.plateCount !== 1) {
+          noPlate.push({ id: m.id, cell: [m.x, m.y], plateCount: m.plateCount });
           continue;
         }
-        // 名牌要留在格子里（允许 1px 抗锯齿溢出）
+        // 指示灯要留在格子里（允许 1px 抗锯齿溢出）
         const pad = 1.01;
         if (
-          m.textL < m.cellL - pad ||
-          m.textR > m.cellL + m.S + pad ||
-          m.textT < m.cellT - pad ||
-          m.textB > m.cellT + m.S + pad
+          m.plateL < m.cellL - pad ||
+          m.plateR > m.cellL + m.S + pad ||
+          m.plateT < m.cellT - pad ||
+          m.plateB > m.cellT + m.S + pad
         ) {
           outsideCell.push({
             id: m.id,
             cell: [m.x, m.y],
-            text: [m.textL.toFixed(1), m.textT.toFixed(1), m.textR.toFixed(1), m.textB.toFixed(1)],
+            plate: [m.plateL.toFixed(1), m.plateT.toFixed(1), m.plateR.toFixed(1), m.plateB.toFixed(1)],
             cellBox: [m.cellL, m.cellT, m.cellL + m.S, m.cellT + m.S]
           });
         }
@@ -365,11 +364,11 @@ function check(name, ok, detail) {
     );
 
     check(
-      `A5b 怪物名牌：每只怪恰好一个名牌，且落在自己格内`,
+      `A5b 怪物指示灯：每只怪恰好一个战斗评级指示灯，且落在自己格内`,
       noPlate.length === 0 && outsideCell.length === 0,
       noPlate.length === 0 && outsideCell.length === 0
-        ? `全部 ${monsterViews} 只都恰好一个名牌且未出格`
-        : `缺/多个名牌 ${noPlate.length} 只；名牌出格 ${outsideCell.length} 只，前 3：${JSON.stringify(outsideCell.slice(0, 3))}`
+        ? `全部 ${monsterViews} 只都恰好一个指示灯且未出格`
+        : `缺/多个指示灯 ${noPlate.length} 只；指示灯出格 ${outsideCell.length} 只，前 3：${JSON.stringify(outsideCell.slice(0, 3))}`
     );
 
     check('无控制台错误', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | ') || '干净');
