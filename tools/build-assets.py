@@ -1050,20 +1050,20 @@ OVERSIZE_BOSSES = {
 
 
 # ─────────────────────────────────────────────────────────────────────
-# 六、怪物映射（34 只）
+# 六、怪物映射（36 只，其中 35 只手绘）
 # ─────────────────────────────────────────────────────────────────────
 # 格式： id -> (0x72 源名, 变换函数, 绘制倍数, 变换说明)
 #
 # **源名写 `"gen"` 表示这只不取 0x72，改由本仓库按名称手绘** ——
-# 形状与配色见上面的 `PROC_MONSTERS`（0x72 地牢包 24 张角色底图全是人形，
-# 蝙蝠/龙/乌贼/石头人/史莱姆它一个都没有，只能自己画）。
+# 形状与配色见 `PROC_MONSTERS`。手绘的原因有两代：
+#   第一代：0x72 包里**没有**蝙蝠/龙/乌贼/石头人/史莱姆，只能自己画；
+#   第二代（本轮）：0x72 仅有的人形底图也**读不出职业与等级** ——
+#     `knight_m/f` 源图是像素机器人（浅蓝方壳 + 独眼），守卫/骑士 8 只全顶着它；
+#     同族等级只靠换色（ramp 铁→银→金），16px 下阶差几乎不可读。
+#   于是人形怪也搬进 32 网格手绘（守卫/骑士/法师/兽人/骷髅/幽魂六形），
+#   设计语言是「职业 = 装备剪影 × 等级 = 材质与覆盖度」，见 PROC_MONSTERS。
 # 两边必须严格一一对应，有断言拦（见 verify_mon_art）。
-#
-# 设计依据：这份怪物名单本身就成族（skeleton/skeletonSoldier/skeletonCaptain），
-# 原版 50 层魔塔就是靠同图换色做的三级进阶，这里沿用同一套做法 ——
-# 换色不是偷懒，是这个品类的既定视觉语言。
-# 变化一律用 ramp（保明暗结构）而非 hue_shift（会糊成一坨纯色），
-# 因为战士/骑士/骷髅这三族的阶差主要靠「材质」表达（铁→银→金）。
+# 现在唯一还取自 0x72 的是 ice_zombie（备用图，本作暂未用，名字与形象相符）。
 #
 # ⚠️ 绘制倍数只有 BOSS 能取 3，其余一律 2 —— 这条有断言（见 verify_monster_fit）。
 # 教训：曾经有 5 只非 BOSS（bigBat / vampireBat / bigSlime / slimeKing / stoneGolem）
@@ -1073,35 +1073,23 @@ OVERSIZE_BOSSES = {
 # BOSS 超出格子是刻意的（大块头本身是层级信号），而且实测 BOSS 都落在 y≥3，
 # 越出的是自己头顶那一格，不会捅出棋盘外框。
 
-def _r(dark, light):
-    return lambda im: ramp(im, dark, light)
-
-
-def _h(deg, sat=1.0, val=1.0):
-    return lambda im: hue_shift(im, deg, sat, val)
-
-
-IRON, SILVER, GOLD = (46, 48, 58), (214, 222, 236), (196, 148, 42)
-BONE, BLOOD, SHADOW = (78, 66, 52), (92, 16, 28), (28, 22, 40)
-STONE_F, STONE_L = (72, 70, 74), (176, 172, 168)
-
 MONSTERS = {
-    # ── 骷髅三阶：骨 → 铁甲 → 金甲 ────────────────────────────────
-    "skeleton":        ("skelet",        _r((72, 62, 48), (238, 232, 208)), 2, "骨色原样"),
-    "skeletonSoldier": ("skelet",        _r(IRON, SILVER),                  2, "铁甲渐变"),
-    "skeletonCaptain": ("skelet",        _r((92, 62, 12), (250, 214, 96)),  2, "金甲渐变"),
+    # ── 骷髅三阶：骨 → 铁甲 → 金甲（等级 = 护甲覆盖度，剪影骨架不变）──
+    "skeleton":        ("gen",           None,                              2, "手绘·骷髅：裸骨 + 锈剑"),
+    "skeletonSoldier": ("gen",           None,                              2, "手绘·骷髅兵：铁盔铁甲 + 铁剑"),
+    "skeletonCaptain": ("gen",           None,                              2, "手绘·骷髅队长：金盔金甲 + 圆盾"),
 
     # ── 亡灵族 ──────────────────────────────────────────────────
-    "ghostWarrior":    ("wogol",         _h(160, 0.55, 1.1),                2, "青白，幽灵感"),
-    "phantom":         ("wogol",         lambda im: alpha_mul(hue_shift(im, 250, 0.7), 0.7), 2, "紫，半透明"),
+    "ghostWarrior":    ("gen",           None,                              2, "手绘·幽魂武士：兜帽飘尾 + 幽光剑，青白"),
+    "phantom":         ("gen",           None,                              2, "手绘·幻影：同幽魂换紫 + 半透明"),
     "vampire":         ("gen",           None,                              2, "手绘：高领斗篷 + 獠牙 + 红眼（旧为 zombie 换紫，毫无吸血鬼特征）"),
     "ice_zombie":      ("ice_zombie",    None,                              2, "原样（备用图，本作暂未用）"),
 
     # ── 蝙蝠族：手绘（0x72 没有蝙蝠，旧版用 imp 小恶魔顶替）──────
     # ⚠️ 只有 OVERSIZE_BOSSES 里的那 4 只允许乘 3。其余一律乘 2 —— 见该常量的说明。
-    "bat":             ("gen",           None,                              2, "手绘：窄膜翼，棕"),
-    "bigBat":          ("gen",           None,                              2, "手绘：宽膜翼，深褐"),
-    "vampireBat":      ("gen",           None,                              2, "手绘：宽膜翼 + 獠牙，血红"),
+    "bat":             ("gen",           None,                              2, "手绘：德拉基式圆球身 + 呆毛，棕"),
+    "bigBat":          ("gen",           None,                              2, "手绘：长翅，深褐"),
+    "vampireBat":      ("gen",           None,                              2, "手绘：长翅 + 獠牙，血红"),
 
     # ── 史莱姆族：手绘（0x72 没有史莱姆，旧版用 swampy 绿衣人顶替）─
     "greenSlime":      ("gen",           None,                              2, "手绘：绿圆顶果冻"),
@@ -1109,30 +1097,30 @@ MONSTERS = {
     "bigSlime":        ("gen",           None,                              2, "手绘：更高的圆顶（用体量而不是换色表达「大」）"),
     "slimeKing":       ("gen",           None,                              2, "手绘：金 + 三尖冠"),
 
-    # ── 法师族：学徒 → 资深（蓝 → 紫） ─────────────────────────
-    "juniorMage":      ("wizzard_m",     _h(150, 1.2),                      2, "蓝袍"),
-    "seniorMage":      ("wizzard_m",     _h(230, 1.2),                      2, "紫袍"),
-    "juniorWizard":    ("wizzard_f",     _h(150, 1.2),                      2, "蓝袍"),
-    "seniorWizard":    ("wizzard_f",     _h(230, 1.2),                      2, "紫袍"),
-    "archmage":        ("orc_shaman",    lambda im: ramp(im, (92, 66, 14), (246, 214, 118)), 2, "金袍"),
-    "magicGuard":      ("necromancer",   _h(140, 1.25),                     2, "青，魔卫"),
+    # ── 法师族：学徒 → 资深 → 大法师（袍色蓝→紫→金 + 帽高 + 宝珠）──
+    "juniorMage":      ("gen",           None,                              2, "手绘·法师学徒：蓝袍短帽 + 木杖，白须"),
+    "seniorMage":      ("gen",           None,                              2, "手绘·法师：紫袍高帽 + 紫宝珠，白须"),
+    "juniorWizard":    ("gen",           None,                              2, "手绘·女法师学徒：蓝袍短帽 + 长发"),
+    "seniorWizard":    ("gen",           None,                              2, "手绘·女法师：紫袍高帽 + 长发"),
+    "archmage":        ("gen",           None,                              2, "手绘·大法师：金袍最高帽 + 金宝珠 + 长白须"),
+    "magicGuard":      ("gen",           None,                              2, "手绘·魔卫：青袍兜帽（无檐）+ 绿宝珠杖"),
 
-    # ── 兽人族 ──────────────────────────────────────────────────
-    "orc":             ("orc_warrior",   _h(0, 1.0),                        2, "原色"),
-    "orcWarrior":      ("masked_orc",    _h(20, 1.25, 0.9),                 2, "深绿"),
-    "goblin":          ("goblin",        None,                              2, "原样"),
+    # ── 兽人族：木棒 → 铁肩甲战斧 → 矮身短匕 ────────────────────
+    "orc":             ("gen",           None,                              2, "手绘·兽人：绿皮獠牙 + 木棒"),
+    "orcWarrior":      ("gen",           None,                              2, "手绘·兽人武士：深绿 + 铁肩甲 + 战斧"),
+    "goblin":          ("gen",           None,                              2, "手绘·哥布林：矮身大耳 + 短匕"),
 
-    # ── 守卫族：青铜 → 白银 → 黄金 ─────────────────────────────
-    "juniorGuard":     ("knight_m",      _r((86, 52, 24), (214, 148, 86)),  2, "青铜"),
-    "midGuard":        ("knight_m",      _r(IRON, SILVER),                  2, "白银"),
-    "seniorGuard":     ("knight_m",      _r((92, 62, 12), (250, 214, 96)),  2, "黄金"),
+    # ── 守卫族：青铜 → 白银 → 黄金（甲色三阶 + 盔羽无→短→高）─────
+    "juniorGuard":     ("gen",           None,                              2, "手绘·守卫：青铜甲 + 长枪圆盾（无盔羽）"),
+    "midGuard":        ("gen",           None,                              2, "手绘·守卫：白银甲 + 短盔羽"),
+    "seniorGuard":     ("gen",           None,                              2, "手绘·守卫：黄金甲 + 高盔羽 + 金饰金盾钉"),
 
-    # ── 剑士 / 骑士族 ──────────────────────────────────────────
-    "swordsman":       ("elf_m",         _h(330, 1.35),                     2, "红"),
-    "warrior":         ("knight_f",      _r((60, 58, 66), (196, 194, 202)), 2, "铁"),
-    "knight":          ("knight_m",      _h(170, 1.2),                      2, "蓝甲"),
-    "knightCaptain":   ("knight_f",      _r(IRON, SILVER),                  2, "白银"),
-    "darkKnight":      ("knight_m",      _r((14, 12, 20), (110, 106, 128)), 2, "近黑"),
+    # ── 剑士 / 骑士族：露脸轻装 → 铁甲 → 蓝钢红羽 → 白银金饰披风 → 暗黑 ─
+    "swordsman":       ("gen",           None,                              2, "手绘·剑士：露脸红发带 + 细剑（轻装）"),
+    "warrior":         ("gen",           None,                              2, "手绘·战士：铁全盔 + 鸢盾"),
+    "knight":          ("gen",           None,                              2, "手绘·骑士：蓝钢甲 + 红盔羽 + 鸢盾"),
+    "knightCaptain":   ("gen",           None,                              2, "手绘·骑士长：白银甲金饰 + 红披风金羽"),
+    "darkKnight":      ("gen",           None,                              2, "手绘·暗黑骑士：黑甲红目缝 + 黑披风"),
     "stoneGolem":      ("gen",           None,                              2, "手绘：方块躯干 + 砖缝 + 发光眼（旧为 ogre 食人魔）"),
 
     # ── BOSS：允许 ×3（48px）。层级信号靠尺寸，但**只有 BOSS 有这个特权** ──────
@@ -2435,6 +2423,347 @@ def _mon_demon(s) -> Image.Image:
     return im
 
 
+# ── 人形怪（六个形状，22 只）：职业 × 等级 ────────────────────────────
+#
+# 0x72 的人形底图有两个解决不了的问题：
+#   ① `knight_m/f` 源图是**像素机器人**（浅蓝方壳 + 独眼），守卫/骑士 8 只全顶着它；
+#   ② 同族等级只靠换色（ramp 铁→银→金），16px 下阶差几乎不可读。
+# 所以人形怪也搬进 32 网格手绘，设计语言是**两个正交维度**：
+#
+#   职业（你是什么兵）→ 靠**装备剪影**：枪+圆盾=守卫、大剑+鸢盾=骑士、
+#     尖帽+法杖=法师、战斧+獠牙=兽人、锈剑+骨架=骷髅、兜帽+飘尾=幽魂。
+#   等级（你练到几级）→ 靠**材质与覆盖度**：甲色三阶（青铜→白银→黄金）、
+#     盔羽无→短→高、披风无→有、护甲覆盖度（裸骨→铁甲→金甲）。
+#
+# 换等级只改颜色/加一件装备，剪影骨架不动 —— 同族一眼认出「是一家人」。
+
+_SKIN = (232, 190, 150, 255)
+_WOOD = (122, 86, 48, 255)
+_STEEL = (198, 204, 214, 255)
+
+# 材质三阶（等级的通用语言）。(armor, dark, light) —— 手绘不走 ramp，直接给三档。
+BRONZE_A = dict(armor=(150, 94, 46, 255), dark=(94, 56, 24, 255), light=(216, 152, 88, 255))
+SILVER_A = dict(armor=(158, 164, 180, 255), dark=(96, 102, 118, 255), light=(226, 232, 244, 255))
+GOLD_A = dict(armor=(216, 162, 44, 255), dark=(140, 94, 16, 255), light=(250, 216, 98, 255))
+IRON_A = dict(armor=(122, 128, 140, 255), dark=(74, 78, 90, 255), light=(192, 198, 210, 255))
+
+
+def _mon_soldier(s) -> Image.Image:
+    """
+    守卫：长枪（顶天立地杵在地上）+ 左臂圆盾 + 全盔。
+
+    等级记号：`plume_h` 盔羽 0=无(青铜) 1=短(白银) 2=高(黄金)；甲色即材质三阶；
+    `trim`/`boss` 黄金阶的金饰。枪杆落地 → 底行必有像素。
+    """
+    im = _mon_canvas()
+    armor, dark, light = s["armor"], s["dark"], s["light"]
+    # 长枪：枪尖 + 杆（y=4..31 落地）
+    _put(im, 25, 0, 4, 3, s["tip"])
+    _put(im, 26, 3, 2, 1, s["tip"])
+    _put(im, 26, 4, 2, 28, s["shaft"])
+    # 全盔：圆顶 + 盔沿 + 护鼻
+    _ell(im, 15, 7, 6, 4, armor)
+    _put(im, 10, 8, 11, 2, armor)
+    _put(im, 9, 9, 13, 1, dark)
+    _put(im, 14, 9, 3, 4, light)
+    # 盔羽（等级）
+    ph = s.get("plume_h", 0)
+    if ph and s.get("plume"):
+        _put(im, 13, 4 - ph * 2, 5, ph * 2 + 1, s["plume"])
+        _put(im, 14, 3 - ph * 2, 3, ph, s["plume"])
+    # 脸（盔沿下的窄条）
+    _put(im, 10, 10, 11, 3, s["skin"])
+    _put(im, 11, 10, 2, 2, MON_INK)
+    _put(im, 18, 10, 2, 2, MON_INK)
+    # 躯干甲 + 胸口金饰
+    _put(im, 9, 13, 13, 9, armor)
+    _put(im, 9, 13, 13, 1, light)
+    _put(im, 20, 14, 2, 7, dark)
+    if s.get("trim"):
+        _put(im, 9, 16, 13, 1, s["trim"])
+    # 腰带 + 腿 + 靴（靴到 y=31）
+    _put(im, 9, 21, 13, 2, dark)
+    _put(im, 15, 21, 2, 2, light)
+    _put(im, 10, 23, 5, 7, dark)
+    _put(im, 17, 23, 5, 7, dark)
+    _put(im, 9, 29, 7, 3, armor)
+    _put(im, 16, 29, 7, 3, armor)
+    # 持枪的手
+    _put(im, 22, 15, 5, 3, s["skin"])
+    # 圆盾（左臂）：外圈 + 盾面 + 盾钉
+    _ell(im, 5, 19, 5, 7, s["shield_rim"])
+    _ell(im, 5, 19, 3, 5, s["shield"])
+    _put(im, 4, 18, 2, 2, s.get("boss", light))
+    return im
+
+
+def _mon_knight(s) -> Image.Image:
+    """
+    重甲骑士：全盔 + 宽肩甲 + 鸢盾 + 大剑。
+
+    职业内分工：`open=1` 露脸戴头带（剑士的轻装）、全盔为重装；
+    等级记号：甲材质 + `plume` 盔羽 + `cape` 披风 + `trim` 金饰 +
+    `glow` 目缝发光（暗黑骑士）。
+    """
+    im = _mon_canvas()
+    armor, dark, light = s["armor"], s["dark"], s["light"]
+    # 披风（画在身后，只露两摆）
+    if s.get("cape"):
+        _put(im, 3, 12, 6, 16, s["cape"])
+        _put(im, 23, 12, 6, 16, s["cape"])
+        _put(im, 3, 26, 6, 2, dark)
+        _put(im, 23, 26, 6, 2, dark)
+    # 头：全盔（T 形目缝）or 露脸（头带 + 鬓发）
+    if s.get("open"):
+        _put(im, 10, 4, 12, 8, s["skin"])
+        _put(im, 9, 3, 14, 3, s["band"])
+        _put(im, 9, 6, 2, 6, s["band"])
+        _put(im, 21, 6, 2, 6, s["band"])
+        _put(im, 12, 8, 2, 2, MON_INK)
+        _put(im, 18, 8, 2, 2, MON_INK)
+        _put(im, 14, 11, 4, 1, dark)
+    else:
+        _put(im, 9, 3, 14, 9, armor)
+        _put(im, 9, 3, 14, 1, light)
+        _put(im, 14, 5, 3, 6, dark)
+        _put(im, 11, 8, 10, 2, dark)
+        if s.get("glow"):
+            _put(im, 11, 8, 3, 2, s["glow"])
+            _put(im, 18, 8, 3, 2, s["glow"])
+    # 盔羽
+    if s.get("plume"):
+        _put(im, 13, 0, 5, 4, s["plume"])
+        _put(im, 12, 1, 2, 3, s["plume"])
+    # 肩甲（宽出躯干）+ 胸甲
+    _put(im, 6, 12, 6, 4, light)
+    _put(im, 20, 12, 6, 4, light)
+    _put(im, 8, 14, 16, 8, armor)
+    _put(im, 8, 14, 16, 1, light)
+    if s.get("trim"):
+        _put(im, 8, 17, 16, 1, s["trim"])
+        _put(im, 15, 14, 2, 8, s["trim"])
+    # 腹甲 + 腿甲 + 铁靴（y=29..31 落地）
+    _put(im, 10, 22, 12, 3, dark)
+    _put(im, 10, 25, 5, 5, armor)
+    _put(im, 17, 25, 5, 5, armor)
+    _put(im, 9, 29, 7, 3, dark)
+    _put(im, 16, 29, 7, 3, dark)
+    # 大剑（右手直举：刃 + 护手 + 柄）
+    _put(im, 26, 1, 3, 15, s["blade"])
+    _put(im, 26, 1, 1, 15, light)
+    _put(im, 23, 16, 9, 2, s.get("trim", light))
+    _put(im, 26, 18, 3, 5, dark)
+    _put(im, 24, 20, 3, 2, s.get("skin", light))
+    # 鸢盾（左臂）：上宽下收尖
+    if s.get("shield"):
+        _put(im, 1, 12, 8, 10, s["shield"])
+        _put(im, 2, 22, 6, 3, s["shield"])
+        _put(im, 3, 25, 4, 2, s["shield"])
+        _put(im, 1, 12, 8, 1, light)
+        _put(im, 3, 15, 4, 4, light)
+    return im
+
+
+def _mon_mage(s) -> Image.Image:
+    """
+    法师：尖帽/兜帽 + A 字长袍（下摆触地）+ 法杖顶宝珠。
+
+    职业记号：尖帽（`hat`）或兜帽（`hood`，魔卫）+ 杖顶宝珠；
+    等级记号：袍色（蓝→紫→金）+ `hat_h` 帽高 + 须（男）/长发（女）+ 宝珠色。
+    """
+    im = _mon_canvas()
+    robe, dark, light = s["robe"], s["dark"], s["light"]
+    hat = s.get("hat")
+    hood = s.get("hood")
+    # 帽（锥形，帽尖随 hat_h 抬高）或兜帽（圆顶包脸）
+    if hat:
+        hh = s.get("hat_h", 1)
+        apex = 4 - hh * 3
+        for k, y in enumerate(range(apex, 8)):
+            w = min(16, 2 + k * 2)
+            _put(im, 16 - w // 2, y, w, 1, hat)
+        _put(im, 7, 8, 18, 2, hat)
+        _put(im, 7, 9, 18, 1, dark)
+    else:
+        _ell(im, 16, 9, 8, 6, hood)
+        _put(im, 8, 12, 16, 2, hood)
+    # 脸 + 眼
+    _put(im, 11, 10, 10, 5, s["skin"])
+    _put(im, 12, 11, 2, 2, MON_INK)
+    _put(im, 18, 11, 2, 2, MON_INK)
+    # 袍（A 字，左右缘压暗，下摆 y=29..31 触地）
+    for y in range(15, 32):
+        w = 12 + int(round((y - 15) / 16 * 12))
+        x0 = 16 - w // 2
+        _put(im, x0, y, w, 1, robe)
+        _put(im, x0, y, 2, 1, dark)
+        _put(im, x0 + w - 2, y, 2, 1, dark)
+    _put(im, 3, 29, 26, 3, robe)
+    _put(im, 3, 31, 26, 1, dark)
+    if s.get("trim"):
+        _put(im, 10, 19, 12, 2, s["trim"])
+    # 须（男）或长发（女），画在袍之上
+    if s.get("beard"):
+        bl = s.get("beard_len", 0)
+        _put(im, 12, 14, 8, 4 + bl, s["beard"])
+        _put(im, 14, 18 + bl, 4, 2, s["beard"])
+    if s.get("hair"):
+        _put(im, 9, 10, 2, 7, s["hair"])
+        _put(im, 21, 10, 2, 7, s["hair"])
+    # 持杖的手 + 法杖（杆落地）+ 宝珠
+    _put(im, 22, 18, 4, 3, s["skin"])
+    _put(im, 26, 5, 2, 27, s["staff"])
+    _ell(im, 27, 3, 3, 3, s["orb"])
+    _put(im, 25, 1, 2, 2, light)
+    return im
+
+
+def _mon_orc(s) -> Image.Image:
+    """
+    兽人：绿皮 + 獠牙 + 尖耳，弯腰驼背的壮汉。
+
+    职业记号：武器（`weapon`：club 木棒 / axe 战斧 / dagger 短匕）；
+    等级记号：`pads` 铁肩甲、皮色深浅；`small=1` 矮化（哥布林：头大身短）。
+    """
+    im = _mon_canvas()
+    skin, dark, light = s["skin"], s["dark"], s["light"]
+    sm = 4 if s.get("small") else 0
+    # 尖耳（向外上）
+    _put(im, 5, 7 + sm, 3, 2, skin)
+    _put(im, 4, 9 + sm, 3, 3, skin)
+    _put(im, 24, 7 + sm, 3, 2, skin)
+    _put(im, 25, 9 + sm, 3, 3, skin)
+    # 头（宽颅 + 眉 + 大颚）+ 眼 + 獠牙
+    _ell(im, 16, 10 + sm, 8, 5, skin)
+    _put(im, 10, 8 + sm, 12, 1, dark)
+    _put(im, 11, 9 + sm, 2, 2, s["eye"])
+    _put(im, 19, 9 + sm, 2, 2, s["eye"])
+    _put(im, 11, 13 + sm, 10, 3, light)
+    _put(im, 12, 11 + sm, 2, 3, MON_WHITE)
+    _put(im, 18, 11 + sm, 2, 3, MON_WHITE)
+    # 躯干（壮）+ 肚皮 + 肩甲
+    _ell(im, 16, 20 + sm, 9 - sm // 2, 6, skin)
+    _ell(im, 16, 21 + sm, 5, 3, light)
+    if s.get("pads"):
+        _ell(im, 7, 15 + sm, 3, 3, s["pads"])
+        _ell(im, 25, 15 + sm, 3, 3, s["pads"])
+    # 腰带 + 腿 + 脚（y=31 触底）
+    _put(im, 9, 24 + sm, 14, 2, s["belt"])
+    leg_h = 4 if sm else 6
+    _put(im, 11, 26 + sm, 5, leg_h, dark)
+    _put(im, 17, 26 + sm, 5, leg_h, dark)
+    _put(im, 10, 31, 6, 1, dark)
+    _put(im, 16, 31, 6, 1, dark)
+    # 武器（右手）
+    wp = s.get("weapon", "club")
+    if wp == "axe":
+        _put(im, 26, 8, 2, 20, s["shaft"])
+        _put(im, 22, 4, 8, 5, s["blade"])
+        _put(im, 24, 3, 4, 2, s["blade"])
+    elif wp == "dagger":
+        _put(im, 27, 18, 2, 8, MON_WHITE)
+        _put(im, 26, 24, 4, 2, s["belt"])
+    else:
+        _put(im, 26, 6, 2, 22, s["shaft"])
+        _put(im, 24, 3, 6, 5, s["shaft"])
+        _put(im, 23, 2, 2, 2, s["belt"])
+        _put(im, 29, 4, 2, 2, s["belt"])
+    return im
+
+
+def _mon_skeleton(s) -> Image.Image:
+    """
+    骷髅：颅骨 + 肋骨 + 细骨腿 + 锈剑。
+
+    等级记号是**护甲覆盖度**：裸骨（skeleton）→ 铁盔铁甲（soldier）→
+    金盔金甲 + 圆盾（captain）。骨色不变，一眼读出「同一族练到几级」。
+    """
+    im = _mon_canvas()
+    bone, dark = s["bone"], s["joint"]
+    # 颅骨 + 眼窝 + 鼻腔 + 牙缝
+    _ell(im, 15, 7, 7, 5, bone)
+    _put(im, 9, 6, 13, 3, bone)
+    _ell(im, 11, 7, 2, 2, MON_INK)
+    _ell(im, 19, 7, 2, 2, MON_INK)
+    _put(im, 14, 9, 3, 2, MON_INK)
+    _put(im, 11, 12, 9, 2, bone)
+    for x in (12, 15, 18):
+        _put(im, x, 12, 1, 2, dark)
+    # 颈 + 胸腔（肋缝 + 中缝）
+    _put(im, 14, 14, 3, 1, dark)
+    _put(im, 9, 15, 13, 7, bone)
+    for y in (16, 18, 20):
+        _put(im, 10, y, 11, 1, dark)
+    _put(im, 15, 15, 1, 7, dark)
+    # 护甲（等级）：盖住肋
+    if s.get("armor"):
+        _put(im, 8, 14, 15, 7, s["armor"])
+        _put(im, 8, 14, 15, 1, s.get("trim", bone))
+        if s.get("trim"):
+            _put(im, 8, 18, 15, 1, s["trim"])
+    # 骨盆 + 臂骨 + 腿骨 + 足（y=31 触底）
+    _put(im, 10, 22, 11, 3, bone)
+    _put(im, 13, 23, 5, 1, dark)
+    _sym(im, 6, 15, 2, 9, bone)
+    _put(im, 5, 24, 3, 2, bone)
+    _put(im, 24, 24, 3, 2, bone)
+    _put(im, 11, 25, 4, 6, bone)
+    _put(im, 17, 25, 4, 6, bone)
+    _put(im, 10, 31, 6, 1, bone)
+    _put(im, 16, 31, 6, 1, bone)
+    # 锈剑（右手）
+    _put(im, 27, 5, 2, 14, s["blade"])
+    _put(im, 25, 19, 6, 2, dark)
+    _put(im, 27, 21, 2, 4, dark)
+    # 盔（等级）
+    if s.get("helm"):
+        _ell(im, 15, 4, 7, 3, s["helm"])
+        _put(im, 9, 5, 13, 1, s["helm"])
+        _put(im, 8, 6, 15, 1, dark)
+    # 圆盾（等级：队长）
+    if s.get("shield"):
+        _ell(im, 4, 18, 4, 6, s["shield"])
+        _ell(im, 4, 18, 2, 4, s.get("trim", bone))
+    return im
+
+
+def _mon_wraith(s) -> Image.Image:
+    """
+    幽魂武士：尖顶兜帽 + 虚化的飘尾下摆（中尾触地）+ 幽光剑。
+
+    `alpha` 半透明（幻影）由 mon_art_base 统一处理 —— 兜帽下是一张
+    只有两只发光眼的黑脸，没有可辨认的五官，这是「已经不是人」的关键。
+    """
+    im = _mon_canvas()
+    body, dark, light = s["body"], s["dark"], s["light"]
+    # 兜帽（尖顶）
+    _put(im, 13, 1, 6, 3, body)
+    _put(im, 11, 3, 10, 3, body)
+    _ell(im, 16, 9, 8, 5, body)
+    # 脸洞 + 发光眼
+    _ell(im, 16, 10, 4, 3, MON_INK)
+    _put(im, 12, 9, 3, 2, s["eye"])
+    _put(im, 17, 9, 3, 2, s["eye"])
+    # 袍身（上宽下收）+ 胸口幽光
+    _ell(im, 16, 17, 9, 6, body)
+    _ell(im, 16, 16, 6, 3, light)
+    _put(im, 8, 20, 16, 3, body)
+    # 飘尾：三条，中长侧短（中尾 y=29..31 触底）
+    _put(im, 12, 23, 8, 6, body)
+    _put(im, 13, 29, 6, 3, body)
+    _put(im, 7, 23, 4, 4, body)
+    _put(im, 8, 27, 3, 2, dark)
+    _put(im, 21, 23, 4, 4, body)
+    _put(im, 21, 27, 3, 2, dark)
+    # 幽光剑（右手）
+    if s.get("blade"):
+        _put(im, 27, 6, 2, 12, s["blade"])
+        _put(im, 27, 6, 1, 12, light)
+        _put(im, 25, 18, 6, 1, light)
+        _put(im, 26, 19, 4, 2, dark)
+    return im
+
+
 MON_SHAPES = {
     "slime": _mon_slime,
     "bat": _mon_bat,
@@ -2443,6 +2772,12 @@ MON_SHAPES = {
     "golem": _mon_golem,
     "vampire": _mon_vampire,
     "demon": _mon_demon,
+    "soldier": _mon_soldier,
+    "knight": _mon_knight,
+    "mage": _mon_mage,
+    "orc": _mon_orc,
+    "skeleton": _mon_skeleton,
+    "wraith": _mon_wraith,
 }
 
 # 哪些怪物按名称手绘。键必须出现在 MONSTERS 里（有断言拦漏网）。
@@ -2485,14 +2820,107 @@ PROC_MONSTERS = {
     "demonKingTrue": dict(shape="demon", body=(186, 34, 40, 255), dark=(104, 14, 20, 255),
                           light=(240, 96, 88, 255), glow=(252, 226, 92, 255),
                           crown=(250, 214, 84, 255)),
+    # ── 人形怪（22 只）：0x72 的人形底图读不出职业与等级 ──────────────
+    # knight_m/f 源图是像素机器人（浅蓝方壳 + 独眼），守卫/骑士 8 只全顶着它；
+    # 同族等级只靠换色，16px 下阶差不可读。搬进 32 网格手绘：
+    #   职业 = 装备剪影（枪盾/剑盾/法杖/战斧/锈剑/幽光剑），
+    #   等级 = 材质三阶（青铜→白银→黄金）+ 羽饰/披风/护甲覆盖度。
+    # 守卫族：青铜无羽 → 白银短羽 → 黄金高羽 + 金饰金盾钉
+    "juniorGuard": dict(shape="soldier", **BRONZE_A, skin=_SKIN,
+                        shield=(150, 108, 60, 255), shield_rim=(94, 56, 24, 255),
+                        shaft=_WOOD, tip=_STEEL, plume_h=0),
+    "midGuard":    dict(shape="soldier", **SILVER_A, skin=_SKIN,
+                        shield=(58, 96, 168, 255), shield_rim=(30, 48, 96, 255),
+                        shaft=_WOOD, tip=_STEEL, plume=(198, 48, 48, 255), plume_h=1),
+    "seniorGuard": dict(shape="soldier", **GOLD_A, skin=_SKIN,
+                        shield=(216, 162, 44, 255), shield_rim=(140, 94, 16, 255),
+                        boss=(252, 234, 142, 255), trim=(252, 234, 142, 255),
+                        shaft=_WOOD, tip=_STEEL, plume=(198, 48, 48, 255), plume_h=2),
+    # 骑士族：剑士露脸轻装 → 铁甲战士 → 蓝钢骑士（红羽）→ 白银骑士长（金饰披风）→ 暗黑骑士
+    "swordsman":     dict(shape="knight", armor=(172, 122, 62, 255), dark=(110, 74, 32, 255),
+                          light=(226, 178, 108, 255), open=1, skin=_SKIN,
+                          band=(198, 48, 48, 255), blade=_STEEL),
+    "warrior":       dict(shape="knight", **IRON_A, shield=(96, 102, 118, 255), blade=_STEEL),
+    "knight":        dict(shape="knight", armor=(58, 96, 168, 255), dark=(30, 52, 104, 255),
+                          light=(120, 164, 228, 255), plume=(198, 48, 48, 255),
+                          shield=(46, 74, 140, 255), blade=_STEEL),
+    "knightCaptain": dict(shape="knight", **SILVER_A, trim=(250, 216, 98, 255),
+                          cape=(148, 32, 40, 255), plume=(250, 216, 98, 255),
+                          shield=(110, 116, 132, 255), blade=_STEEL),
+    "darkKnight":    dict(shape="knight", armor=(44, 40, 54, 255), dark=(22, 20, 30, 255),
+                          light=(96, 92, 112, 255), glow=(240, 62, 54, 255),
+                          cape=(58, 32, 72, 255), shield=(34, 30, 44, 255),
+                          blade=(150, 152, 168, 255)),
+    # 法师族：蓝袍学徒 → 紫袍资深（帽更高 + 宝珠）→ 金袍大法师（长白须 + 金宝珠）；
+    # 女法师同阶换长发；魔卫 = 青袍兜帽（无檐）
+    "juniorMage":   dict(shape="mage", robe=(58, 96, 190, 255), dark=(32, 56, 122, 255),
+                         light=(120, 164, 228, 255), skin=_SKIN, hat=(46, 76, 160, 255),
+                         hat_h=1, beard=(238, 236, 228, 255), staff=_WOOD,
+                         orb=(96, 156, 246, 255)),
+    "seniorMage":   dict(shape="mage", robe=(128, 62, 178, 255), dark=(78, 32, 118, 255),
+                         light=(190, 130, 228, 255), skin=_SKIN, hat=(96, 44, 140, 255),
+                         hat_h=2, beard=(244, 242, 236, 255), staff=_WOOD,
+                         orb=(214, 62, 200, 255), trim=(240, 202, 84, 255)),
+    "juniorWizard": dict(shape="mage", robe=(58, 96, 190, 255), dark=(32, 56, 122, 255),
+                         light=(120, 164, 228, 255), skin=_SKIN, hat=(46, 76, 160, 255),
+                         hat_h=1, hair=(150, 96, 40, 255), staff=_WOOD,
+                         orb=(96, 156, 246, 255)),
+    "seniorWizard": dict(shape="mage", robe=(128, 62, 178, 255), dark=(78, 32, 118, 255),
+                         light=(190, 130, 228, 255), skin=_SKIN, hat=(96, 44, 140, 255),
+                         hat_h=2, hair=(150, 96, 40, 255), staff=_WOOD,
+                         orb=(214, 62, 200, 255), trim=(240, 202, 84, 255)),
+    "archmage":     dict(shape="mage", robe=(196, 148, 42, 255), dark=(128, 88, 18, 255),
+                         light=(248, 214, 106, 255), skin=_SKIN, hat=(160, 116, 28, 255),
+                         hat_h=2, beard=(250, 250, 246, 255), beard_len=3,
+                         staff=_WOOD, orb=(252, 226, 92, 255), trim=(252, 234, 142, 255)),
+    "magicGuard":   dict(shape="mage", robe=(44, 142, 132, 255), dark=(22, 88, 82, 255),
+                         light=(110, 202, 188, 255), skin=_SKIN, hood=(28, 104, 96, 255),
+                         staff=_WOOD, orb=(96, 226, 206, 255)),
+    # 兽人族：木棒兽人 → 铁肩甲战斧武士 → 矮身短匕哥布林
+    "orc":        dict(shape="orc", skin=(96, 156, 74, 255), dark=(52, 96, 40, 255),
+                       light=(150, 204, 118, 255), eye=(232, 62, 48, 255),
+                       belt=(110, 74, 36, 255), weapon="club", shaft=_WOOD, blade=_STEEL),
+    "orcWarrior": dict(shape="orc", skin=(64, 120, 56, 255), dark=(34, 74, 32, 255),
+                       light=(112, 172, 96, 255), eye=(240, 80, 40, 255),
+                       belt=(74, 50, 26, 255), weapon="axe", shaft=_WOOD,
+                       blade=(176, 180, 192, 255), pads=(122, 128, 140, 255)),
+    "goblin":     dict(shape="orc", skin=(122, 172, 84, 255), dark=(70, 110, 48, 255),
+                       light=(178, 216, 132, 255), eye=(226, 190, 60, 255),
+                       belt=(96, 66, 32, 255), weapon="dagger", small=1),
+    # 骷髅族：裸骨锈剑 → 铁盔铁甲 → 金盔金甲 + 圆盾（覆盖度即等级）
+    "skeleton":        dict(shape="skeleton", bone=(232, 226, 206, 255),
+                            joint=(140, 128, 108, 255), blade=(148, 118, 82, 255)),
+    "skeletonSoldier": dict(shape="skeleton", bone=(238, 232, 212, 255),
+                            joint=(146, 134, 114, 255), armor=(122, 128, 140, 255),
+                            trim=(192, 198, 210, 255), helm=(122, 128, 140, 255),
+                            blade=(198, 204, 214, 255)),
+    "skeletonCaptain": dict(shape="skeleton", bone=(238, 232, 212, 255),
+                            joint=(146, 134, 114, 255), armor=(216, 162, 44, 255),
+                            trim=(250, 216, 98, 255), helm=(216, 162, 44, 255),
+                            blade=(250, 216, 98, 255), shield=(196, 148, 42, 255)),
+    # 亡灵：幽魂武士（青白 + 幽光剑）→ 幻影（同形换紫 + 半透明）
+    "ghostWarrior": dict(shape="wraith", body=(196, 226, 232, 255), dark=(120, 168, 184, 255),
+                         light=(238, 250, 252, 255), eye=(96, 210, 226, 255),
+                         blade=(170, 226, 238, 255)),
+    "phantom":      dict(shape="wraith", body=(150, 96, 190, 255), dark=(92, 52, 128, 255),
+                         light=(204, 150, 232, 255), eye=(226, 120, 250, 255),
+                         alpha=0.72),
 }
 
 
 def mon_art_base(art_id: str) -> Image.Image:
-    """画一帧静止姿态（16×16），收尾统一补描边 —— 与整套素材的描边语言一致。"""
+    """画一帧静止姿态（32 网格），收尾统一补描边 —— 与整套素材的描边语言一致。
+
+    spec 里的 `alpha`（幻影的半透明）在描边**之后**整体乘 —— 先乘再描边会把
+    描边也变淡，怪物在棋盘上会「糊」进背景。
+    """
     spec = dict(PROC_MONSTERS[art_id])
     shape = MON_SHAPES[spec.pop("shape")]
-    return add_outline(shape(spec), MON_INK)
+    alpha = spec.pop("alpha", None)
+    im = add_outline(shape(spec), MON_INK)
+    if alpha is not None:
+        im = alpha_mul(im, alpha)
+    return im
 
 
 def mon_art_frames(art_id: str) -> list[Image.Image]:

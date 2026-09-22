@@ -1,6 +1,6 @@
 {
   "meta": {
-    "generatedAt": "2026-09-22T11:56:33+00:00",
+    "generatedAt": "2026-09-22T12:27:05+00:00",
     "generator": "tools/build-assets.py",
     "baseTile": 16,
     "rasterTile": 64,
@@ -301,8 +301,8 @@
   },
   "monsters": {
     "skeleton": {
-      "src": "0x72/skelet",
-      "note": "骨色原样",
+      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "note": "手绘·骷髅：裸骨 + 锈剑",
       "drawScale": 0.5,
       "atlas": "monsters",
       "frame": {
@@ -347,8 +347,8 @@
       ]
     },
     "skeletonSoldier": {
-      "src": "0x72/skelet",
-      "note": "铁甲渐变",
+      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "note": "手绘·骷髅兵：铁盔铁甲 + 铁剑",
       "drawScale": 0.5,
       "atlas": "monsters",
       "frame": {
@@ -393,8 +393,8 @@
       ]
     },
     "skeletonCaptain": {
-      "src": "0x72/skelet",
-      "note": "金甲渐变",
+      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "note": "手绘·骷髅队长：金盔金甲 + 圆盾",
       "drawScale": 0.5,
       "atlas": "monsters",
       "frame": {
@@ -439,8 +439,8 @@
       ]
     },
     "ghostWarrior": {
-      "src": "0x72/wogol",
-      "note": "青白，幽灵感",
+      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "note": "手绘·幽魂武士：兜帽飘尾 + 幽光剑，青白",
       "drawScale": 0.5,
       "atlas": "monsters",
       "frame": {
@@ -485,8 +485,8 @@
       ]
     },
     "phantom": {
-      "src": "0x72/wogol",
-      "note": "紫，半透明",
+      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "note": "手绘·幻影：同幽魂换紫 + 半透明",
       "drawScale": 0.5,
       "atlas": "monsters",
       "frame": {
@@ -624,7 +624,7 @@
     },
     "bat": {
       "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
-      "note": "手绘：窄膜翼，棕",
+      "note": "手绘：德拉基式圆球身 + 呆毛，棕",
       "drawScale": 0.5,
       "atlas": "monsters",
       "frame": {
@@ -670,7 +670,7 @@
     },
     "bigBat": {
       "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
-      "note": "手绘：宽膜翼，深褐",
+      "note": "手绘：长翅，深褐",
       "drawScale": 0.5,
       "atlas": "monsters",
       "frame": {
@@ -716,7 +716,7 @@
     },
     "vampireBat": {
       "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
-      "note": "手绘：宽膜翼 + 獠牙，血红",
+      "note": "手绘：长翅 + 獠牙，血红",
       "drawScale": 0.5,
       "atlas": "monsters",
       "frame": {
@@ -945,8 +945,8 @@
       ]
     },
     "juniorMage": {
-      "src": "0x72/wizzard_m",
-      "note": "蓝袍",
+      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "note": "手绘·法师学徒：蓝袍短帽 + 木杖，白须",
       "drawScale": 0.5,
       "atlas": "monsters",
       "frame": {
@@ -991,8 +991,8 @@
       ]
     },
     "seniorMage": {
-      "src": "0x72/wizzard_m",
-      "note": "紫袍",
+      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "note": "手绘·法师：紫袍高帽 + 紫宝珠，白须",
       "drawScale": 0.5,
       "atlas": "monsters",
       "frame": {
@@ -1037,8 +1037,8 @@
       ]
     },
     "juniorWizard": {
-      "src": "0x72/wizzard_f",
-      "note": "蓝袍",
+      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "note": "手绘·女法师学徒：蓝袍短帽 + 长发",
       "drawScale": 0.5,
       "atlas": "monsters",
       "frame": {
@@ -1083,8 +1083,8 @@
       ]
     },
     "seniorWizard": {
-      "src": "0x72/wizzard_f",
-      "note": "紫袍",
+      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "note": "手绘·女法师：紫袍高帽 + 长发",
       "drawScale": 0.5,
       "atlas": "monsters",
       "frame": {
@@ -1129,8 +1129,8 @@
       ]
     },
     "archmage": {
-      "src": "0x72/orc_shaman",
-      "note": "金袍",
+      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "note": "手绘·大法师：金袍最高帽 + 金宝珠 + 长白须",
       "drawScale": 0.5,
       "atlas": "monsters",
       "frame": {
@@ -1175,8 +1175,8 @@
       ]
     },
     "magicGuard": {
-      "src": "0x72/necromancer",
-      "note": "青，魔卫",
+      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "note": "手绘·魔卫：青袍兜帽（无檐）+ 绿宝珠杖",
       "drawScale": 0.5,
       "atlas": "monsters",
       "frame": {
@@ -1221,8 +1221,8 @@
       ]
     },
     "orc": {
-      "src": "0x72/orc_warrior",
-      "note": "原色",
+      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "note": "手绘·兽人：绿皮獠牙 + 木棒",
       "drawScale": 0.5,
       "atlas": "monsters",
       "frame": {
@@ -1267,8 +1267,8 @@
       ]
     },
     "orcWarrior": {
-      "src": "0x72/masked_orc",
-      "note": "深绿",
+      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "note": "手绘·兽人武士：深绿 + 铁肩甲 + 战斧",
       "drawScale": 0.5,
       "atlas": "monsters",
       "frame": {
@@ -1313,8 +1313,8 @@
       ]
     },
     "goblin": {
-      "src": "0x72/goblin",
-      "note": "原样",
+      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "note": "手绘·哥布林：矮身大耳 + 短匕",
       "drawScale": 0.5,
       "atlas": "monsters",
       "frame": {
@@ -1359,8 +1359,8 @@
       ]
     },
     "juniorGuard": {
-      "src": "0x72/knight_m",
-      "note": "青铜",
+      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "note": "手绘·守卫：青铜甲 + 长枪圆盾（无盔羽）",
       "drawScale": 0.5,
       "atlas": "monsters",
       "frame": {
@@ -1405,8 +1405,8 @@
       ]
     },
     "midGuard": {
-      "src": "0x72/knight_m",
-      "note": "白银",
+      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "note": "手绘·守卫：白银甲 + 短盔羽",
       "drawScale": 0.5,
       "atlas": "monsters",
       "frame": {
@@ -1451,8 +1451,8 @@
       ]
     },
     "seniorGuard": {
-      "src": "0x72/knight_m",
-      "note": "黄金",
+      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "note": "手绘·守卫：黄金甲 + 高盔羽 + 金饰金盾钉",
       "drawScale": 0.5,
       "atlas": "monsters",
       "frame": {
@@ -1497,8 +1497,8 @@
       ]
     },
     "swordsman": {
-      "src": "0x72/elf_m",
-      "note": "红",
+      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "note": "手绘·剑士：露脸红发带 + 细剑（轻装）",
       "drawScale": 0.5,
       "atlas": "monsters",
       "frame": {
@@ -1543,8 +1543,8 @@
       ]
     },
     "warrior": {
-      "src": "0x72/knight_f",
-      "note": "铁",
+      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "note": "手绘·战士：铁全盔 + 鸢盾",
       "drawScale": 0.5,
       "atlas": "monsters",
       "frame": {
@@ -1589,8 +1589,8 @@
       ]
     },
     "knight": {
-      "src": "0x72/knight_m",
-      "note": "蓝甲",
+      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "note": "手绘·骑士：蓝钢甲 + 红盔羽 + 鸢盾",
       "drawScale": 0.5,
       "atlas": "monsters",
       "frame": {
@@ -1635,8 +1635,8 @@
       ]
     },
     "knightCaptain": {
-      "src": "0x72/knight_f",
-      "note": "白银",
+      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "note": "手绘·骑士长：白银甲金饰 + 红披风金羽",
       "drawScale": 0.5,
       "atlas": "monsters",
       "frame": {
@@ -1681,8 +1681,8 @@
       ]
     },
     "darkKnight": {
-      "src": "0x72/knight_m",
-      "note": "近黑",
+      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "note": "手绘·暗黑骑士：黑甲红目缝 + 黑披风",
       "drawScale": 0.5,
       "atlas": "monsters",
       "frame": {
