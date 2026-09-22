@@ -118,7 +118,8 @@ export class Game {
     this.itemBar = new ItemBar((id) => this.onUseItem(id));
     this.toolbar = new Toolbar({
       onToggleReveal: () => this.toggleReveal(),
-      onBrowse: () => this.openFloorPanel('browse'),
+      // 同一颗按钮两种语义：平时开楼层面板，浏览态下就是「返回」
+      onBrowse: () => (this.browseFloor !== null ? this.returnFromBrowse() : this.openFloorPanel('browse')),
       onRestart: () => this.restart()
     });
     // 对话框自己会在关闭时回调 —— 编排层据此清掉 modal 状态，
@@ -243,6 +244,16 @@ export class Game {
       // 见 lastBoardClick 的说明：用来把「事件没送到」和「送到了但走不通」分开
       lastBoardClick: this.lastBoardClick ? { ...this.lastBoardClick } : null,
       displayFloor: this.browseFloor ?? this.state.floor,
+      /**
+       * 是否正处于「楼层浏览」。
+       *
+       * 单列出来是因为它是**唯一会让棋盘输入整体失效**的状态（所有入口都写
+       * `browseFloor !== null` 就 return）。所以它一旦残留，症状就是「点了没反应」，
+       * 而不是某个显式的错误 —— 必须能被断言直接看到。
+       */
+      browsing: this.browseFloor !== null,
+      /** 工具栏中间那颗按钮的文案，断言「返回键真的摆出来了」用它 */
+      toolbarBrowseLabel: this.toolbar.browseLabel,
       // 渲染器信息：小游戏端要确认拿到的**不是**降级后的 CanvasRenderer。
       //
       // ⚠️ 这里返回**名字**，而不是 `renderer.type` 的原始数字，是踩过之后的决定：
@@ -664,11 +675,17 @@ export class Game {
     if (this.state.floor !== before || res.floorChanged !== undefined) {
       this.board.setFloor(this.state, this.data, this.state.floor);
       this.board.setHeroVisible(true);
+      // 换层意味着「勇者不在这里」这件事不再成立，浏览态必须一并清掉，
+      // 否则工具栏那颗会一直停在「返回第 N 层」上
+      this.browseFloor = null;
+      this.toolbar.setBrowsing(false, this.state.floor);
     } else {
       this.board.setHeroPos(this.state.pos.x, this.state.pos.y, res.moved);
     }
-    // 撞上怪物就挥一剑 —— 图集里的挥剑帧否则就是死素材
-    if (res.kind === 'battle') this.board.playHeroAttack();
+    // 撞上怪物就挥一剑。
+    // 方向要用**玩家按下的那个方向**而不是勇者当前朝向 —— 撞怪时勇者没移动，
+    // 朝向不会被更新，传当前朝向会出现「向右撞怪却朝下挥空」
+    if (res.kind === 'battle') this.board.playHeroAttack(dir);
     this.sync();
     // 引擎只「请求」打开界面，具体开哪块面板由编排层决定
     if (res.npc) this.openDialogue(res.npc);
@@ -776,30 +793,55 @@ export class Game {
   }
 
   private openFloorPanel(mode: 'teleport' | 'browse'): void {
-    this.floorPanel.open(this.state, mode);
+    this.floorPanel.open(this.state, mode, this.displayFloor);
+  }
+
+  /**
+   * 退出楼层浏览，回到勇者所在层。
+   *
+   * ## 为什么单独抽一个方法
+   *
+   * 走这条路的有三处：工具栏那颗「返回第 N 层」、面板右上角的「关闭」、以及 Esc。
+   * 之前只有后两条，而且**返回键只在面板可见时才存在** —— 而浏览态下选一层之后
+   * 面板会自己关上（见 `onFloorPicked`），于是玩家被卡在一个没有出口的状态里：
+   * 勇者被隐藏、棋盘对点击没反应（所有输入都被 `browseFloor !== null` 挡下），
+   * 唯一出路是键盘 Esc，而触摸设备上没有键盘。
+   *
+   * 实测证据（tools/probe-round.cjs）：
+   *   选完楼层后 → panelVisible=false、heroLayerVisible=false、browseFloor=7，
+   *   点棋盘 → 步数 0 → 0（点了没反应）。
+   */
+  private returnFromBrowse(): void {
+    if (this.browseFloor === null) return;
+    this.browseFloor = null;
+    this.floorPanel.close();
+    this.board.setFloor(this.state, this.data, this.state.floor);
+    this.board.setHeroVisible(true);
+    this.board.setHeroPos(this.state.pos.x, this.state.pos.y, false);
+    this.hoverTarget = { kind: 'none' };
+    this.toolbar.setBrowsing(false, this.state.floor);
+    this.sync();
   }
 
   private closeFloorPanel(): void {
-    const wasBrowsing = this.browseFloor !== null;
-    this.floorPanel.close();
-    if (wasBrowsing) {
-      this.browseFloor = null;
-      this.board.setFloor(this.state, this.data, this.state.floor);
-      this.board.setHeroVisible(true);
-      this.board.setHeroPos(this.state.pos.x, this.state.pos.y, false);
-      this.hoverTarget = { kind: 'none' };
+    // 面板的「关闭」在浏览态下就是「返回」；非浏览态只是收起面板
+    if (this.browseFloor !== null) {
+      this.returnFromBrowse();
+      return;
     }
+    this.floorPanel.close();
     this.sync();
   }
 
   private onFloorPicked(f: number): void {
     const mode = this.floorPanel.mode;
-    this.floorPanel.close();
 
     if (mode === 'teleport' && f !== this.state.floor && this.state.visited.includes(f)) {
       const res = travelTo(this.state, this.data, f);
       if (res.ok) {
+        this.floorPanel.close();
         this.browseFloor = null;
+        this.toolbar.setBrowsing(false, this.state.floor);
         this.board.setFloor(this.state, this.data, this.state.floor);
         this.board.setHeroVisible(true);
         this.sync();
@@ -808,11 +850,30 @@ export class Game {
       pushLog(this.state, res.message, 'warn');
     }
 
-    // 浏览模式：只切显示，勇者留在原地
+    // ── 浏览模式：只切显示，勇者留在原地 ────────────────────────────
+    //
+    // 选完这一层要**把面板收起来**，两个理由，缺一个都会让这套浏览等于白做：
+    //
+    //  1. 面板卡片是 y=240..700 —— 它正好盖住棋盘（y=178..544）。留着面板，
+    //     玩家根本看不清自己点开的那一层，"浏览"就成了只看一眼角落。
+    //  2. 面板的遮罩是**全屏**的，连工具栏一起盖住。于是工具栏那颗「返回第 N 层」
+    //     虽然已经把文案换好了，却按不着 —— 实测 `page.mouse` 点上去毫无反应，
+    //     用 Pixi 的 `hitTest` 一看命中的是面板自己的遮罩。
+    //
+    // 旧版之所以"不能关面板"，是因为那时候**返回键只在面板上**：一关就再没有出口。
+    // 现在出口在工具栏上（`toolbar.setBrowsing(true, …)` 把它变成「返回第 N 层」
+    // 并高亮），关掉面板反而让这个出口**看得见、也按得着**。面板收起后
+    // 「勇者被隐藏 + 棋盘不吃点击」这个状态依然存在，但它是**有出口的**，不再是死路。
     this.browseFloor = f;
     this.board.setHeroVisible(false);
     this.board.setFloor(this.state, this.data, f);
-    pushLog(this.state, `浏览第 ${f} 层（勇者仍在第 ${this.state.floor} 层，按 Esc 返回）`, 'info');
+    this.toolbar.setBrowsing(true, this.state.floor);
+    this.floorPanel.close();
+    pushLog(
+      this.state,
+      `浏览第 ${f} 层（勇者仍在第 ${this.state.floor} 层，点工具栏的「返回」回来）`,
+      'info'
+    );
     this.sync();
   }
 
@@ -824,9 +885,11 @@ export class Game {
     this.merchantPanel.close();
     this.shopPanel.close();
     this.dialogue.close();
+    this.floorPanel.close();
     this.hoverTarget = { kind: 'none' };
     this.deathLayer.removeChildren().forEach((c) => c.destroy({ children: true }));
     this.toolbar.revealPill.setActive(false);
+    this.toolbar.setBrowsing(false, this.state.floor);
     this.board.revealHidden = false;
     pushLog(this.state, '回到第 1 层，重新开始。', 'floor');
     this.board.setFloor(this.state, this.data, this.state.floor);

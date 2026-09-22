@@ -12,7 +12,7 @@
 import { Container, Graphics, Rectangle, Sprite, Text } from 'pixi.js';
 import type { GameData, ItemDef, Stat } from '../data';
 import type { MerchantOffer, ShopOption, ShopView } from '../game/engine';
-import { LAYOUT, clip, label, panel, wrap } from './hud';
+import { LAYOUT, clip, label, panel, unitsPerLine, wrap } from './hud';
 import { atlas, fitSize } from './atlas';
 import { drawItemGlyph, itemCategoryOf, itemColorOf, type ItemCategory } from './icons';
 import { T, UI, npcRole, type PanelRect } from './theme';
@@ -35,6 +35,16 @@ const INNER_W = CARD_W - PAD * 2;
  * 与 dialogue-panel.ts 用的是同一套偏移（标题 +12、分隔线 +44、正文 +56）。
  */
 const HEAD_H = 84;
+
+/**
+ * 头部备注行 / 底部建议行的**每行单位数** —— 同样按几何算，不写常量。
+ *
+ * 这两处以前都写 34：备注是 body 字号(11.5) → 34 单位 = 391px，
+ * 而可用宽只有 352px，会捅出卡片；建议行是 label 字号(10.5) → 357px，也超。
+ * 见 hud.ts `unitsPerLine`。
+ */
+const NOTE_UNITS = unitsPerLine(INNER_W, UI.fs.body);
+const ADVICE_UNITS = unitsPerLine(INNER_W, UI.fs.label);
 
 /** 三个属性的主色：生命=危险红（血条语义）、攻击=信息蓝、防御=安全绿 */
 const STAT_COLOR: Record<Stat, number> = { hp: T.danger, atk: T.info, def: T.ok };
@@ -156,7 +166,7 @@ class ModalShell extends Container {
     this.sep.rect(CARD_X + UI.pad, top + 44, CARD_W - UI.pad * 2, 1).fill(T.panelBorder);
 
     // 备注是要读的一行（层档位 / 本次报价），所以走 body 字号，不再压成 11px 小字
-    const clipped = note ? clip(note, 34) : '';
+    const clipped = note ? clip(note, NOTE_UNITS) : '';
     this.noteText.text = clipped;
     this.noteText.visible = clipped.length > 0;
     this.noteText.x = INNER_X;
@@ -387,7 +397,7 @@ export class ShopPanel extends Container {
     const rowH = 76;
     const gap = 10;
     const headH = HEAD_H;
-    const advice = wrap(view.advice, 34);
+    const advice = wrap(view.advice, ADVICE_UNITS);
     const footH = 40 + advice.length * 17;
 
     const cardH = headH + view.options.length * (rowH + gap) - gap + footH;

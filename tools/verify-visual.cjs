@@ -28,6 +28,10 @@
  *   A10 位面：地平线随楼层单调上移、同一层可复现、背景跟随显示层
  *   A11 道具栏：空背包整块不占位，有道具时高度按件数算
  *   A12 手绘怪物：落屏用的是 monsters 图集且帧与 MANIFEST 一致（不退回程序化图形）
+ *   A13 楼层浏览：选完某一层后「返回」始终可达，返回后勇者回来且输入复活
+ *   A14 攻击动画：挥剑全程勇者精灵的形体和尺寸**不变**，靠 `attackFx` 的时间轴演
+ *   A15 对话折行：台词折行不超卡片内宽、不以收尾标点开头（中文行首禁则）
+ *   A16 上下楼梯：两张瓦片既不逐像素相同、也不互为上下翻转，且形体走向各就各位
  *
  * 用法：node tools/verify-visual.cjs [--verbose]（先 npm run build）
  */
@@ -704,6 +708,381 @@ function check(name, ok, detail) {
                 ? `怪物用到了 ${uids.length} 个不同的 source：${uids.join(',')}`
                 : `手绘 ${handDrawn.length} 只 / 本组实见 ${shouldSee.length} 只，全部落在 source=${uids[0]}，` +
                   `拍到 idle 第 ${[...new Set([...seenMon.values()].map((v) => v.frameIdx))].sort().join('/')} 帧`
+    );
+
+    // ── A13 楼层浏览：选完还能返回，返回后输入复活 ──
+    //
+    // 修的是一条**死路**：选完楼层后面板收起，而 `browseFloor` 仍非空 —— 于是
+    // 「唯一能返回的入口」消失了，棋盘输入又被 `browseFloor` 全量挡掉（所有入口
+    // 都写 `browseFloor !== null` 就 return），勇者还被隐藏了。触摸设备没有 Esc，
+    // 玩家彻底卡死。实测症状是「点棋盘步数 0 → 0」这种**静默**的没反应。
+    //
+    // 修法不是「别收面板」，而是**把出口挪到一个收起来也还在的地方**：
+    // 工具栏中间那颗按钮在浏览态下变成「返回第 N 层」并高亮。收面板反而是必须的 ——
+    // 面板卡片 y=240..700 会把棋盘（178..544）和工具栏（584..616）一起盖住，
+    // 留着它既看不清点开的那一层，也按不到那颗返回键（实测：点上去毫无反应，
+    // Pixi `hitTest` 命中的是面板自己的全屏遮罩）。
+    //
+    // 断言只看行为，不看代码：
+    //   ① 选完这一层后面板收起、棋盘真的换成了第 7 层、勇者被隐藏；
+    //   ② 工具栏摆出「返回第 1 层」——文案报的是**要回到哪一层**（勇者自己那层）；
+    //   ③ 点它之后回到自己那层、**勇者回来了**；
+    //   ④ 然后棋盘**真的能走**（步数变了）—— 这才是「无法继续操作」的正面反驳。
+    //
+    // ⚠️ 顺带抓住一个真 bug：`Toolbar.browseLabel` 一度写成读 `browsePill.label`
+    //    （Pixi `Container.label`，渲染树标记字符串），于是这条断言永远看到标记而
+    //    不是文案。所以这里比的是**完整文案**，不是「非空」。
+    const cellCenter = (cx, cy) => ({ x: 34 + cx * 32 + 16, y: 178 + cy * 32 + 16 });
+    /**
+     * 一次「像手指那样」的点击：移动 → 停一帧 → 按下 → 停一帧 → 抬起。
+     *
+     * ⚠️ 不能图省事用 `page.mouse.click()` —— 它在同一毫秒里发完 move/down/up，
+     *    而 Pixi 的事件边界是在**帧**里更新命中目标的：down 会沿用上一次移动
+     *    算出来的那个目标。实测后果是「点面板里的楼层格子毫无反应」，而且
+     *    `page.mouse.click()` 点工具栏却是好的（因为那一下之前刚移动过），
+     *    于是症状看着像「面板坏了」。中间留一帧就正常了。
+     */
+    const tap = async (x, y) => {
+      await page.mouse.move(x, y);
+      await page.waitForTimeout(60);
+      await page.mouse.down();
+      await page.waitForTimeout(60);
+      await page.mouse.up();
+    };
+    const browseBtn = { x: 20 + 120 + 10 + 60, y: 584 + 16 }; // 工具栏三按钮的中间那颗
+    const floorCell = (i) => ({
+      // FLOOR_CARD x=20 y=240 w=380 head=76；6 列 × 50 宽、间距 4；格高 34、行距 38
+      x: 20 + Math.round((380 - (6 * 50 + 5 * 4)) / 2) + (i % 6) * 54 + 25,
+      y: 240 + 76 + Math.floor(i / 6) * 38 + 17
+    });
+
+    // ⚠️ 先把游戏**重开**，否则这一组断言会红得莫名其妙。
+    //
+    // A1~A12 会 `__goto` 跑遍全塔，而有些楼层的落点正好在**巫师领域**里 ——
+    // 于是勇者在中途阵亡，`showDeath()` 往 `deathLayer`（舞台最顶层）铺了一张
+    // 满屏 `eventMode='static'` + `hitArea` 的 Graphics。那张遮罩是全屏的，
+    // 它会**吃掉所有点击**，症状就是「点面板里的楼层格子毫无反应」——
+    // 实测排查时 Pixi 的 `hitTest` 命中的正是 `root.children[10].children[0]`。
+    // `r` 走的是游戏自己的重开路径（清 deathLayer、复位状态、回到第 1 层），
+    // 比在测试里手动拆遮罩更贴近真实 —— 玩家也是这么复活的。
+    await page.keyboard.press('r');
+    await page.waitForTimeout(250);
+
+    const snap = () =>
+      page.evaluate(() => {
+        const g = window.mota.game;
+        const p = g.__probe();
+        // `floorPanel` 是 TS private，运行时可直接读；用 `visible` 而不是另加探针字段 ——
+        // 面板开没开这件事本身就写在渲染树上，加一层转发只会多一个漂移点。
+        return {
+          browsing: p.browsing,
+          displayFloor: p.displayFloor,
+          floor: p.floor,
+          steps: p.steps,
+          modal: p.modal,
+          dead: p.dead,
+          label: String(p.toolbarBrowseLabel ?? ''),
+          panelOpen: g.floorPanel.visible,
+          panelMode: g.floorPanel.mode,
+          // 「返回后角色没了」是用户的原话，所以直接把勇者层的可见性量出来 ——
+          // 它比任何间接推断都更贴题（`heroLayer` 是 TS private，运行时可直接读）
+          heroVisible: g.board.heroLayer.visible
+        };
+      });
+
+    await tap(browseBtn.x, browseBtn.y); // 「楼层浏览」
+    await page.waitForTimeout(180);
+    const opened = await snap();
+    await tap(floorCell(7).x, floorCell(7).y); // 「第 7 层」格
+    await page.waitForTimeout(220);
+    const afterPick = await snap();
+
+    // 此刻工具栏中间那颗按钮已经变成「返回第 1 层」—— 文案报的是**要回到哪一层**
+    // （勇者自己那层），不是正在看的那一层。这一点写错会让断言一直红得很冤枉。
+    const wantBack = `返回第 ${afterPick.floor} 层`;
+    await tap(browseBtn.x, browseBtn.y); // 此时它就是「返回」
+    await page.waitForTimeout(240);
+    const afterReturn = await snap();
+
+    const beforeWalk = afterReturn.steps;
+    const upCell = cellCenter(5, 9); // 第 1 层勇者站在 (5,10)，正上方就是可走的空地
+    await tap(upCell.x, upCell.y);
+    await page.waitForTimeout(700);
+    const afterWalk = await snap();
+
+    const a13Bad = [];
+    if (opened.dead || afterPick.steps !== 0) {
+      a13Bad.push(
+        `重开之后不干净（dead=${opened.dead} steps=${afterPick.steps}）—— ` +
+          `多半是前面某条断言把勇者留在了阵亡状态，那张死亡遮罩会吃掉全部点击`
+      );
+    }
+    if (opened.panelOpen !== true) a13Bad.push('点「楼层浏览」后面板没打开');
+    // 选完必须收起面板：面板卡片 y=240..700 会把棋盘（178..544）和工具栏（584..616）
+    // 一起盖住 —— 留着面板，既看不清点开的那一层，也按不到工具栏上的「返回」。
+    if (afterPick.panelOpen !== false) {
+      a13Bad.push('选完楼层后面板没收起 —— 它盖着棋盘也让工具栏的「返回」按不着');
+    }
+    if (afterPick.browsing !== true) a13Bad.push(`选完楼层后 browsing=${afterPick.browsing}（没进入浏览态）`);
+    if (afterPick.displayFloor !== 7) a13Bad.push(`选完第 7 层后棋盘显示的是第 ${afterPick.displayFloor} 层`);
+    if (afterPick.floor !== 1) a13Bad.push(`浏览不该改变勇者所在层，但它变成了第 ${afterPick.floor} 层`);
+    if (afterPick.heroVisible !== false) {
+      a13Bad.push('浏览别的层时勇者不该还站在棋盘上（这一格是那一层的地形）');
+    }
+    if (afterReturn.heroVisible !== true) {
+      a13Bad.push('返回后勇者没有回到棋盘上 —— 这就是用户说的「返回后角色没了」');
+    }
+    if (afterPick.label !== wantBack) {
+      a13Bad.push(`选完之后工具栏文案是「${afterPick.label}」而不是「${wantBack}」—— 返回入口没摆出来`);
+    }
+    if (afterReturn.browsing !== false) a13Bad.push(`点了返回但仍在浏览态（browsing=${afterReturn.browsing}）`);
+    if (afterReturn.displayFloor !== 1) a13Bad.push(`返回后棋盘还停在第 ${afterReturn.displayFloor} 层`);
+    if (afterReturn.label !== '楼层浏览') a13Bad.push(`返回后工具栏文案是「${afterReturn.label}」—— 状态没复位`);
+    if (afterReturn.panelOpen !== false) a13Bad.push('点了返回面板还开着');
+    if (afterWalk.steps <= beforeWalk) {
+      a13Bad.push(`返回后点棋盘步数 ${beforeWalk} → ${afterWalk.steps}，人还是不动`);
+    }
+    check(
+      `A13 楼层浏览：选完第 7 层后面板收起、工具栏摆出「${afterPick.label}」；` +
+        `返回后勇者归位且棋盘恢复可走（步数 ${beforeWalk} → ${afterWalk.steps}）`,
+      a13Bad.length === 0,
+      (a13Bad.length ? a13Bad.slice(0, 3).join(' | ') + ' ⟵ ' : '') +
+        `opened=${JSON.stringify(opened)} pick=${JSON.stringify(afterPick)} ` +
+        `ret=${JSON.stringify(afterReturn)} steps ${beforeWalk}→${afterWalk.steps}`
+    );
+
+    // ── A14 攻击动画：挥剑全程形体与尺寸不变，靠 attackFx 的时间轴演 ──
+    //
+    // 「攻击时角色会变小」是观感问题，但它有可量的代理量：**精灵的贴图矩形与
+    // 落屏宽高**。旧做法是切到挥剑帧，而挥剑帧身体只有 17 行、剑尖顶到底边，
+    // 在 bottom_center 锚点下把整个人抬离地面 —— 看起来就是「变小 + 浮空」。
+    // 新做法全程用走路帧，动的是 `heroLunge`（前冲）与 `attackFx`（刀光）。
+    // 所以断言量：全程 size/frame 只有**一个**取值、且等于待机时的取值；
+    // 过程中 attackFx 的实测包围盒面积 > 0（真的有东西落屏），
+    // 结束后回到 0 且 attacking=false（收干净）。四个方向都过一遍。
+    const atk = await page.evaluate(async () => {
+      const b = window.mota.game.board;
+      const idle = b.__hero();
+      const sizes = new Set();
+      const frames = new Set();
+      const turn = {};
+      let maxLunge = 0;
+      let maxFx = 0;
+      const key = (o) => (o ? `${o.w}x${o.h}` : 'null');
+      for (const dir of ['right', 'left', 'up', 'down']) {
+        b.playHeroAttack(dir);
+        const t0 = performance.now();
+        while (performance.now() - t0 < 340) {
+          const h = b.__hero();
+          sizes.add(key(h.size));
+          frames.add(key(h.frame));
+          turn[dir] = turn[dir] ?? h.dir;
+          maxLunge = Math.max(maxLunge, Math.abs(h.lunge.x), Math.abs(h.lunge.y));
+          maxFx = Math.max(maxFx, h.fxBounds.w * h.fxBounds.h);
+          await new Promise((r) => requestAnimationFrame(r));
+        }
+      }
+      const after = b.__hero();
+      return {
+        idleSize: key(idle.size),
+        idleFrame: key(idle.frame),
+        sizes: [...sizes],
+        frames: [...frames],
+        turn,
+        maxLunge,
+        maxFx,
+        afterAttacking: after.attacking,
+        afterFx: after.fxBounds.w * after.fxBounds.h
+      };
+    });
+    const atkBad = [];
+    if (atk.sizes.length !== 1 || atk.sizes[0] !== atk.idleSize) {
+      atkBad.push(`挥剑全程落屏尺寸出现 ${atk.sizes.length} 种：${atk.sizes.join(' / ')}（待机是 ${atk.idleSize}）`);
+    }
+    if (atk.frames.length !== 1 || atk.frames[0] !== atk.idleFrame) {
+      atkBad.push(`挥剑全程贴图帧出现 ${atk.frames.length} 种：${atk.frames.join(' / ')}（待机是 ${atk.idleFrame}）`);
+    }
+    if (atk.maxFx <= 0) atkBad.push('挥剑全程 attackFx 的包围盒一直是 0 —— 刀光根本没画出来');
+    if (atk.maxLunge <= 1) atkBad.push(`前冲位移最大只有 ${atk.maxLunge.toFixed(2)}px —— 没看出有挥剑动作`);
+    if (atk.afterAttacking || atk.afterFx !== 0) {
+      atkBad.push(`挥剑结束后没有收干净：attacking=${atk.afterAttacking} fxArea=${atk.afterFx}`);
+    }
+    for (const dir of ['right', 'left', 'up', 'down']) {
+      if (atk.turn[dir] !== dir) atkBad.push(`朝 ${dir} 挥剑时朝向是 ${atk.turn[dir]}`);
+    }
+    check(
+      `A14 攻击动画：四向挥剑全程形体恒为 ${atk.idleSize}（不切帧、不变小），刀光面积峰值 ${atk.maxFx}px²`,
+      atkBad.length === 0,
+      atkBad.slice(0, 3).join(' | ') || `尺寸/帧各只有 1 种取值，前冲峰值 ${atk.maxLunge.toFixed(1)}px`
+    );
+
+    // ── A15 对话折行：不超卡片内宽，且守住中文行首/行尾禁则 ──
+    //
+    // 「NPC 对话内容不会换行」的根因是 `LINE_UNITS` 写死 32，而卡片正文可用宽只有
+    // 352px / 正文 11.5px ≈ 30 个单位 —— 于是 46 个 NPC 里 42 行**捅出卡片右边缘**
+    // （实测最宽 368px）。现在单位数由几何算出来（hud.ts `unitsPerLine`）。
+    //
+    // 可用宽度**从渲染树反推**（正文 Text 的 x 减卡片左边 = UI.pad），
+    // 不在这里抄一份 `14` —— 抄一份就多一个漂移点。
+    const dia = await page.evaluate(() => {
+      const g = window.mota.game;
+      const rows = [];
+      let npcs = 0;
+      let firstRet = null;
+      let maxKids = 0;
+      const modalBefore = g.__probe().modal;
+      for (const [floor] of g.data.floors) {
+        for (const e of (g.data.floors.get(floor)?.entities ?? []).filter((x) => x.type === 'npc')) {
+          g.__goto(floor);
+          const ret = g.__talk(e.id);
+          if (firstRet === null) firstRet = String(ret);
+          maxKids = Math.max(maxKids, g.dialogue.body.children.length);
+          for (const t of g.dialogue.body.children) {
+            rows.push({ floor, id: e.id, text: t.text, w: Math.round(t.width), x: t.x });
+          }
+          g.dialogue.close();
+          npcs++;
+        }
+      }
+      const card = g.dialogue.cardRect;
+      return { card, rows, npcs, firstRet, maxKids, modalBefore };
+    });
+    const firstRow = dia.rows[0];
+    const padFromTree = firstRow ? firstRow.x - dia.card.x : null;
+    const avail = padFromTree === null ? null : dia.card.w - padFromTree * 2;
+    const BAD_START = '，。、！？：；）」』】》〉〗·…—～%℃′″';
+    const BAD_END = '（「『【《〈〖';
+    const over = avail === null ? [] : dia.rows.filter((r) => r.w > avail);
+    const badStart = dia.rows.filter((r) => BAD_START.includes(r.text[0]));
+    const badEnd = dia.rows.filter((r) => BAD_END.includes(r.text[r.text.length - 1]));
+    const widest = dia.rows.reduce((m, r) => Math.max(m, r.w), 0);
+    check(
+      `A15 对话折行：${dia.npcs} 个 NPC / ${dia.rows.length} 行全部落在卡片内宽（最宽 ${widest}px ≤ ${avail}px）、无标点顶行首`,
+      dia.npcs >= 40 && dia.rows.length > 0 && over.length === 0 && badStart.length === 0 && badEnd.length === 0,
+      dia.npcs < 40 || dia.rows.length === 0
+        ? `只采到 ${dia.npcs} 个 NPC / ${dia.rows.length} 行（最多一次长出 ${dia.maxKids} 个正文 Text），` +
+          `前提不成立 —— 开始采样时 modal=${dia.modalBefore}，首次搭话返回「${dia.firstRet}」`
+        : over.length
+          ? `${over.length} 行超出 ${avail}px：` +
+            over.slice(0, 2).map((r) => `第${r.floor}层「${r.text}」(${r.w}px)`).join(' ')
+          : badStart.length
+            ? `${badStart.length} 行以收尾标点开头（中文行首禁则）：` +
+              badStart.slice(0, 2).map((r) => `「${r.text}」`).join(' ')
+            : `${badEnd.length} 行以开引号/开括号结尾：` +
+              badEnd.slice(0, 2).map((r) => `「${r.text}」`).join(' ')
+    );
+
+    // ── A16 上下楼梯：两张不同形体，不是同一张图翻转 ──
+    //
+    // 旧写法是「下＝floor_ladder 原样，上＝同一张垂直翻转」。而 floor_ladder 近乎
+    // 上下对称，翻转后肉眼读不出区别 —— 玩家在塔里分不清哪边往上走。
+    // 这一版两张都手绘（下＝俯视竖井、上＝侧视梯段）。
+    //
+    // 断言**直接读发布出去的那张图集**：把 terrain.png 交给浏览器解码，按 MANIFEST
+    // 的帧矩形切出两格，量各自的横剖面（每列平均亮度）走向。这样查的是真正落屏的
+    // 像素，而不是构建脚本里的意图。判据四条：
+    //   ① 两格不是同一张图；
+    //   ② 上楼梯不是下楼梯的垂直翻转（旧写法正好卡在这一条）；
+    //   ③ 下＝两端亮中间暗（井），上＝自左向右单调变亮（梯段）—— 形体走向相反；
+    //   ④ MANIFEST 的 src 文案与「手绘」一致（防止改了脚本忘了重跑 assets）。
+    const terrainPng = fs
+      .readdirSync(path.join(DIST, 'assets'))
+      .find((n) => /^terrain.*\.png$/.test(n));
+    const tDown = MANIFEST.terrain['3'];
+    const tUp = MANIFEST.terrain['4'];
+    const atlasReady = (await page.evaluate(() => window.mota.game.__probe())).atlasReady;
+    const stair = terrainPng
+      ? await page.evaluate(
+          async ({ b64, a, b }) => {
+            const bin = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+            const bmp = await createImageBitmap(new Blob([bin], { type: 'image/png' }));
+            const cv = new OffscreenCanvas(bmp.width, bmp.height);
+            const ctx = cv.getContext('2d');
+            ctx.drawImage(bmp, 0, 0);
+            const all = ctx.getImageData(0, 0, bmp.width, bmp.height).data;
+            const lum = (i) => (0.2126 * all[i] + 0.7152 * all[i + 1] + 0.0722 * all[i + 2]) / 255;
+            const cut = (r) => {
+              const g = [];
+              for (let y = 0; y < r.h; y++) {
+                const row = [];
+                for (let x = 0; x < r.w; x++) {
+                  const i = ((r.y + y) * bmp.width + (r.x + x)) * 4;
+                  row.push(all[i + 3] === 0 ? -1 : lum(i));
+                }
+                g.push(row);
+              }
+              return g;
+            };
+            const cols = (g) => {
+              const out = [];
+              for (let x = 0; x < g[0].length; x++) {
+                let t = 0;
+                let n = 0;
+                for (let y = 0; y < g.length; y++) {
+                  if (g[y][x] < 0) continue;
+                  t += g[y][x];
+                  n++;
+                }
+                out.push(n ? t / n : 0);
+              }
+              return out;
+            };
+            const same = (p, q) => JSON.stringify(p) === JSON.stringify(q);
+            const up = cut(b);
+            const down = cut(a);
+            return {
+              same: same(up, down),
+              isFlip: same(up, down.slice().reverse()),
+              downCols: cols(down),
+              upCols: cols(up)
+            };
+          },
+          {
+            b64: fs.readFileSync(path.join(DIST, 'assets', terrainPng)).toString('base64'),
+            a: { x: tDown.x, y: tDown.y, w: tDown.w, h: tDown.h },
+            b: { x: tUp.x, y: tUp.y, w: tUp.w, h: tUp.h }
+          }
+        )
+      : null;
+
+    const stairBad = [];
+    if (!atlasReady) stairBad.push('图集没加载成功，落屏的是程序化兜底图形 —— 这条断言无从谈起');
+    if (!stair) stairBad.push('dist 里找不到 terrain 图集，无法核对落屏像素');
+    if (stair) {
+      const dc = stair.downCols;
+      const uc = stair.upCols;
+      const n = dc.length;
+      const q = Math.max(1, Math.floor(n / 4));
+      const edge = (dc.slice(0, q).reduce((x, y) => x + y, 0) + dc.slice(-q).reduce((x, y) => x + y, 0)) / (2 * q);
+      const mid = dc.slice(q, -q).reduce((x, y) => x + y, 0) / (n - 2 * q);
+      let worst = 0;
+      for (let i = 0; i < uc.length - 1; i++) worst = Math.max(worst, uc[i] - uc[i + 1]);
+      const rise = uc[uc.length - 1] - uc[0];
+      if (stair.same) stairBad.push('上楼梯与下楼梯是同一张图 —— 玩家分不清方向');
+      else if (stair.isFlip) {
+        stairBad.push(
+          '上楼梯正好是下楼梯的垂直翻转 —— 翻转在 32px 上等价于同一张图，' +
+            '这正是要修掉的那种写法（两者必须是不同形体）'
+        );
+      }
+      if (edge - mid < 0.12) {
+        stairBad.push(`下楼梯没有「井」的横剖面（边缘 ${edge.toFixed(3)} vs 中心 ${mid.toFixed(3)}，差 < 0.12）`);
+      }
+      if (rise < 0.15 || worst > 0.02) {
+        stairBad.push(`上楼梯不是自左向右单调变亮（落差 ${rise.toFixed(3)}，最大回退 ${worst.toFixed(3)}）`);
+      }
+    }
+    const srcText = `${tDown.src ?? ''}|${tUp.src ?? ''}`;
+    if (/翻转/.test(srcText)) {
+      stairBad.push(`MANIFEST 里两张楼梯的 src 仍写着「翻转」：${srcText} —— 改了构建脚本但没重跑 assets`);
+    } else if (String(tDown.src) === String(tUp.src)) {
+      stairBad.push(`两张楼梯的 src 完全一样：${tDown.src}`);
+    }
+    check(
+      `A16 上下楼梯：井（边缘 ${stair ? (stair.downCols[0] ?? 0).toFixed(2) : '?'}）与梯段` +
+        `（${stair ? (stair.upCols[0] ?? 0).toFixed(2) : '?'} → ${stair ? (stair.upCols[stair.upCols.length - 1] ?? 0).toFixed(2) : '?'}）互为不同形体`,
+      stairBad.length === 0,
+      stairBad.slice(0, 3).join(' | ') || `${tDown.src} ／ ${tUp.src}`
     );
 
     check('无控制台错误', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | ') || '干净');

@@ -1277,6 +1277,69 @@ npm run verify:all      # 四套回归
 
 `docs/assets.md` §14 有同一件事的另一份表述（从「改美术的人」视角写的）。
 
+### 9.13 第十一个错：**「点了按钮没反应」（用真 Chromium 驱动 UI 时）** ★假绿比不测更危险
+
+这一条**不属于小游戏适配层** —— 它出在「拿真 Chromium 页面当宿主」那条**验证链路**上。
+但放在这里，是因为它和上面十条共用一个失败模式：**静默**。
+症状是「点了一下，什么也没发生」，看起来像适配挂了，实际是**测试自己写错了**。
+
+**根因不在适配层，在 Pixi 的命中测试。**
+Pixi v8 的 `EventBoundary` **每帧**才刷新一次命中目标；而 Playwright 的
+`page.mouse.click(x, y)` 把 `move` 与 `down/up` 塞进**同一个 tick**，
+于是 `down` 用到的还是**上一帧**的 hit target（通常是全屏 root）。→ 点空。
+
+```js
+// ✗ 会点空
+await page.mouse.click(x, y);
+
+// ✅ 模拟真实鼠标节奏，每步之间留一帧
+async function tap(page, x, y) {
+  await page.mouse.move(x, y);
+  await page.waitForTimeout(60);   // ← 让 EventBoundary 更新 hit target
+  await page.mouse.down();
+  await page.waitForTimeout(60);
+  await page.mouse.up();
+}
+```
+
+**同源的第二坑：游戏自己的全屏遮罩会吃掉所有点击。**
+浮层（死亡层 / 模态面板）通常在舞台最顶层铺一张满屏 `hitArea` 的 `Graphics`。
+前一条断言如果让游戏停在那种状态，后面每一次点击都落在遮罩上 ——
+看着像「适配挂了」，其实是**测试没回到干净状态**：
+
+```js
+await page.keyboard.press('r');    // 走游戏自己的重开路径，比手写重置可靠
+await page.waitForTimeout(120);
+```
+
+排查时直接问命中测试它认了谁，比盯着截图猜快得多：
+
+```js
+g.app.renderer.events.rootBoundary.hitTest(x, y);   // 真正吃到这一点的对象
+```
+
+**第三个坑：断言读 UI 文案时读了 `Container.label`。** ★这一条造成的是**假绿**
+
+`Container.label` 是 Pixi v8 给渲染树打标记用的字符串 —— 我们自己还拿它做
+「面板 / 标题落点」的版式断言标记。于是很容易顺手写成：
+
+```ts
+// ✗ 看着像「读按钮文字」，其实是读渲染树标签
+get browseLabel() { return this.browsePill.label; }
+```
+
+断言的**期望值**来自源码常量、**实测值**读的却是另一个字段 —— 两边**错得自洽**，
+于是断言恒绿。本项目真漏过一次：工具栏那颗「返回第 N 层」按钮文案是错的，
+断言照样通过（因为两边都不是按钮文字）。**若没有那条「返回后真的能走一格」的
+行为断言兜底，这个 bug 会直接混进提交。**
+
+→ 要读文案就另起一个语义单一的 getter（`labelText`），**不要复用 `label`**。
+
+> 三条合起来是一条通用结论：**在三套宿主、没有 DOM 可 inspect 的链路上，
+> 最危险的不是「测不出来」，而是「测出来是绿的」。**
+> 与 ⑨ 的「must 真删，不能置 undefined」、⑫ 的「副本没刷新」是同一类问题 ——
+> 判据本身也要有判据（缺一条行为断言，UI 断言就是自证循环）。
+
 ---
 
 ## 10. 复现命令
@@ -1284,10 +1347,12 @@ npm run verify:all      # 四套回归
 ```bash
 npm run build:minigame    # 构建产物（含 tsc --noEmit）
 npm run verify:sandbox    # 干净 V8（node:vm）宿主实测，9 条判据（含裸标识符视图 ×7）
-npm run verify:visual     # 渲染层回归，14 条判据（A1–A12，含版面/位面/道具栏/手绘怪物）
+npm run verify:visual     # 渲染层回归，18 条判据（A1–A16，含版面/位面/道具栏/手绘怪物，
+                          #   以及浏览出口 / 攻击动画 / 对话折行 / 上下楼梯可区分）
 npm run verify:minigame   # 无 DOM 环境实测，25 条判据（含禁 unsafe-eval ×3、图集逐字节一致、触摸端到端）
 npm run verify:dom        # 有原生 DOM 宿主实测，19 条判据（含触摸端到端 ×4、图集 ×1）
-npm run verify:all        # 以上四套，共 67 条判据
+                          #   注：驱动 UI 的点击必须模拟真实节奏，见 §9.13
+npm run verify:all        # 以上四套，共 71 条判据
 ```
 
 另有两个不在四套之列的取证工具 —— 它们读的都是**工具自己落盘的状态**，

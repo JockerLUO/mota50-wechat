@@ -427,27 +427,64 @@ export function clip(s: string, maxUnits: number): string {
 }
 
 /**
- * 折行成多行（不做省略）。单位口径与 `clip` 完全一致。
+ * 「一行放得下几个单位」的定义式：可用像素宽 ÷ 该行字号。
+ *
+ * 为什么要有个函数而不是各处写常量 —— 那些常量全都写错过：
+ * 对话框 352px 可用宽、正文 11.5px，硬编码的 `LINE_UNITS = 32` 实际能排到
+ * 368px，46 个 NPC 里有 42 行**捅出卡片右边缘**（实测，见 §对话折行）。
+ * 1 个单位 ≈ 1 个字号宽，是因为 `unitOf` 把中文记作 1；所以只要把
+ * 「可用宽度 ÷ 字号」算出来，单位数天然就落在可用宽以内。
+ */
+export function unitsPerLine(px: number, fontSize: number): number {
+  return Math.floor(px / fontSize);
+}
+
+/**
+ * 不能出现在**行首**的标点（中文排版「行首禁则」）。
+ * 折行点正好落在这些字前面时，必须把它拉回上一行 —— 否则会出现
+ * 一整行以「，」开头的句子，中文读起来是明显的排版事故。
+ */
+const NO_LINE_START = '，。、！？：；）」』】》〉〗·…—～%℃′″';
+/** 不能出现在**行尾**的标点（行尾禁则）：开引号/开括号吊在行尾同样难看 */
+const NO_LINE_END = '（「『【《〈〖';
+
+/**
+ * 折行成多行（不做省略）。单位口径与 `clip` 完全一致，外加中文禁则。
  *
  * 对话框要按宽度把台词折成若干行 —— 而 Pixi 的 Text 不会自动换行
  * （`wordWrap: true` 走的是它自己的断行规则，中文标点会乱掉），
  * 所以这里自己折，和 UI 里其余地方的宽度估算保持同一套算法。
+ *
+ * 关于禁则：撞上禁则时**把一个字挪到下一行**（而不是让标点溢出一格）。
+ * 溢出会捅破卡片，挪字只会让上一行少一个字 —— 前者是 bug，后者只是呼吸感。
+ * 本行只剩一个字时不挪（挪了就是空行），这种极端只可能出现在 maxUnits=1。
  */
 export function wrap(s: string, maxUnits: number): string[] {
   const out: string[] = [];
-  let cur = '';
+  let cur: string[] = [];
   let units = 0;
+
   for (const ch of s) {
     const u = unitOf(ch);
-    if (units + u > maxUnits && cur) {
-      out.push(cur);
-      cur = '';
-      units = 0;
+    if (cur.length > 0 && units + u > maxUnits) {
+      const tail = cur[cur.length - 1];
+      const forbidden = NO_LINE_START.indexOf(ch) >= 0 || NO_LINE_END.indexOf(tail) >= 0;
+      if (forbidden && cur.length > 1) {
+        cur.pop();
+        out.push(cur.join(''));
+        cur = [tail, ch];
+        units = unitOf(tail) + u;
+        continue;
+      }
+      out.push(cur.join(''));
+      cur = [ch];
+      units = u;
+      continue;
     }
-    cur += ch;
+    cur.push(ch);
     units += u;
   }
-  if (cur) out.push(cur);
+  if (cur.length) out.push(cur.join(''));
   return out;
 }
 
@@ -895,6 +932,15 @@ export class Pill extends Container {
   private active: boolean;
   private w: number;
   private hh: number;
+  /**
+   * 构造时传的是固定宽度（不是 `'auto'`）就记下来。
+   *
+   * `setLabel()` 只重排文字，**不重新量宽** —— 工具栏那三颗是按版面算出来的
+   * 等宽（各 120，正好铺满 380），跟着文字宽度走的话，「楼层浏览」换成
+   * 「返回第 50 层」就会把整行挤歪。对话框脚部那两颗用的是 `'auto'`，
+   * 它们需要跟着文案变，所以只有固定宽度的这一支要守住原宽。
+   */
+  private fixedW: number | null;
 
   /**
    * @param width 固定宽度，或 `'auto'` 按文字实际宽度 + 边距自适应。
@@ -915,6 +961,7 @@ export class Pill extends Container {
     this.hh = height;
     this.t = label(text, UI.fs.head, T.ink, '700');
     this.t.anchor.set(0.5);
+    this.fixedW = width === 'auto' ? null : width;
     this.w = width === 'auto' ? Math.ceil(this.t.width) + 28 : width;
     this.t.x = this.w / 2;
     // 文字垂直居中。Pixi Text 的锚点是几何中心，但不同字体的 descent 会让
@@ -950,16 +997,30 @@ export class Pill extends Container {
   }
 
   /**
-   * 换文案并重新量宽。
+   * 换文案。
    *
    * 对话框脚部那两个按钮的文案不是固定的（「交易」后面可能跟货量），
    * 换字之后宽度必须跟着变，否则文字会顶出底板 —— 而 `'auto'` 只在构造时算一次。
+   *
+   * 固定宽度的按钮（工具栏那三颗）反过来：宽度由版面决定，换文案只重新居中。
    */
   setLabel(text: string): void {
     this.t.text = text;
-    this.w = Math.ceil(this.t.width) + 28;
+    // 固定宽度的**不**重新量宽：见 fixedW 的说明。文字超宽时会被裁在按钮里，
+    // 所以文案长度由调用方负责（工具栏那几条都控制在 8 个单位以内）。
+    this.w = this.fixedW ?? Math.ceil(this.t.width) + 28;
     this.t.x = this.w / 2;
     this.paint(false);
+  }
+
+  /**
+   * 当前文案。
+   *
+   * 不叫 `text` 是因为 `Container.label` 已经在 Pixi 里占了一格语义，
+   * 再加一个近义名容易读错（`label` 是给渲染树打标记用的，不是给人看的字）。
+   */
+  get labelText(): string {
+    return this.t.text;
   }
 }
 
@@ -985,6 +1046,36 @@ export class Toolbar extends Container {
     this.revealPill = mk('编辑视图', 0, handlers.onToggleReveal);
     this.browsePill = mk('楼层浏览', 1, handlers.onBrowse);
     this.restartPill = mk('重开', 2, handlers.onRestart);
+  }
+
+  /**
+   * 浏览态：中间那颗「楼层浏览」变成「返回第 N 层」并高亮。
+   *
+   * ## 为什么让它就地变身，而不是新加一颗返回按钮
+   *
+   * 三颗按钮正好铺满 380 宽（各 120 + 间距 10），加一颗就要重排整个版面，
+   * 而版面是「模块间隙处处相等」的断言对象 —— 为了一个临时状态动版面不划算。
+   * 更要紧的是**手指位置**：玩家点开浏览用的就是这一颗，返回键出现在同一位置，
+   * 不用去找。这和「盖住屏幕的浮层用 Esc 返回」是两回事：
+   * 触摸设备上没有 Esc，所以返回键必须是看得见、按得着的。
+   *
+   * 超过两位数的楼层文案会变长（「返回第 100 层」是不可能的，塔只有 51 层），
+   * 最长「返回第 51 层」≈ 6.2 个单位 × 12.5px ≈ 78px，稳在 120 里。
+   */
+  setBrowsing(on: boolean, floor: number): void {
+    this.browsePill.setLabel(on ? `返回第 ${floor} 层` : '楼层浏览');
+    this.browsePill.setActive(on);
+  }
+
+  /**
+   * 中间那颗按钮此刻的文案（浏览态下是「返回第 N 层」）。供 `__probe()` 断言。
+   *
+   * 必须读 `labelText`（按钮上真正画出来的那串字）—— 写成 `browsePill.label`
+   * 会读到 Pixi `Container.label`（渲染树标记字符串，如 `'pill'`），
+   * 于是断言永远看到标记而不是文案，等于没断言。踩过。
+   */
+  get browseLabel(): string {
+    return this.browsePill.labelText;
   }
 }
 
@@ -1014,6 +1105,14 @@ export class FloorPanel extends Container {
   private hint: Text;
   /** 当前面板用途：传送（限已到过）或浏览（任意层） */
   mode: 'teleport' | 'browse' = 'browse';
+  /**
+   * 面板此刻**正在展示**哪一层（浏览态下与勇者所在层不同）。
+   *
+   * 为什么要单独存：这两个数是两件事 —— 「我在看第 7 层」和「勇者站在第 1 层」。
+   * 旧版只画了后者（`isCurrent = i === state.floor`），于是浏览第 7 层时
+   * 高亮的还是第 1 层，玩家看了一眼会以为没切过去。
+   */
+  private shown = 1;
 
   constructor(
     private data: GameData,
@@ -1060,8 +1159,13 @@ export class FloorPanel extends Container {
     this.addChild(close, this.grid);
   }
 
-  open(state: GameState, mode: 'teleport' | 'browse'): void {
+  /**
+   * 打开面板。`shownFloor` 是「现在棋盘上显示的是哪一层」——
+   * 浏览态下选完一层会再次调用它，好让高亮跟着走。默认就是勇者所在层。
+   */
+  open(state: GameState, mode: 'teleport' | 'browse', shownFloor?: number): void {
     this.mode = mode;
+    this.shown = shownFloor ?? state.floor;
     this.visible = true;
     this.rebuild(state);
   }
@@ -1086,7 +1190,16 @@ export class FloorPanel extends Container {
     this.hint.text =
       this.mode === 'teleport'
         ? `已到过 ${state.visited.length} / 51 层。传送器只能去这些层，不能向上推进。`
-        : '只切换显示，不移动勇者。按 Esc 或「关闭」返回。';
+        // 选完面板会收起，出口挪到了工具栏那颗按钮上 —— 提示必须说清楚在哪，
+        // 否则「选完就没退路」的观感又回来了（哪怕实际是有退路的）
+        : '只切换显示，不移动勇者。选一层后看棋盘，点工具栏那颗「返回」回到自己那层。';
+
+    // 浏览态下「看着的那层」与「勇者站的那层」都要标出来，所以两个记号并存：
+    //   跟随高亮（主色实底）= 现在画面在放哪一层
+    //   金色描边           = 勇者真的站在哪一层
+    // 少任何一个都会让人误判：只画前者会以为人跟着过去了，
+    // 只画后者会以为没切换成功（旧版就是后者的毛病）。
+    const browsing = this.mode === 'browse' && this.shown !== state.floor;
 
     for (let i = 0; i < 51; i++) {
       const col = i % cols;
@@ -1095,27 +1208,32 @@ export class FloorPanel extends Container {
       const by = py + row * (ch + gap);
       const visited = state.visited.includes(i);
       const usable = this.mode === 'browse' ? true : visited;
-      const isCurrent = i === state.floor;
+      const isShown = i === this.shown;
+      const isHome = i === state.floor;
 
       const c = new Container();
       c.x = bx;
       c.y = by;
       const g = new Graphics();
-      const fill = isCurrent ? T.hero : visited ? 0xeaf1fb : T.panelAlt;
+      const fill = isShown ? T.hero : visited ? 0xeaf1fb : T.panelAlt;
       g.roundRect(0, 0, cw, ch, 9).fill(fill);
       g.roundRect(0, 0, cw, ch, 9).stroke({ width: 1, color: usable ? T.panelBorder : 0xdfe5ee });
-      // 已到过的层左下角一个小圆点
-      if (visited && !isCurrent) g.circle(7, ch - 7, 2.6).fill(T.ok);
+      // 已到过的层左下角一个小圆点（自己站的那格另有金环，不重复画）
+      if (visited && !isShown && !isHome) g.circle(7, ch - 7, 2.6).fill(T.ok);
+      // 勇者真正所在的层：金色内环。浏览态下它才可能与高亮分开，所以只在分开时画
+      if (browsing && isHome) {
+        g.roundRect(2, 2, cw - 4, ch - 4, 7).stroke({ width: 2, color: T.gold });
+      }
       c.addChild(g);
 
-      const t = label(String(i), 14, isCurrent ? T.onDark : usable ? T.ink : 0xc3cddb, usable ? '700' : '500');
+      const t = label(String(i), 14, isShown ? T.onDark : usable ? T.ink : 0xc3cddb, usable ? '700' : '500');
       t.anchor.set(0.5);
       t.x = cw / 2;
       t.y = ch / 2 - 1;
       c.addChild(t);
 
       const info = this.data.floorIndex[i];
-      const sub = label(`${info?.monsters ?? 0}怪`, 8, isCurrent ? 0xdbeafe : T.inkFaint, '500');
+      const sub = label(`${info?.monsters ?? 0}怪`, 8, isShown ? 0xdbeafe : T.inkFaint, '500');
       sub.anchor.set(0.5, 0);
       sub.x = cw / 2;
       sub.y = ch - 11;

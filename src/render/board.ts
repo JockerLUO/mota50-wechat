@@ -21,7 +21,7 @@
 
 import { Container, Graphics, Rectangle, Sprite, Texture, TilingSprite } from 'pixi.js';
 import type { GameData } from '../data';
-import { tileAt, type GameState } from '../game/state';
+import { tileAt, type Dir, type GameState } from '../game/state';
 import { atlas, fitSize, isWallChar, terrainKeyFor, variantIndex } from './atlas';
 import {
   drawHero,
@@ -56,8 +56,41 @@ const WALK_FRAMES = 4;
 /** NPC 静帧呼吸每帧时长（ms）。比怪物慢一倍 —— 站着的人不该动得像喘气 */
 const NPC_FRAME_MS = 340;
 
-/** 勇者朝向名，与 MANIFEST 的 dirOrder 一致 */
-type Facing = 'down' | 'left' | 'up' | 'right';
+/**
+ * 勇者朝向名，与 MANIFEST 的 dirOrder 一致。
+ *
+ * 直接等于引擎的 `Dir`（`'up' | 'down' | 'left' | 'right'`）而不是另立一套同形字面量：
+ * `playHeroAttack(dir)` 要接玩家按键的方向，两套类型虽然结构相同，
+ * 但分开写就多了一个「改了这边忘了那边」的位置。
+ */
+export type Facing = Dir;
+
+/** 朝向 → 单位向量。四处都在用（前冲方向、刀光轴、目标格定位），只写一次 */
+const FACING_VEC: Record<Facing, [number, number]> = {
+  down: [0, 1],
+  right: [1, 0],
+  up: [0, -1],
+  left: [-1, 0]
+};
+
+/** 刀光轴方向（弧度，屏幕坐标 y 向下） */
+const FACING_ANGLE: Record<Facing, number> = {
+  right: 0,
+  down: Math.PI / 2,
+  left: Math.PI,
+  up: -Math.PI / 2
+};
+
+/** 挥剑时朝向前冲的峰值位移（px，按 32px 格子计） */
+const ATTACK_LUNGE = 4;
+/** 刀光半径（px，按 32px 格子计） */
+const ATTACK_TRAIL_R = 15;
+/** 刀光扫过的总角度 */
+const ATTACK_SWEEP = (162 * Math.PI) / 180;
+
+const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
+/** 缓出：动画的通用曲线，头快尾慢 —— 挥砍的加速感就来自这里 */
+const easeOut = (v: number): number => 1 - Math.pow(1 - clamp01(v), 3);
 
 interface EntityView {
   key: string;
@@ -107,7 +140,25 @@ export class Board extends Container {
   private entityViews: EntityView[] = [];
 
   private heroNode = new Container();
+  /**
+   * 前冲位移层 —— 夹在 `heroNode`（格子基准位）与精灵之间。
+   *
+   * 为什么要多一层容器，而不是直接改 `heroNode.x/y`：
+   * 同一个 `heroNode.x/y` 还被两处写 —— `placeHero()`（换层/瞬移）和
+   * `update()` 里的走路插值。攻击特效若也去写它，收招时就得「还原」，
+   * 而还原到哪个值取决于上一帧是谁写的 —— 走路跳到一半收招的话，人会瞬移。
+   * 拆成两层之后，基准位归走位管，前冲只动内层，两边互不干扰。
+   */
+  private heroLunge = new Container();
   private heroSprite: Sprite | null = null;
+  /**
+   * 挥剑动画的特效层 —— 画在勇者**之上**，且**不**跟着前冲层走
+   * （刀光打在目标格上，不该跟着人一起往前挪）。
+   *
+   * 攻击不再靠换精灵帧表达（理由见 `refreshHeroTexture` 的长注释），
+   * 而是「精灵不动、上面叠一层时间轴动画」。这一层永远是空的或只有几条线。
+   */
+  private attackFx = new Graphics();
   private heroPos = { x: 0, y: 0 };
   private heroDir: Facing = 'down';
   private heroWalkFrame = 0;
@@ -325,6 +376,7 @@ export class Board extends Container {
   }
 
   private buildHero(): void {
+    this.heroNode.addChild(this.heroLunge);
     const tex = atlas.ready ? atlas.heroFrame('walk', this.heroDir, 0) : null;
     if (tex) {
       const sp = new Sprite(tex);
@@ -335,14 +387,14 @@ export class Board extends Container {
       sp.width = tex.width * s;
       sp.height = tex.height * s;
       this.heroSprite = sp;
-      this.heroNode.addChild(sp);
+      this.heroLunge.addChild(sp);
     } else {
       const g = new Graphics();
       const r = this.cellPx * 0.36;
       drawHero(g, this.cellPx / 2, this.cellPx / 2, r);
-      this.heroNode.addChild(g);
+      this.heroLunge.addChild(g);
     }
-    this.heroLayer.addChild(this.heroNode);
+    this.heroLayer.addChild(this.heroNode, this.attackFx);
   }
 
   /**
@@ -412,9 +464,12 @@ export class Board extends Container {
     this.rebuildEntities(state, data, floor);
     this.heroPos = { x: state.pos.x, y: state.pos.y };
     this.heroAnim.active = false;
+    // 换层要把挥剑动画一并掐断：残留的 heroAttackMs 会在新画面上画出一刀空砍
+    this.heroAttackMs = 0;
     this.heroWalkFrame = 0;
     this.refreshHeroTexture();
     this.placeHero();
+    this.drawAttackFx();
   }
 
   /** 把 11×11 的地形字符读成一张表（已应用 terrainPatch 覆盖层） */
@@ -693,29 +748,151 @@ export class Board extends Container {
     this.refreshHeroTexture();
   }
 
-  /** 攻击时播放一次挥剑动画 —— 否则图集里那 16 帧挥剑就是死素材 */
-  playHeroAttack(): void {
-    if (!atlas.ready) return;
+  /**
+   * 撞上怪物时播一次挥剑动画。
+   *
+   * `dir` 是**玩家按下的方向**，不是勇者当前朝向 —— 这两者在「撞」的时候恰好不同：
+   * 撞墙/撞怪时勇者并没有移动，`setHeroPos` 里那段「按位移推朝向」根本不触发，
+   * 于是不传方向的话，向右撞怪会朝着下方挥空。
+   *
+   * 不依赖图集：整套特效是程序化图形，图集缺席（走 `icons.ts` 兜底那条路）时
+   * 同样打得出来 —— 攻击反馈属于玩法，不该是「锦上添花」。
+   */
+  playHeroAttack(dir?: Facing): void {
+    if (dir) {
+      this.heroDir = dir;
+      // 转向是**换方向的走路帧**，尺寸与走路帧完全一致（都是 16×26）——
+      // 这正是「攻击时形体不变」能成立的前提
+      this.refreshHeroTexture();
+    }
     this.heroAttackMs = ATTACK_MS;
-    this.refreshHeroTexture();
   }
 
+  /**
+   * 勇者精灵贴图刷新 —— **只有走路帧，没有攻击帧**。
+   *
+   * ## 为什么图集里那 16 帧挥剑不用了
+   *
+   * 用户反馈「攻击怪物时角色会变小」。逐帧量过之后，那是源素材的造型属性，
+   * 两条都靠渲染层摆位救不回来：
+   *
+   * | | 实心身体行数 | 内容最低点 | 脚的位置 |
+   * |---|---|---|---|
+   * | 走路帧 | **20** 行（4..23） | 脚（第 23 行） | 贴格底 |
+   * | attack[0] | 20 行（5..24） | 剑尖（第 25 行） | 抬高 1 行 |
+   * | attack[2] / [3] | **17** 行（2..18） | **剑尖**（第 25 行） | **抬高 7 行** |
+   *
+   * ① 弓身突刺那一瞬的身体只有 17 行（走路的 85%）—— 再忠实也会缩一圈；
+   * ② 精灵是底部锚定的，而 attack 帧的内容最低点是**剑尖**不是脚，
+   *    于是脚离地 7 行 × 2 倍 = 14px，人看着浮起来。
+   *
+   * 所以攻击反馈改由 `drawAttackFx()` 的**时间轴特效**表达，精灵全程不换帧、
+   * 不改尺寸。`assets/atlas/actors.png` 里那组 attack 帧仍然保留（源素材的
+   * 完整切片，供对照与将来重画时参考），只是运行时不再进这条路。
+   */
   private refreshHeroTexture(): void {
     if (!this.heroSprite) return;
-    const attacking = this.heroAttackMs > 0;
-    const anim = attacking ? 'attack' : 'walk';
-    const fi = attacking
-      ? Math.min(3, Math.floor(((ATTACK_MS - this.heroAttackMs) / ATTACK_MS) * 4))
-      : this.heroWalkFrame;
-    const tex = atlas.heroFrame(anim, this.heroDir, fi);
+    const tex = atlas.heroFrame('walk', this.heroDir, this.heroWalkFrame);
     if (!tex) return;
     this.heroSprite.texture = tex;
     const s = atlas.actorScale;
-    // 挥剑帧是 20×26、走路帧是 16×26，宽高都要跟着换，否则会拉伸
     this.heroSprite.width = tex.width * s;
     this.heroSprite.height = tex.height * s;
     this.heroSprite.x = this.cellPx / 2;
     this.heroSprite.y = this.cellPx;
+  }
+
+  /**
+   * 挥剑特效 —— 精灵不动，攻击感由勇者层上的这三样表达：
+   *
+   *   · **前冲**：整个人沿朝向平移（峰值 `ATTACK_LUNGE` px），收招回位。
+   *     平移而不是缩放 —— 缩放就是「变小」，那正是要修掉的东西。
+   *   · **刀光**：以朝向为轴、扫过 `ATTACK_SWEEP` 的弧，三层同心描边做拖影；
+   *     弧心落在**目标格**（朝向前方那一格）而不是勇者自己身上。
+   *   · **命中火星**：挥到位那一刻（t≈0.5）在目标格炸开四道短线，快速淡出。
+   *
+   * 时间轴由 `heroAttackMs` 单变量驱动，全部是 t 的确定函数 —— 没有随机数，
+   * 所以同一时刻截图必然一致（自动化取证依赖这一点）。
+   */
+  private drawAttackFx(): void {
+    const g = this.attackFx;
+    g.clear();
+
+    if (this.heroAttackMs <= 0) {
+      // 不在攻击中：把前冲层归零。基准位归 `placeHero()` / 走路插值管，这里不碰
+      this.heroLunge.x = 0;
+      this.heroLunge.y = 0;
+      return;
+    }
+
+    const k = this.cellPx / 32; // 特效尺寸按 32px 格子给，格子大小变了跟着走
+    const t = 1 - this.heroAttackMs / ATTACK_MS;
+    const [vx, vy] = FACING_VEC[this.heroDir];
+    const axis = FACING_ANGLE[this.heroDir];
+
+    // ① 前冲：0 → −1.5（蓄力后拉）→ +4（刺出）→ 0（收招）
+    const lunge = this.attackLungeAt(t) * k;
+    this.heroLunge.x = vx * lunge;
+    this.heroLunge.y = vy * lunge;
+
+    // 目标格中心（勇者朝向前方那一格）；比格子中心再上抬 4px —— 怪物是底部锚定的，
+    // 身体长在格子的中上部，弧心落在格中心会显得「打在脚上」。
+    // 抬得太多（试过 6）弧底会溢出到下一格，压到那格的地形上，看着像画错了地方。
+    const tx = this.heroPos.x * this.cellPx + this.cellPx / 2 + vx * this.cellPx;
+    const ty = this.heroPos.y * this.cellPx + this.cellPx / 2 - 4 * k + vy * this.cellPx;
+
+    // ② 刀光：0.18 → 0.52 扫开，0.52 → 0.82 淡出
+    const sweepP = clamp01((t - 0.18) / 0.34);
+    if (sweepP > 0) {
+      const fade = clamp01(1 - (t - 0.52) / 0.3);
+      const half = (ATTACK_SWEEP * easeOut(sweepP)) / 2;
+      const R = ATTACK_TRAIL_R * k;
+      const a0 = axis - half;
+      const a1 = axis + half;
+      // 实心扇形环（外弧 + 内弧反向围成），不是描边线 ——
+      // 描边画出来是一条细「U」，在暖砂石地砖上既细又和地面同色系；
+      // 实心扇形有面积，才压得住底。
+      g.arc(tx, ty, R, a0, a1);
+      g.arc(tx, ty, R - 5 * k, a1, a0, true);
+      g.closePath();
+      g.fill({ color: T.gold, alpha: 0.55 * fade });
+      // 刃口：扇形外缘再补一条近白的细线，攻击的「锋」落在这一条上
+      g.arc(tx, ty, R - 1.5 * k, a0, a1);
+      g.stroke({ width: 1.6 * k, color: 0xfffbe8, alpha: 0.95 * fade });
+      // 刃尖：扫到哪就亮到哪。没有这个点，弧光只像一圈「U」，看不出挥的方向
+      g.circle(tx + Math.cos(a1) * R, ty + Math.sin(a1) * R, 2.6 * k).fill({
+        color: 0xffffff,
+        alpha: 0.9 * fade
+      });
+    }
+
+    // ③ 命中火星：0.48 → 0.86，四道短线按挥砍平面铺开，长度先涨后收
+    const sparkP = (t - 0.48) / 0.38;
+    if (sparkP > 0 && sparkP < 1) {
+      const grow = Math.sin(Math.PI * sparkP); // 0 → 1 → 0
+      const fade = 1 - sparkP;
+      const rays = [
+        { a: -0.7, len: 9 },
+        { a: 0.7, len: 9 },
+        { a: -2.44, len: 5.5 },
+        { a: 2.44, len: 5.5 }
+      ];
+      for (const r of rays) {
+        const ang = axis + r.a;
+        const len = r.len * k * grow;
+        g.moveTo(tx + Math.cos(ang) * 2 * k, ty + Math.sin(ang) * 2 * k);
+        g.lineTo(tx + Math.cos(ang) * (2 * k + len), ty + Math.sin(ang) * (2 * k + len));
+        g.stroke({ width: 1.6 * k, color: 0xffe9a8, alpha: fade });
+      }
+      g.circle(tx, ty, 2.2 * k * grow).fill({ color: 0xffffff, alpha: 0.85 * fade });
+    }
+  }
+
+  /** 前冲位移的时间曲线（单位：设计像素，t ∈ [0,1]） */
+  private attackLungeAt(t: number): number {
+    if (t < 0.22) return -1.5 * (t / 0.22); // 蓄力：微微后拉
+    if (t < 0.52) return -1.5 + (ATTACK_LUNGE + 1.5) * easeOut((t - 0.22) / 0.3); // 刺出
+    return ATTACK_LUNGE * (1 - easeOut((t - 0.52) / 0.48)); // 收招归位
   }
 
   /** 浏览别的楼层时把勇者藏起来 —— 他并不在那里 */
@@ -732,10 +909,10 @@ export class Board extends Container {
   update(dtMs: number, state: GameState): void {
     this.clock += dtMs;
 
-    if (this.heroAttackMs > 0) {
-      this.heroAttackMs = Math.max(0, this.heroAttackMs - dtMs);
-      this.refreshHeroTexture();
-    }
+    // 挥剑计时 + 画特效。计时归零那一帧也要走一次 drawAttackFx
+    // （它负责把前冲层归位），所以不能写成 `if (heroAttackMs > 0)` 包住整段
+    if (this.heroAttackMs > 0) this.heroAttackMs = Math.max(0, this.heroAttackMs - dtMs);
+    this.drawAttackFx();
 
     if (this.heroAnim.active) {
       this.heroAnim.t = Math.min(1, this.heroAnim.t + dtMs / 130);
@@ -791,6 +968,44 @@ export class Board extends Container {
   /** 悬停格的中心点（世界坐标），用于浮层定位 */
   cellCenter(x: number, y: number): { x: number; y: number } {
     return { x: (x + 0.5) * this.cellPx, y: (y + 0.5) * this.cellPx };
+  }
+
+  /**
+   * 校验用：勇者此刻的落屏状态。
+   *
+   * 「攻击时角色会变小」是**观感**问题，但它有可以量的代理量：
+   * 精灵的贴图矩形与落屏宽高。只要这两样在攻击全程保持不变，
+   * 「变小」在物理上就不可能发生 —— 所以断言量它们，不去争论好不好看。
+   *
+   * `fxBounds` 是特效层的实测包围盒：空图形是 0×0，画了东西就不是。
+   * 用**渲染树算出来的**包围盒而不是「我记得我画了」的自报字段 ——
+   * 自报只能证明代码跑到了那一行，证明不了真的有东西落在屏上。
+   */
+  __hero(): {
+    dir: Facing;
+    attacking: boolean;
+    frame: { w: number; h: number } | null;
+    size: { w: number; h: number } | null;
+    lunge: { x: number; y: number };
+    fxBounds: { x: number; y: number; w: number; h: number };
+  } {
+    const f = this.heroSprite?.texture.frame ?? null;
+    const fx = this.attackFx.getBounds();
+    return {
+      dir: this.heroDir,
+      attacking: this.heroAttackMs > 0,
+      frame: f ? { w: Math.round(f.width), h: Math.round(f.height) } : null,
+      size: this.heroSprite
+        ? { w: Math.round(this.heroSprite.width), h: Math.round(this.heroSprite.height) }
+        : null,
+      lunge: { x: this.heroLunge.x, y: this.heroLunge.y },
+      fxBounds: {
+        x: Math.round(fx.x),
+        y: Math.round(fx.y),
+        w: Math.round(fx.width),
+        h: Math.round(fx.height)
+      }
+    };
   }
 
   get hovered(): { x: number; y: number } | null {

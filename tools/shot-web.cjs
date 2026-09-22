@@ -101,8 +101,22 @@ const server = http.createServer((req, res) => {
  *
  * 是函数而不是常量，因为 DESIGN 要等页面加载完才知道。棋盘那一档干脆
  * 直接问渲染树（`board.toGlobal`），LAYOUT 改了它跟着改。
+ *
+ * `region:x,y,w,h` 是「设计坐标任意矩形」—— 取证时经常只需要一格或两格
+ * （比如「勇者和它正下方那只怪」），裁整个棋盘再事后裁图容易把坐标算错：
+ * 裁出来的东西看着不对时，分不清是渲染错了还是我裁错了。写了 region
+ * 之后「我要看的区域」就是一句可核对的话。
  */
 function clipExpr(kind) {
+  if (kind.startsWith('region:')) {
+    const [x, y, width, height] = kind
+      .slice('region:'.length)
+      .split(',')
+      .map((v) => Number(v.trim()));
+    if ([x, y, width, height].some((v) => !Number.isFinite(v))) return null;
+    // 视口已对齐设计尺寸（缩放系数 1），所以设计坐标即 CSS 坐标
+    return `(${JSON.stringify({ x, y, width, height })})`;
+  }
   if (kind === 'board') {
     return `(() => {
       const b = window.mota && window.mota.game && window.mota.game.board;

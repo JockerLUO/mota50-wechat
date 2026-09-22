@@ -1,6 +1,6 @@
 {
   "meta": {
-    "generatedAt": "2026-09-22T01:34:11+00:00",
+    "generatedAt": "2026-09-22T02:17:56+00:00",
     "generator": "tools/build-assets.py",
     "baseTile": 16,
     "cell": 32,
@@ -74,7 +74,7 @@
       "h": 16,
       "drawScale": 2,
       "name": "stairsDown",
-      "src": "0x72/floor_ladder"
+      "src": "手绘 · 俯视竖井（同心方环向内变暗 + 台阶棱）"
     },
     "4": {
       "atlas": "terrain",
@@ -84,7 +84,7 @@
       "h": 16,
       "drawScale": 2,
       "name": "stairsUp",
-      "src": "0x72/floor_ladder @ 预翻转（与下楼梯镜像）"
+      "src": "手绘 · 侧视阶梯（四级自左下升到右上 + 出口亮光）"
     },
     "5": {
       "atlas": "terrain",
