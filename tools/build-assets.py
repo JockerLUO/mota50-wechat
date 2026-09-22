@@ -61,23 +61,25 @@ BASE_TILE = 16          # 精灵的**绘制网格**边长（所有手绘 / 程�
 CELL = 32               # 游戏棋盘的格子边长（设计像素，不随素材网格变化）
 
 # ── 超采样：让「落屏像素点」更密 ─────────────────────────────────
-# 素材画在 16 网格上、运行时 ×2 放大到 32px 的格子；在 dpr=3 的手机上，
-# **一个素材像素要占 ~5.4 个设备像素** —— 画面的颗粒感来源就是这个，不是渲染器。
-# 所以「更精细」要做的是**在 32 网格上出图**：帧尺寸 ×SS、drawScale ÷ SS，
+# 素材画在 16 网格上、运行时放大到 32px 的格子；在 dpr=3 的手机上，
+# 一个素材像素要占好几个设备像素 —— 画面的颗粒感来源就是这个，不是渲染器。
+# 所以「更精细」要做的是**在高网格上出图**：帧尺寸 ×SS、drawScale ÷ SS，
 # 落屏的设计像素数一点不变（verify-visual 的 A17 断言这件事）。
 #
-# 放大算法必须是 Scale2x 而不是双线性：它按 4 邻域决定 2×2 块里的对角填充，
+# 放大算法是 Scale2x 而不是双线性：它按 4 邻域决定 2×2 块里的对角填充，
 # 消掉阶梯锯齿的同时**保留硬边**，像素画不会变糊。
-#   第三方位图 —— 由此获得平滑的轮廓（锯齿是「粗」最主要的观感来源）；
-#   程序化微细节（变体杂质、砖缝）—— 改到**放大之后**再生成，
-#   粒度因此从 1/16 变成 1/32，那才是真正多出来的细节。
-SS = 2
-SS_PASSES = SS.bit_length() - 1     # 2 → 1 次 Scale2x
-RASTER_TILE = BASE_TILE * SS        # 32：图集里瓦片的边长
-DRAW_SCALE = 1                      # 帧已经是落屏网格，不再放大
-BIG_SCALE = 3                       # 「大家伙」：仍是 16 网格 ×3。它不参与超采样 ——
-                                    # 32×1.5 是非整数倍，会让「有的像素占 2 个、
-                                    # 有的占 1 个」，体型最大的怪反而最毛躁。
+#
+# ⚠️ SS=4 是 Scale2x 连做两遍。第二遍会把第一遍的 1px 直角磨圆 —— 对第三方
+# 位图（信息上限 16×16）这是可接受的代价（轮廓更平滑），但**程序化手绘的地形
+# （地板、楼梯）不这么走**：它们直接画在 RASTER_TILE 网格上（见「四、素材源」），
+# 超采样对它们是空操作。手绘在高网格上 = 真·细节翻倍；超采样 = 只把已有信息摊细。
+SS = 4
+SS_PASSES = SS.bit_length() - 1     # 4 → 2 次 Scale2x
+RASTER_TILE = BASE_TILE * SS        # 64：图集里瓦片的边长
+DRAW_SCALE = CELL / RASTER_TILE     # 0.5：帧是落屏网格的 2 倍密，绘制时缩小一半
+BIG_SCALE = 3                       # 「大家伙」落屏仍是 16 网格 ×3 = 48px（表里的
+                                    # 倍数是对**绘制网格**而言的）；出图时同样超采样
+                                    # 到 64 网格、倍数 ÷SS = 0.75，否则它是全屏最粗的东西。
 
 # ─────────────────────────────────────────────────────────────────────
 # 一、工具：调色板变换
@@ -390,11 +392,12 @@ def scale2x(im: Image.Image) -> Image.Image:
 
 def supersample(im: Image.Image) -> Image.Image:
     """
-    把 16 网格的帧搬到 32 网格（SS 倍）。
+    把帧放大 **SS 倍**（源网格 ×SS）。用于角色 / 怪物 / 道具。
 
-    已经是 32 网格的（0x72 的门原本就是 32×32）**原样返回** ——
-    再放大一次会落到 64，而地形精灵是按格子宽度画的，64 又被压回 32，
-    等于白丢一半像素还多绕一步。
+    它们的落屏尺寸各不相同（勇者 32×52、剑 20×42、金币 16×16），所以必须按
+    「各自的源 ×SS」走 —— 统一放大到 RASTER_TILE 会把小道具整整放大一倍
+    （金币 8×8 会被拉到 64，落屏从 16px 变 32px）。
+    已经是出图网格的手绘帧原样返回。
     """
     if im.width >= RASTER_TILE and im.height >= RASTER_TILE:
         return im
@@ -404,23 +407,39 @@ def supersample(im: Image.Image) -> Image.Image:
     return out
 
 
+def terrain_raster(im: Image.Image) -> Image.Image:
+    """
+    地形专用：放大到**出图网格**（RASTER_TILE）为止，而不是「源 ×SS」。
+
+    差别就在门：它的源本来就是 32×32（不是 16 网格那一套），按 ×SS 会到
+    128×128，落屏 64px —— 一扇门顶两格宽。而地形一律占一格、落屏 = cell，
+    所以目标应当是「边长 = RASTER_TILE」。
+    """
+    out = im
+    while out.width < RASTER_TILE or out.height < RASTER_TILE:
+        out = scale2x(out)
+    return out
+
+
 def _mon_out(im: Image.Image, scale: int) -> Image.Image:
     """
-    怪物的出图帧：常规怪升到 32 网格，「大家伙」保持 16 网格 ×3。
+    怪物的出图帧：一律超采样到 RASTER_TILE 网格（包括「大家伙」）。
 
-    后者不参与超采样是刻意的：32 × 1.5 是非整数倍，会出现「有的像素占 2 个
-    屏幕像素、有的只占 1 个」，体型最大的几只反而最毛躁。
+    大家伙曾经不超采样（16 网格 ×3 = 48px），理由是「非整数倍会毛躁」——
+    那是 drawScale 只能取整时代的约束。现在 drawScale 是浮点（0.75），
+    且超采样只发生在**纹理分辨率**上，落屏尺寸不变；不跟的话它反而成了
+    全屏像素最粗的东西（每素材像素 8 个设备像素 vs 别人的 1.35）。
     """
-    return im if scale == BIG_SCALE else supersample(im)
+    return supersample(im)
 
 
-def _out_scale(scale: int) -> int:
+def _out_scale(scale: int) -> float:
     """
     MONSTERS 表里写的倍数是对**绘制网格**（16）而言的；出图网格翻了 SS 倍，
-    倍数要同步除掉，落屏的设计像素数才不变（16×2 = 32 = 32×1）。
-    「大家伙」不走这条路 —— 它没有超采样，倍数自然也不用动。
+    倍数要同步除掉，落屏的设计像素数才不变（16×2 = 32 = 64×0.5）。
+    「大家伙」3 ÷ 4 = 0.75，落屏仍是 48px。
     """
-    return BIG_SCALE if scale == BIG_SCALE else scale // SS
+    return scale / SS
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -470,12 +489,17 @@ def ken(idx: int, path: Path = KEN_TD) -> Image.Image:
 # 函数体在**调用时**才查全局名，而 TERRAIN 里是 lambda、真正调用发生在构建
 # 阶段（见 build()），所以这里的先后顺序不影响运行。
 
-# 下楼梯调色板：从井口（浅）到井底（深）的 8 环。整体压在暖砂石区间里，
-# 与地面 TERRAIN[0] 的 #926c42 → #f4deb2 同一族色，贴在地面上不违和。
-WELL_RINGS = [
-    (178, 152, 112), (152, 128, 94), (126, 106, 76), (102, 86, 60),
-    (80, 67, 47), (60, 50, 36), (42, 35, 25), (25, 21, 15),
-]
+# ── 地板：手绘在**出图网格**上 ───────────────────────────────────
+# 旧的地板是第三方 16×16 位图重染色再超采样。第三方位图只有 256 个像素的
+# 信息，超采样只是把既有信息摊细 —— **不会多出任何细节**，只把轮廓磨圆。
+# 地板是占屏面积最大的地形，所以它是最值得真手绘的一张。
+FLOOR_BASE = (198, 168, 126)    # 石板面
+FLOOR_HI = (216, 190, 147)      # 上 / 左受光倒角
+FLOOR_SHADE = (166, 138, 100)   # 下 / 右背光倒角
+FLOOR_JOINT = (132, 102, 66)    # 石板缝
+FLOOR_BEAD = (146, 108, 66)     # 碎石
+FLOOR_SEED = 20260922
+
 # 上楼梯：梯段的踏面／立面，逐级变亮；最后一块是梯顶的出口亮光
 STAIR_TREAD = [(178, 154, 118), (198, 174, 136), (218, 194, 158), (238, 214, 176)]
 STAIR_RISER = [(122, 102, 72), (136, 114, 82), (152, 128, 92), (168, 144, 104)]
@@ -483,27 +507,109 @@ STAIR_SHAFT = (52, 42, 30)      # 梯段背后的井道暗部
 STAIR_EXIT = (252, 242, 214)    # 梯顶的出口亮光
 STAIR_EXIT_RIM = (232, 212, 168)
 STAIR_BASE = (44, 35, 24)       # 最下面那级的落地线
+# 下楼梯：越往下越暗，最后一档近乎全黑 —— 那是「看不见底的深处」，
+# 也是玩家一眼区分上下的主要依据（上＝往亮处走，下＝往暗处沉）
+STAIR_WELL = [(122, 102, 72), (92, 76, 54), (62, 51, 36), (34, 28, 20)]
+
+
+def _floor(seed: int = FLOOR_SEED) -> Image.Image:
+    """
+    地板：错缝石板，直接画在 RASTER_TILE 网格上。
+
+    结构：上下两行石板，第一行从中间断一次、第二行断两次 —— **错缝砌法**，
+    平铺时才不会连成十字网格。缝宽 2px；每块石板贴着缝的那 1px 压倒角
+    （上 / 左受光、下 / 右背光），内部再撒极稀疏的碎石。
+
+    ⚠️ `seed` 只影响最后一步的杂质：缝与倒角必须用**固定的** FLOOR_SEED 生成。
+    变体就是靠「同一个配方、换个杂质种子」派生的 —— 缝一旦跟着变，平铺就会
+    连不上，而颜色多重集也不再守恒，配色断言（verify_terrain ⑤）会立刻红。
+
+    石子用**离散几档色**而不是连续噪声，同样是为了多重集守恒：
+    变体只挪位置、不引入新颜色。
+    """
+    n = RASTER_TILE
+    im = Image.new("RGBA", (n, n), FLOOR_BASE + (255,))
+    p = im.load()
+    rng = random.Random(FLOOR_SEED)      # 缝 / 倒角：固定种子
+    jw = max(2, SS) // 2 + SS // 2        # 缝宽：64 网格上 2px
+
+    def vjoint(cx: int, y0: int, y1: int):
+        for y in range(y0, y1):
+            for dx in range(-jw // 2, jw - jw // 2):
+                x = cx + dx
+                if 0 <= x < n:
+                    p[(x, y)] = FLOOR_JOINT + (255,)
+
+    for ri in range(2):
+        y0, y1 = ri * (n // 2), (ri + 1) * (n // 2)
+        for cx in ([n // 2] if ri == 0 else [n // 4, 3 * n // 4]):
+            vjoint(cx, y0, y1)
+    # 横缝：只在两行之间（上下边缘不画，否则平铺时会连成加粗的十字）
+    for y in range(n // 2 - jw // 2, n // 2 + jw - jw // 2):
+        if 0 <= y < n:
+            for x in range(n):
+                p[(x, y)] = FLOOR_JOINT + (255,)
+
+    # 倒角：贴着缝的那一圈。上/左提亮、下/右压暗 —— 石板因此读得出厚度。
+    base = FLOOR_BASE + (255,)
+    joint = FLOOR_JOINT + (255,)
+    for y in range(n):
+        for x in range(n):
+            if p[(x, y)] != base:
+                continue
+            up = p[(x, y - 1)] == joint if y > 0 else False
+            lf = p[(x - 1, y)] == joint if x > 0 else False
+            dn = p[(x, y + 1)] == joint if y < n - 1 else False
+            rt = p[(x + 1, y)] == joint if x < n - 1 else False
+            if up or lf:
+                p[(x, y)] = FLOOR_HI + (255,)
+            elif dn or rt:
+                p[(x, y)] = FLOOR_SHADE + (255,)
+
+    # 杂质：碎石（暗）与磨痕（亮）。密度刻意很低 —— 撒多了就是麻点，
+    # 比重复更难看；而且变体是「整批挪位置」，数量越多越容易顶穿 drift 上限。
+    rng = random.Random(seed)             # ← 只有这一步随变体变化
+    inner = [(x, y) for y in range(1, n - 1) for x in range(1, n - 1) if p[(x, y)] == base]
+    for _ in range(int(n * n * 0.008)):
+        if not inner:
+            break
+        x, y = inner[rng.randrange(len(inner))]
+        p[(x, y)] = FLOOR_BEAD + (255,)
+    for _ in range(int(n * n * 0.004)):
+        if not inner:
+            break
+        x, y = inner[rng.randrange(len(inner))]
+        p[(x, y)] = FLOOR_HI + (255,)
+    return im
 
 
 def _stairs_down() -> Image.Image:
     """
-    下楼梯：俯视竖井。
+    下楼梯：**侧视下沉阶梯**（与上楼梯同一族画法，方向相反）。
 
-    画法是 8 个同心方环由外向内、一环比一环暗；再给每环的**上沿与左沿**
-    压一条提亮线 —— 那几道亮线就是台阶棱。没有这几道棱，同心方环会读成
-    "漏斗/坑"，有了棱才是"一圈圈盘下去的台阶"。
+    上一版是「俯视竖井」—— 8 个同心方环向内变暗。用户反馈那圈方形读不出
+    楼梯，反而像个坑／漏斗，而且和侧视的上楼梯**不像一套**。所以这里改成
+    同一个画法的反向版本：四级台阶，踏面自左上向右下一级级沉下去，越深越暗，
+    最后一档近乎全黑（看不见底的深处）。
+
+    与上楼梯的区分点因此是**两个方向同时相反**：
+      上 —— 从左下升到右上，越往上越亮，顶端有出口亮光；
+      下 —— 从左上沉到右下，越往下越暗，底端是深渊。
+    只改其中一个（比如把一张图调暗）不够，两个一起才是「读得出方向」。
     """
-    n = BASE_TILE
-    im = Image.new("RGBA", (n, n), (0, 0, 0, 0))
-    for k, col in enumerate(WELL_RINGS):
-        _put(im, k, k, n - 2 * k, n - 2 * k, col + (255,))
-    # 台阶棱：最内两环不画（那里已经是井底，再画就糊了）
-    for k in range(len(WELL_RINGS) - 2):
-        col = WELL_RINGS[k]
-        lit = tuple(min(255, c + 54) for c in col) + (255,)
-        side = tuple(min(255, c + 24) for c in col) + (255,)
-        _put(im, k, k, n - 2 * k, 1, lit)          # 上沿（迎光）
-        _put(im, k, k, 1, n - 2 * k, side)         # 左沿（侧光）
+    n = RASTER_TILE
+    steps = 4
+    sw = n // steps                 # 16
+    tread = SS                      # 踏面厚度：16 网格 1px × SS
+    im = Image.new("RGBA", (n, n), STAIR_SHAFT + (255,))
+    for i in range(steps):
+        x = i * sw
+        ty = 2 * SS + i * 3 * SS    # 8 / 20 / 32 / 44：逐级下沉
+        # 越往下越暗 —— 踏面用 TREAD 的倒序，井壁用 WELL 的正序
+        _put(im, x, ty, sw, tread, STAIR_TREAD[steps - 1 - i] + (255,))
+        _put(im, x, ty + tread, sw, n - (ty + tread), STAIR_WELL[i] + (255,))
+    # 井底：最深处再压一层近黑，让「深不见底」有一个落点
+    _put(im, n - sw, n - 2 * SS, sw, 2 * SS, STAIR_WELL[-1] + (255,))
     return im
 
 
@@ -513,26 +619,29 @@ def _stairs_up() -> Image.Image:
 
     四级台阶，每级是一根**实心立柱**（1px 踏面 + 直到地面的立面），
     高度自左向右递增 —— 合起来就是一条上升的梯段剖面。背后的井道填暗色，
-    梯顶右上角留 4×4 的出口亮光。因为高度是单调递增的，"往上是哪边"这件事
+    梯顶右上角留一小块出口亮光。因为高度是单调递增的，"往上是哪边"这件事
     在轮廓上就能读出来，不依赖颜色。
+
+    坐标全部写在 RASTER_TILE 网格上（16 网格的 ×SS）：手绘素材不走超采样，
+    高网格上直接画 = 真多出来的细节；超采样只会把既有信息摊细。
     """
-    n = BASE_TILE
-    step_w = n // 4                     # 4；四级刚好铺满 16 宽
+    n = RASTER_TILE
+    steps = 4
+    sw = n // steps
+    tread = SS
     im = Image.new("RGBA", (n, n), STAIR_SHAFT + (255,))
-    _put(im, 0, n - 1, n, 1, STAIR_BASE + (255,))      # 落地线，把梯段"放"在地上
-    for i in range(4):
-        x = i * step_w
-        tread_y = n - 3 - i * 3         # 13 / 10 / 7 / 4
-        rise_y = tread_y + 1
+    _put(im, 0, n - SS, n, SS, STAIR_BASE + (255,))   # 落地线，把梯段"放"在地上
+    for i in range(steps):
+        x = i * sw
+        ty = n - 3 * SS - i * 3 * SS            # 52 / 40 / 28 / 16：逐级升高
         # 踏面整条即高光，不再单独给左端压一格更亮的像素 —— 那样会在横剖面上
-        # 造成 1px 的局部回退，把「自左向右单调变亮」这条结构特征弄脏（实测回退 1.25/255），
-        # 让本该抓形体的断言去抓这点噪声。
-        _put(im, x, tread_y, step_w, 1, STAIR_TREAD[i] + (255,))                  # 踏面
-        _put(im, x, rise_y, step_w, n - 1 - rise_y, STAIR_RISER[i] + (255,))      # 立面（不压落地线）
-    # 梯顶：最高一级踏面（y=4）正上方就是出口。先铺一层"边框色"再压亮光，
+        # 造成 1px 的局部回退，把「自左向右单调变亮」这条结构特征弄脏。
+        _put(im, x, ty, sw, tread, STAIR_TREAD[i] + (255,))
+        _put(im, x, ty + tread, sw, n - (ty + tread) - SS, STAIR_RISER[i] + (255,))
+    # 梯顶：最高一级踏面（y=16）正上方就是出口。先铺一层"边框色"再压亮光，
     # 让出口是"一段亮着的梯口"而不是"一块贴在墙上的白斑"。
-    _put(im, 12, 0, 4, 4, STAIR_EXIT_RIM + (255,))     # y = 0..3
-    _put(im, 12, 0, 4, 2, STAIR_EXIT + (255,))         # y = 0..1
+    _put(im, 3 * sw, 0, sw, 4 * SS, STAIR_EXIT_RIM + (255,))
+    _put(im, 3 * sw, 0, sw, 2 * SS, STAIR_EXIT + (255,))
     return im
 
 
@@ -543,24 +652,26 @@ def _stairs_up() -> Image.Image:
 # 「假墙」必须和真墙长得一模一样 —— 这就是它的全部玩法意义，所以共用同一张图。
 
 TERRAIN = {
-    # 地面必须**又暖又亮**，理由在数据里：
+    # 地面必须**又暖又亮**。这条约束的来历看数据：
     # 0x72 的 floor_1 与 wall_mid 用的是**完全相同的三个颜色**
     # (72,59,58) / (119,92,85) / (34,34,34)，只是排列不同（地面＝平坦底＋缝，
     # 墙＝砖纹）。也就是说源素材本身**没打算让两者靠颜色区分**。
     # 只给地面提亮 ×1.5 的结果是实测平均亮度 0.364 vs 墙 0.232，比值 1.57 ——
     # 亮度差不够、色相还完全一样，整屏糊成一坨褐色，迷宫读不出来。
     # 而且墙的砖缝 (34,34,34) 正好等于史莱姆身体的深色，怪物会「粘」在墙上。
-    # 所以这里换成 ramp_norm：先把亮度拉伸到满量程，再压成一套暖砂石渐变
-    # （深缝 #926c42 → 砖面 #bd9e73 → 高光 #f4deb2），实测比值提到 2.77，
-    # 且色相明确落在暖色区（35°）。对比度断言见 verify_terrain 第 ④ 条。
-    0: ("floor", lambda: ramp_norm(o72("floor_1"), (146, 108, 66), (244, 222, 178)),
-       "0x72/floor_1 @ 暖砂石渐变（亮度归一化后映射，与墙拉开明度差）"),
+    #
+    # 曾经的解法是 ramp_norm 重染第三方位图（比值提到 2.77）。现在改成**手绘**：
+    # 地板占屏面积最大，而第三方位图只有 16×16 的信息，超采样摊细它并不会
+    # 多出细节（只会把轮廓磨圆）。要真的更精细，只能在高网格上重画 ——
+    # 见 `_floor()`。配色仍压在暖砂石族里，明度比断言见 verify_terrain 第 ④ 条。
+    0: ("floor", _floor, "手绘 · 错缝石板（直接画在出图网格上，非第三方位图重染）"),
     1: ("wall",       lambda: o72("wall_mid"),                         "0x72/wall_mid"),
     2: ("prisonDoor", lambda: o72("doors_leaf_closed"),                "0x72/doors_leaf_closed（原色木门，区别于三色钥匙门）"),
-    # 上/下楼梯：**两张手绘**，不是同一张图翻转。理由见上面「四之三」那一节：
-    # floor_ladder 近乎上下对称，翻转后肉眼分不出来，等于没有区分。
-    3: ("stairsDown", _stairs_down, "手绘 · 俯视竖井（同心方环向内变暗 + 台阶棱）"),
-    4: ("stairsUp",   _stairs_up,   "手绘 · 侧视阶梯（四级自左下升到右上 + 出口亮光）"),
+    # 上/下楼梯：**同一族画法的两个方向**（侧视梯段），不是同一张图翻转。
+    # 理由见上面「四之三」那一节：floor_ladder 近乎上下对称，翻转后肉眼分不出
+    # 等于没有区分；而同族反向 + 明暗反向，玩家一眼就能读出「往哪边走」。
+    3: ("stairsDown", _stairs_down, "手绘 · 侧视下沉阶梯（越往下越暗，底端近黑）"),
+    4: ("stairsUp",   _stairs_up,   "手绘 · 侧视上升阶梯（越往上越亮，顶端出口光）"),
 
     # 三色门用「渐变」而不是「转色相」。原因看数据：门原本是暖木色（色相约 12°），
     # 想转到红（~355°）只能移 -17°，结果还是褐色，一眼认不出是红门；
@@ -590,7 +701,7 @@ def _wall_top_baked(body: Image.Image | None = None) -> Image.Image:
     # 变体的墙身是 32 网格（超采样之后才生成变体），压顶必须跟着翻倍，
     # 否则压顶只盖住上半个格子 —— 从外面看就是「墙顶缺了一条」。
     if cap.width != body.width:
-        cap = supersample(cap)
+        cap = terrain_raster(cap)
     out = body.copy()
     out.alpha_composite(cap)
     return out
@@ -665,42 +776,16 @@ def _floor_palette(base: Image.Image) -> tuple[tuple, tuple, tuple]:
     return fill, rest[0], rest[-1]
 
 
-def _floor_variants(base: Image.Image) -> list[Image.Image]:
-    """地面变体：倒角分工不变，只重排缺口位置 + 撒小杂质。"""
-    w, h = base.size
-    fill, bead_dark, bead_light = _floor_palette(base)
-    corners = {(0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)}
+def _floor_variants() -> list[Image.Image]:
+    """
+    地板变体：缝与倒角逐像素一致，只有碎石 / 磨痕换一批位置。
 
-    def edge_points(edge: str) -> list[tuple[int, int]]:
-        if edge == "top":
-            return [(x, 0) for x in range(w)]
-        if edge == "bottom":
-            return [(x, h - 1) for x in range(w)]
-        if edge == "left":
-            return [(0, y) for y in range(h)]
-        return [(w - 1, y) for y in range(h)]
-
-    out = [base]
-    for vi in range(1, FLOOR_VARIANTS):
-        rng = random.Random(VARIANT_SEED * 101 + vi)
-        im = base.copy()
-        p = im.load()
-        for edge in ("top", "bottom", "left", "right"):
-            bead = bead_dark if edge in ("top", "left") else bead_light
-            pts = [q for q in edge_points(edge) if q not in corners]
-            n = sum(1 for q in pts if base.getpixel(q) == bead)
-            for q in pts:
-                p[q] = fill
-            for q in rng.sample(pts, n):  # 缺口数量不变，只换位置
-                p[q] = bead
-        # 小杂质（石子 / 磨痕）：数量刻意很少 —— 撒多了就成麻点，比重复更难看
-        for _ in range(rng.randint(2 * SPECKLE, 3 * SPECKLE)):
-            p[(rng.randrange(2, w - 2), rng.randrange(2, h - 2))] = bead_dark
-        if vi % 2 == 0:
-            for _ in range(rng.randint(1 * SPECKLE, 2 * SPECKLE)):
-                p[(rng.randrange(2, w - 2), rng.randrange(2, h - 2))] = bead_light
-        out.append(im)
-    return out
+    底图是**手绘**的（不再是第三方位图），所以变体不必「从成品图上挪像素」——
+    直接同一配方换个种子重画更干净：**颜色多重集天然守恒**，drift 断言因此量的
+    是「杂质挪了多少」，而不是「两种画法差多少」。
+    缝一旦跟着变，平铺就会连不上 —— 所以 `_floor()` 内部只有杂质那一步吃 seed。
+    """
+    return [_floor(FLOOR_SEED + vi * 977) for vi in range(FLOOR_VARIANTS)]
 
 
 def _wall_palette(base: Image.Image) -> tuple[tuple, tuple, tuple]:
@@ -733,16 +818,19 @@ def _wall_variants(base: Image.Image) -> list[Image.Image]:
     """
     w, h = base.size
     hi, body, joint = _wall_palette(base)
+    # WALL_COURSE 已经含了 SS（它本身就是出图网格上的砌层厚度）；这里再按
+    # base 的实际网格归一，免得有人传进一张没超采样的墙就悄悄算错。
+    course = WALL_COURSE * (h // RASTER_TILE or 1)
     out = [base]
     for vi in range(1, WALL_VARIANTS):
         rng = random.Random(VARIANT_SEED * 211 + vi)
         im = base.copy()
         p = im.load()
-        for c0 in range(0, h - WALL_COURSE + 1, WALL_COURSE):
+        for c0 in range(0, h - course + 1, course):
             # 同一层用同一个位移，缝才是「整段错开」而不是「各错各的」——
             # 后者看上去像墙面长了麻点，不像砌法。
             shift = rng.randrange(1, w)
-            for dy in range(WALL_COURSE):
+            for dy in range(course):
                 y = c0 + dy
                 row = [p[(x, y)] for x in range(w)]
                 slots = [x for x, c in enumerate(row) if c == joint]
@@ -757,7 +845,7 @@ def _wall_variants(base: Image.Image) -> list[Image.Image]:
             # 用**交换**而不是改色 —— 交换不动任何颜色的计数，断言依旧恒绿。
             if rng.random() < 0.5:
                 x = rng.randrange(w)
-                y1 = c0 + rng.randrange(WALL_COURSE - 1)
+                y1 = c0 + rng.randrange(course - 1)
                 y2 = y1 + 1
                 p[(x, y1)], p[(x, y2)] = p[(x, y2)], p[(x, y1)]
         out.append(im)
@@ -2345,9 +2433,10 @@ def verify_terrain(cells: dict) -> list[str]:
     # 上=floor_ladder 垂直翻转」这种写法轻松通过 —— 而 floor_ladder 近乎上下
     # 对称，翻转后肉眼读不出区别，等于没区分（这正是用户报的第 ④ 条）。
     # 现在判四件事：完全相同的图、互为垂直翻转、**以及两者的形体走向**：
-    #   下楼梯（俯视竖井）→ 横剖面是"两端亮中间暗"的谷；
-    #   上楼梯（侧视梯段）→ 横剖面自左向右单调变亮。
-    # 只改明暗不改形体（比如简单地把一张图调亮调暗）会让第 4 条挂掉。
+    #   下楼梯（侧视下沉）→ 横剖面自左向右**变暗**（越往下越深）；
+    #   上楼梯（侧视上升）→ 横剖面自左向右**变亮**（越往上越接近出口）。
+    # 只改明暗不改形体（比如简单地把一张图调亮调暗）会让第 4 条挂掉；
+    # 反过来，只改走向不改明暗也一样 —— 两条一起才是「同一族画法的两个方向」。
     up, down = cells.get("4"), cells.get("3")
     if up is None or down is None:
         problems.append("上/下楼梯瓦片缺失，无法校验可区分性")
@@ -2365,13 +2454,15 @@ def verify_terrain(cells: dict) -> list[str]:
         dc, uc = _col_lums(down), _col_lums(up)
         n = len(dc)
         if n >= 8:
-            # 井：两端（井口）必须明显亮于中间（井底）
-            edge = (sum(dc[: n // 4]) + sum(dc[-(n // 4):])) / (2 * (n // 4))
-            mid = sum(dc[n // 4: -n // 4]) / (n - 2 * (n // 4))
-            if edge - mid < 0.12:
+            # 下沉梯段：自左向右必须单调变暗，且落差够大 —— 越往右下越深
+            fall = dc[0] - dc[-1]
+            bumps = [(dc[i + 1] - dc[i]) for i in range(n - 1)]
+            worst_down = max(bumps)
+            if fall < 0.15 or worst_down > 0.02:
                 problems.append(
-                    f"下楼梯(3) 的横剖面没有「井」的形状（边缘亮度 {edge:.3f} vs "
-                    f"中心 {mid:.3f}，差 < 0.12）—— 俯视竖井必须两端亮、中间暗"
+                    f"下楼梯(3) 的横剖面不是自左向右单调变暗（左端 {dc[0]:.3f} → "
+                    f"右端 {dc[-1]:.3f}，总落差 {fall:.3f}，最大回弹 {worst_down:.3f}）—— "
+                    f"下沉梯段靠「越往右下越深」来表明方向，回弹或落差不足就读不出来"
                 )
             # 梯段：自左向右必须单调变亮，且总落差够大
             rise = uc[-1] - uc[0]
@@ -2681,11 +2772,12 @@ def main() -> int:
     # 撒杂质。这样杂质与竖缝的粒度是 1/32 而不是 1/16 —— 高网格带来的细节
     # 主要来自这里（第三方位图本身没有更多信息可以放大出来）。
     _base = {k: im for k, im, _ in terr_cells}
-    _wall_bodies = _wall_variants(supersample(_base["1"]))
-    for vi, im in enumerate(_floor_variants(supersample(_base["0"]))):
+    _wall_bodies = _wall_variants(terrain_raster(_base["1"]))
+    # 地板是手绘的，变体由配方直接生成（缝不动、只换碎石），不经过 supersample
+    for vi, im in enumerate(_floor_variants()):
         if vi:
             push_terrain(_variant_key("0", vi), f"floor#{vi}", im,
-                         f"由 TERRAIN[0] 派生：倒角缺口重排 + 同色小杂质（第 {vi} 号变体，32 网格）")
+                         f"由 TERRAIN[0] 派生：缝与倒角一致，碎石/磨痕换一批位置（第 {vi} 号变体）")
     for vi, im in enumerate(_wall_bodies):
         if vi:
             push_terrain(_variant_key("1", vi), f"wall#{vi}", im,
@@ -2702,11 +2794,12 @@ def main() -> int:
         "1:top": WALL_VARIANTS,
     }
 
-    # 出图这一步才升到 32 网格。变体在上面已按 32 网格生成，supersample 会原样放过。
-    terr_cells = [(k, supersample(im), info) for k, im, info in terr_cells]
+    # 出图这一步才升到出图网格（RASTER_TILE）。手绘的地板/楼梯本就画在这个网格上，
+    # terrain_raster 会对它们空转；第三方位图与门则按各自起点放大到齐平。
+    terr_cells = [(k, terrain_raster(im), info) for k, im, info in terr_cells]
 
-    # 断言跑在**出图网格**（32）上：变体是在 32 网格上生成的，底图必须同网格，
-    # 否则「像素偏离数」会被尺寸差直接顶穿（实测恒差 768 = 1024−256），
+    # 断言跑在**出图网格**（RASTER_TILE）上：变体是在出图网格上生成的，底图必须
+    # 同网格，否则「像素偏离数」会被尺寸差直接顶穿（实测恒差 = 两张图面积之差），
     # 那条断言就变成了在量网格而不是量配色。
     terr_by_key = {k: im for k, im, _ in terr_cells}
 

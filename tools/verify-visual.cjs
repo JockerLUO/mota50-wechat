@@ -21,7 +21,7 @@
  *   A3 无空键：不许出现 `?字符` 这种「没映射」的兜底态
  *   A4 变体是活的：地面/墙身键在棋盘上确实用到了多个变体（防止变体路径被绕过）
  *   A5 怪物布局：非 BOSS 精灵装得进一格；每只怪有且只有一个战斗评级指示灯，且指示灯在格内
- *   A6 BOSS 与倍数：drawScale > 2 的必须是玩法上的 BOSS（不许有「巨大的杂兵」）
+ *   A6 BOSS 与倍数：画得比一格大的必须是玩法上的 BOSS（不许有「巨大的杂兵」）
  *   A7 面板版式：每块面板的标题落在同一套坐标上（见「统一版式」）
  *   A8 版面：模块间隙相等，棋盘没被挤小，棋盘盒与面板同栏
  *   A9 塔壁与地图内墙同源（比 source.uid，不比颜色）
@@ -32,7 +32,7 @@
  *   A14 攻击动画：挥剑全程勇者精灵的形体和尺寸**不变**，靠 `attackFx` 的时间轴演
  *   A15 对话折行：台词折行不超卡片内宽、不以收尾标点开头（中文行首禁则）
  *   A16 上下楼梯：两张瓦片既不逐像素相同、也不互为上下翻转，且形体走向各就各位
- *   A17 像素密度：图集帧升到 32 网格（原始素材 ×2）、drawScale 减半，落屏尺寸不变
+ *   A17 像素密度：图集帧升到出图网格（原始素材 ×supersample）、drawScale 同比缩小，落屏尺寸不变
  *   A18 文字光栅化分辨率跟随设备像素比（dsf=3 时必须是 3，写死 2 会挂）
  *
  * 用法：node tools/verify-visual.cjs [--verbose]（先 npm run build）
@@ -282,10 +282,18 @@ function check(name, ok, detail) {
       const m = window.mota.game.data.monsters;
       return Object.keys(m).filter((k) => m[k] && m[k].boss);
     });
-    const bigIds = Object.keys(MANIFEST.monsters).filter((k) => MANIFEST.monsters[k].drawScale > 2);
+    // 「大家伙」= **落屏画得比一格大**。⚠️ 不能再用 `drawScale > 2` 判定：
+    // 出图网格翻倍后 drawScale 变成小数（常规 0.5 / 大家伙 0.75），整数阈值
+    // 当场失效 —— 实测会静默变成「0 只大家伙」，于是 A5a 拿「必须装进一格」
+    // 去卡 BOSS，红得莫名其妙。判据要落在**语义**上（画得多大），不是倍数上。
+    const cellPx = Number(MANIFEST.meta.cell ?? 32);
+    const bigIds = Object.keys(MANIFEST.monsters).filter((k) => {
+      const n = MANIFEST.monsters[k];
+      return n && n.frame.w * n.drawScale > cellPx + 1e-6;
+    });
     const fakeBoss = bigIds.filter((k) => !bossIds.includes(k));
     check(
-      `A6 BOSS 与倍数：drawScale>2 的 ${bigIds.length} 只必须都是玩法 BOSS`,
+      `A6 BOSS 与倍数：画得比一格大的 ${bigIds.length} 只必须都是玩法 BOSS`,
       fakeBoss.length === 0,
       fakeBoss.length === 0
         ? `巨大化的都名副其实；另有 ${bossIds.length - bigIds.length} 只玩法 BOSS 未增大（见报告说明）`
@@ -1053,10 +1061,11 @@ function check(name, ok, detail) {
     if (stair) {
       const dc = stair.downCols;
       const uc = stair.upCols;
-      const n = dc.length;
-      const q = Math.max(1, Math.floor(n / 4));
-      const edge = (dc.slice(0, q).reduce((x, y) => x + y, 0) + dc.slice(-q).reduce((x, y) => x + y, 0)) / (2 * q);
-      const mid = dc.slice(q, -q).reduce((x, y) => x + y, 0) / (n - 2 * q);
+      // 下＝侧视下沉：自左向右单调变暗（越往右下越深）
+      let worstDown = 0;
+      for (let i = 0; i < dc.length - 1; i++) worstDown = Math.max(worstDown, dc[i + 1] - dc[i]);
+      const fall = dc[0] - dc[dc.length - 1];
+      // 上＝侧视上升：自左向右单调变亮（越往右上越接近出口）
       let worst = 0;
       for (let i = 0; i < uc.length - 1; i++) worst = Math.max(worst, uc[i] - uc[i + 1]);
       const rise = uc[uc.length - 1] - uc[0];
@@ -1067,8 +1076,11 @@ function check(name, ok, detail) {
             '这正是要修掉的那种写法（两者必须是不同形体）'
         );
       }
-      if (edge - mid < 0.12) {
-        stairBad.push(`下楼梯没有「井」的横剖面（边缘 ${edge.toFixed(3)} vs 中心 ${mid.toFixed(3)}，差 < 0.12）`);
+      if (fall < 0.15 || worstDown > 0.02) {
+        stairBad.push(
+          `下楼梯不是自左向右单调变暗（${dc[0].toFixed(3)} → ${dc[dc.length - 1].toFixed(3)}，` +
+            `落差 ${fall.toFixed(3)}，最大回弹 ${worstDown.toFixed(3)}）—— 它必须是「往右下沉」的梯段`
+        );
       }
       if (rise < 0.15 || worst > 0.02) {
         stairBad.push(`上楼梯不是自左向右单调变亮（落差 ${rise.toFixed(3)}，最大回退 ${worst.toFixed(3)}）`);
@@ -1081,8 +1093,9 @@ function check(name, ok, detail) {
       stairBad.push(`两张楼梯的 src 完全一样：${tDown.src}`);
     }
     check(
-      `A16 上下楼梯：井（边缘 ${stair ? (stair.downCols[0] ?? 0).toFixed(2) : '?'}）与梯段` +
-        `（${stair ? (stair.upCols[0] ?? 0).toFixed(2) : '?'} → ${stair ? (stair.upCols[stair.upCols.length - 1] ?? 0).toFixed(2) : '?'}）互为不同形体`,
+      `A16 上下楼梯：下沉梯段（${stair ? (stair.downCols[0] ?? 0).toFixed(2) : '?'} → ` +
+        `${stair ? (stair.downCols[stair.downCols.length - 1] ?? 0).toFixed(2) : '?'}）与上升梯段` +
+        `（${stair ? (stair.upCols[0] ?? 0).toFixed(2) : '?'} → ${stair ? (stair.upCols[stair.upCols.length - 1] ?? 0).toFixed(2) : '?'}）走向相反`,
       stairBad.length === 0,
       stairBad.slice(0, 3).join(' | ') || `${tDown.src} ／ ${tUp.src}`
     );
@@ -1108,43 +1121,50 @@ function check(name, ok, detail) {
     if (rasterTile !== Number(meta.baseTile) * ss) {
       densBad.push(`rasterTile(${rasterTile}) ≠ baseTile(${meta.baseTile}) × supersample(${ss})`);
     }
-    // 逐条地形帧：边长 = rasterTile，且 drawScale = 1（1 个素材像素 = 1 个设计像素）
+    // 逐条地形帧：边长 = rasterTile，且 drawScale = cell / rasterTile（落屏仍是一格）
+    const wantScale = cell / rasterTile;
+    const near = (a, b) => Math.abs(a - b) < 1e-9;
     const thinTerrain = Object.entries(MANIFEST.terrain).filter(
-      ([k, v]) => v && (v.w !== rasterTile || v.h !== rasterTile || v.drawScale !== 1)
+      ([k, v]) => v && (v.w !== rasterTile || v.h !== rasterTile || !near(v.drawScale, wantScale))
     );
     if (thinTerrain.length) {
       densBad.push(
-        `地形帧没有全部升到 ${rasterTile} 网格 / drawScale=1：` +
+        `地形帧没有全部升到 ${rasterTile} 网格 / drawScale=${wantScale}：` +
           thinTerrain.slice(0, 3).map(([k, v]) => `${k}=${v.w}×${v.h}×${v.drawScale}`).join(' ')
       );
     }
     // 角色：走路帧宽 = rasterTile、drawScale = 1（勇者落屏必须还是 32×52）
     const heroNode = MANIFEST.actors?.hero;
     const heroFrame0 = heroNode?.walk?.down?.[0];
-    if (!heroFrame0 || heroFrame0.w !== rasterTile || heroNode.drawScale !== 1) {
-      densBad.push(`勇者帧 ${heroFrame0?.w}×${heroFrame0?.h} × drawScale ${heroNode?.drawScale} —— 不是 ${rasterTile} 网格 1:1`);
+    if (!heroFrame0 || heroFrame0.w !== rasterTile || !near(heroNode.drawScale, wantScale)) {
+      densBad.push(
+        `勇者帧 ${heroFrame0?.w}×${heroFrame0?.h} × drawScale ${heroNode?.drawScale} —— ` +
+          `应当是 ${rasterTile} 网格 × ${wantScale}`
+      );
     }
-    // 怪物：非「大家伙」帧宽 = rasterTile 且落屏 = 一格；大家伙维持 16 网格 ×3
+    // 怪物：帧一律 = rasterTile 网格；落屏要么一格、要么「大家伙」1.5 格。
+    // 大家伙以前靠「不超采样 + 整数倍」表达体型，现在改成同一网格 + 小数倍，
+    // 所以判据从「维持 16 网格」改成「落屏仍是 1.5 格」。
     const monBad = [];
     for (const [id, node] of Object.entries(MANIFEST.monsters)) {
       if (!node) continue;
       const onScreen = node.frame.w * node.drawScale;
-      if (node.drawScale === meta.bigScale) {
-        if (node.frame.w !== Number(meta.baseTile)) {
-          monBad.push(`${id} 是大家伙却已是 ${node.frame.w} 网格（应当维持 ${meta.baseTile}）`);
-        }
-      } else if (node.frame.w !== rasterTile || onScreen !== cell) {
-        monBad.push(`${id} ${node.frame.w}×${node.drawScale}=${onScreen}（应 ${rasterTile}×1=${cell}）`);
+      if (node.frame.w !== rasterTile) {
+        monBad.push(`${id} 帧 ${node.frame.w} 不是 ${rasterTile} 网格`);
+      } else if (!near(onScreen, cell) && !near(onScreen, cell * 1.5)) {
+        monBad.push(`${id} 落屏 ${onScreen} 既不是一格(${cell}) 也不是大家伙(${cell * 1.5})`);
       }
     }
     if (monBad.length) densBad.push(`怪物网格/落屏不对：${monBad.slice(0, 3).join(' ')}`);
 
     // 「密」的实证：拿发布出去的图集帧，和**第三方原始素材**比边长。
     // 只看 MANIFEST 的数字等于只信构建脚本的自述；这里量的是两张真图。
-    const rawFloor = path.join(ROOT, 'assets/raw/0x72/frames/floor_1.png');
+    // 地板现在是**手绘**的，不再来自 floor_1 —— 所以拿墙（仍是 0x72 位图）做参照物：
+    // 它的源是 16×16，出图必须落到 16 × supersample。
+    const rawWall = path.join(ROOT, 'assets/raw/0x72/frames/wall_mid.png');
     let rawCmp = null;
-    if (fs.existsSync(rawFloor) && terrainPng) {
-      const rawB64 = fs.readFileSync(rawFloor).toString('base64');
+    if (fs.existsSync(rawWall) && terrainPng) {
+      const rawB64 = fs.readFileSync(rawWall).toString('base64');
       const atlasB64 = fs.readFileSync(path.join(DIST, 'assets', terrainPng)).toString('base64');
       rawCmp = await page.evaluate(
         async ({ raw, atlas, rect }) => {
@@ -1155,15 +1175,15 @@ function check(name, ok, detail) {
           };
           return { raw: await side(raw), frame: rect };
         },
-        { raw: rawB64, atlas: atlasB64, rect: { w: MANIFEST.terrain['0'].w, h: MANIFEST.terrain['0'].h } }
+        { raw: rawB64, atlas: atlasB64, rect: { w: MANIFEST.terrain['1'].w, h: MANIFEST.terrain['1'].h } }
       );
       if (rawCmp.frame.w !== rawCmp.raw.w * ss) {
         densBad.push(
-          `地砖帧 ${rawCmp.frame.w} ≠ 原始 floor_1 ${rawCmp.raw.w} × ${ss} —— 网格没有真的翻倍`
+          `墙帧 ${rawCmp.frame.w} ≠ 原始 wall_mid ${rawCmp.raw.w} × ${ss} —— 网格没有真的翻倍`
         );
       }
     } else {
-      densBad.push(`找不到 ${path.relative(ROOT, rawFloor)} 或发布图集，无法核对网格`);
+      densBad.push(`找不到 ${path.relative(ROOT, rawWall)} 或发布图集，无法核对网格`);
     }
 
     // 「不变」的实证：量落屏的勇者。A14 已经量过形体，这里量的是**尺寸数值** ——
@@ -1178,7 +1198,7 @@ function check(name, ok, detail) {
         `落屏勇者仍 ${heroNow ? `${Math.round(heroNow.size.w)}×${Math.round(heroNow.size.h)}` : '?'}`,
       densBad.length === 0,
       densBad.slice(0, 3).join(' | ') ||
-        `地砖 ${rawCmp ? `${rawCmp.raw.w} → ${rawCmp.frame.w}` : '?'}，格子 ${cell}px 不变`
+        `墙 ${rawCmp ? `${rawCmp.raw.w} → ${rawCmp.frame.w}` : '?'}，格子 ${cell}px 不变`
     );
 
     // ── A18 文字光栅化分辨率跟随屏幕 ──

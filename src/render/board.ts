@@ -661,7 +661,7 @@ export class Board extends Container {
       if (tex) {
         const sp = new Sprite(tex);
         // 等比填充，留 2px 边距 —— 所有拾取物落屏大小一致，最好辨认。
-        // 不能拉伸填满：剑是 20×42、药水是 32×32、金币是 16×16，拉平方会把剑压扁加宽。
+        // 不能拉伸填满：剑是 40×84、药水是 64×64、金币是 32×32，拉平方会把剑压扁加宽。
         const box = S - 4;
         const size = fitSize(tex.width, tex.height, box);
         sp.anchor.set(0.5, 1);
@@ -761,7 +761,7 @@ export class Board extends Container {
   playHeroAttack(dir?: Facing): void {
     if (dir) {
       this.heroDir = dir;
-      // 转向是**换方向的走路帧**，尺寸与走路帧完全一致（都是 16×26）——
+      // 转向是**换方向的走路帧**，尺寸与走路帧完全一致（都是 64×104 的帧、落屏 32×52）——
       // 这正是「攻击时形体不变」能成立的前提
       this.refreshHeroTexture();
     }

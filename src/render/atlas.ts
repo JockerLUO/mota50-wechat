@@ -7,7 +7,7 @@
  *    要换素材或调颜色，改 `tools/build-assets.py` 重跑，不要动这里。
  *
  * 2. **`scaleMode` 必须是 `nearest`。** 素材是像素画，放大时不能插值。
- *    （网格在构建期已超采样到 32，运行时 1:1 落屏，见 MANIFEST.meta.supersample）
+ *    （网格在构建期已超采样到 rasterTile，运行时按 drawScale 落屏，见 MANIFEST.meta）
  *    Pixi 默认的线性插值会把硬边糊成毛边，整套像素感当场消失。
  *
  * 3. **失败不阻塞游戏。** 图集没加载成功（路径错、小游戏环境没打进包、网络问题）
@@ -154,9 +154,14 @@ export function terrainKeyFor(ch: string, wallAbove: boolean): string | null {
 // ── 缩放：两套规则，各有各的道理 ─────────────────────────────────────
 
 /**
- * 怪物与角色：**整数倍**。它们的帧是 32×32 / 32×52（构建期已从 16 网格超采样），落屏 32–52px —— 在这个尺寸上
- * 非整数倍会让「有的像素占 2 个屏幕像素、有的只占 1 个」看得出来，像素画变毛躁。
- * 倍数只由 MANIFEST 的 `drawScale` 决定，落屏尺寸不随格子大小浮动。
+ * 怪物与角色：帧是 64×64 / 64×104（构建期从 16 网格超采样 ×4），按 MANIFEST 的
+ * `drawScale`（常规 0.5、大家伙 0.75）落屏 32–52px。
+ *
+ * 所以**素材网格比落屏网格密**：GPU 从 64px 的纹理采样到约 86 个设备像素
+ * （32 设计px × root 缩放 × dpr 3），一个素材像素只占 ~1.35 个设备像素；
+ * 网格翻倍之前是 ~5.4 个 —— 画面的颗粒感就是这么来的。
+ * 落屏尺寸只由 `drawScale` 决定，不随格子大小浮动；这里的 floor/max 只是
+ * 拿不到 MANIFEST 时的兜底。
  */
 export function fitScale(w: number, h: number, box: number): number {
   if (w <= 0 || h <= 0) return 1;
@@ -166,7 +171,7 @@ export function fitScale(w: number, h: number, box: number): number {
 /**
  * 道具图标：**等比填充**目标框，允许非整数倍。
  *
- * 为什么这里放宽整数倍：道具帧尺寸本来就不统一（药水 32×32、剑 20×42、金币 16×16），
+ * 为什么这里放宽整数倍：道具帧尺寸本来就不统一（药水 64×64、剑 40×84、金币 32×32），
  * 而目标框（棋盘格 32px、道具栏槽 40px、交易底板 30px）也不是 16 的整数倍。
  * 硬套整数倍只剩两个选择：×1（10×21 的剑在 40px 槽里小得可怜）或 ×2（撑破边框）。
  * 而道具图标只有 20 来个像素、造型以大色块为主，非整数倍在这个尺寸下看不出来，
@@ -424,7 +429,7 @@ class Atlas {
     return this.cut(n.atlas, f.x, f.y, n.frame.w, n.frame.h);
   }
 
-  /** 怪物落屏尺寸只由 drawScale 决定（图集里常规怪的帧已归一化到 32 网格，「大家伙」仍是 16 网格 ×3） */
+  /** 怪物落屏尺寸只由 drawScale 决定（图集里所有怪的帧都在 rasterTile 网格上，大家伙落屏 1.5 格） */
   monsterScale(id: string): number {
     return MANIFEST.monsters[id]?.drawScale ?? MANIFEST.meta.drawScale;
   }
