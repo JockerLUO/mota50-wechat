@@ -1208,15 +1208,86 @@ if (globalThis.createImageBitmap && config.preferCreateImageBitmap) {
 
 ---
 
+### 9.12 第十个错：**「新的素材在模拟器中没有生效」**（包内图集是**副本**）
+
+**现象**：美术改完、图集重建了、网页版也对，但**微信开发者工具里画的是旧画**。
+最坑的是它**看起来完全正常** —— 无报错、无弹窗、`atlas.ready = true`、棋盘完整，
+只是每一帧都是上一版的美术。
+
+**根因**：不在素材，在**流水线顺序**。
+
+```
+assets/atlas/*.png        ← 唯一源头（npm run assets 写这里）
+        │
+        │  tools/copy-minigame-assets.mjs  copyFileSync
+        ▼
+dist-minigame/assets/*.png   ← 只是一份副本
+```
+
+`copyFileSync` 是在 `npm run build:minigame` 里跑的，所以：
+
+| 只跑了这些 | 网页版 | 小游戏包 |
+|---|---|---|
+| `npm run assets` | ✅ 新 | ❌ **旧** |
+| `npm run assets` + `npm run build` | ✅ 新 | ❌ **旧** |
+| `npm run assets` + `npm run build:minigame` | ✅ 新 | ✅ 新 |
+
+**实测证据**（本轮就是这么确认的）：
+
+```
+dist-minigame/assets/actors.png   mtime 00:31
+assets/atlas/actors.png           mtime 01:25
+SHA-256(前12): 源=c3e574dc83fb  包=c21d72d2a698   ← 不是同一份文件
+```
+
+**修法**：重跑一次 `npm run build:minigame`。之后包内 4 张图集与源**逐字节一致**。
+
+**为什么必须写成断言**：这条链路没有任何「自己会响」的地方 ——
+旧素材加载成功时，`atlas.ready` 一样是 `true`，
+上面那条「图集真的加载成功 ≠ 静默回退」**完全管不到它**。
+两条判据管的是两件不同的事：
+
+| 判据 | 守的是什么 |
+|---|---|
+| `图集真的加载成功`（已有） | **有没有**用上素材（不是回退成程序化图形） |
+| `包内图集与 assets/atlas 逐字节一致`（本轮新增） | 用的是**哪一版**素材 |
+
+新增的这条逐张比 `assets/atlas/*.png` 与 `dist-minigame/assets/*.png` 的
+SHA-256（取前 12 位），不一致就报出具体文件名与两个哈希：
+
+```
+❌ 包内图集与 assets/atlas 逐字节一致（不是上一版美术）
+   —— actors.png 源=c3e574dc83fb 包=c21d72d2a698 | monsters.png 源=22692e201d91 包=d3c38adc81b4
+      —— 重建过图集就要跑一次 npm run build:minigame
+```
+
+> **先拿它证明了一次红**（用当时的旧包），再修 —— 不然这条断言是「写完就绿」的
+> 假货，永远不会有人知道它到底能不能抓。
+>
+> **判据用内容哈希，不用时间戳**：mtime 会被 `git checkout` / 复制 / 打包抹掉，
+> 而「字节一致」才是「模拟器里看到的就是我刚画的那份」的准确表述。
+
+**顺带记一条纪律**：
+
+```bash
+npm run assets          # 改完美术：先重建图集（+ MANIFEST）
+npm run build:minigame  # 再刷新小游戏包 —— 这一步不能省
+npm run verify:all      # 四套回归
+```
+
+`docs/assets.md` §14 有同一件事的另一份表述（从「改美术的人」视角写的）。
+
+---
+
 ## 10. 复现命令
 
 ```bash
 npm run build:minigame    # 构建产物（含 tsc --noEmit）
-npm run verify:sandbox    # 干净 V8（node:vm）宿主实测，9 项判据（含裸标识符视图 ×7）
-npm run verify:minigame   # 无 DOM 环境实测，30 项判据（含禁 unsafe-eval ×3、触摸端到端）
-npm run verify:dom        # 有原生 DOM 宿主实测，22 项判据（含触摸端到端 ×4、图集 ×1）
-npm run verify:visual     # 渲染层回归，8 项判据
-npm run verify:all        # 以上四套，共 69 项判据
+npm run verify:sandbox    # 干净 V8（node:vm）宿主实测，9 条判据（含裸标识符视图 ×7）
+npm run verify:visual     # 渲染层回归，14 条判据（A1–A12，含版面/位面/道具栏/手绘怪物）
+npm run verify:minigame   # 无 DOM 环境实测，25 条判据（含禁 unsafe-eval ×3、图集逐字节一致、触摸端到端）
+npm run verify:dom        # 有原生 DOM 宿主实测，19 条判据（含触摸端到端 ×4、图集 ×1）
+npm run verify:all        # 以上四套，共 67 条判据
 ```
 
 另有两个不在四套之列的取证工具 —— 它们读的都是**工具自己落盘的状态**，

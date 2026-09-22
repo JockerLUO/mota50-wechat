@@ -961,41 +961,105 @@ SKIN = (247, 217, 184, 255)
 SKIN_DK = (206, 168, 132, 255)
 NPC_INK = (44, 34, 42, 255)
 
+# ── 量「内容占几行」时用哪种像素 ──────────────────────────────────────
+#
+# ⚠️ **只量实心像素（alpha = 255）。**
+#
+# 为什么不能量「非透明」：
+#   · ArMM 的角色每帧脚底下都带一片**半透明影子**（源素材 alpha=102）。
+#     用 `getbbox()` / `any(alpha)` 量，影子会被算成内容 —— 勇者量出来高 22~23，
+#     肉眼看到的身体只有 20 行。上一轮就是拿被撑大的 23 当基准，
+#     把 NPC 画成 23 行高，于是「比例适中」改完之后**实际还是比勇者高 15%**，
+#     用户第二次反馈「应该和玩家角色类似」才追到这里。
+#   · 半透明像素的 alpha 还会被下面的打包流程改动（见下），
+#     按它量等于把断言建在一个会变的数上。实心像素是唯一不变的锚。
+#
+# 为什么阈值取 250 而不是 255：留一点余量给将来可能出现、但确实该算实心的
+# 极淡边缘（例如描边抗锯齿）。半透明装饰（仙子的翅膀 alpha=200）与影子
+# （alpha ≤ 178）都远在这条线之下，会被排除 —— 这正是我们要的：
+# **量的是身体，不是影子也不是装饰。**
+#
+# ⚠️ 顺带记一个**已知缺陷**（本轮没改，改动会波及勇者和全部怪物的观感）：
+# `Image.paste(im, pos, im)` 用自己当 mask 时会**把 alpha 平方**、
+# 并把 RGB 往黑色压（实测 102 → 41、200 → 157，颜色 (42,43,53) → (17,17,21)）。
+# `bottom_center()` 和图集装配各来一次，于是勇者的影子被平方了两次：
+# 102 → 41 → **7**，等于画了个看不见的影子。怪物/仙子的半透明部分各被平方一次。
+# 正确的写法是 `alpha_composite`（对空画布就是逐像素拷贝，实测 102 → 102）。
+# 修它会让勇者重新长出影子 —— 那是另一件事，得连 NPC 一起补影子才协调。
+SOLID_ALPHA = 250
+
+
+def solid_rows(im: Image.Image) -> tuple[int, int]:
+    """**实心**内容所占的行区间 [top, bottom]（含端点）。全透明返回 (h, -1)。"""
+    px = im.load()
+    ys = [y for y in range(im.height) if any(px[x, y][3] >= SOLID_ALPHA for x in range(im.width))]
+    return (ys[0], ys[-1]) if ys else (im.height, -1)
+
+
 # ── NPC 的纵向解剖（绝对行号，画布 26 行）────────────────────────────
 #
-# ⚠️ **行区间必须和勇者一模一样（内容占 3..25，高 23）。**
+# ⚠️ 这张表的目标不是「NPC 自己好看」，而是**和勇者一样大、一样的头身比**。
 #
-# 第一版把帽顶画在第 0 行、脚踩到第 25 行，内容高 26 —— 而勇者的帧内容
-# 只占 3..25（高 23，ArMM 的角色图集上方留了几行空）。两者都是 16×26 的帧、
-# 同样 ×2 绘制，但**视觉上 NPC 是勇者的 26/23 = 1.13 倍**，站在棋盘上
-# 就把勇者「压」住了。用户反馈的「NPC 模型改小一点、比例适中」就是这个：
-# 它不是排版问题，是**内容包围盒**高了一截。
+# 两个基准都是从勇者帧上量出来的（量法见 verify_npc_scale），不是估的：
 #
-# 为什么不在渲染层把 NPC 的 scale 调小：23/26 = 0.885 不是整数倍，
-# 像素画会被插值成宽窄不一的糊边。**唯一正确的做法是把内容画进同一段行区间**，
-# 帧尺寸、锚点、×2 全部不变。这条有断言（verify_npc_scale）。
+# ① **可见高度 = 20 行（4..23）**。走路起伏让整张精灵上下移 1 行
+#    （朝上那两帧是 3..22），但**每一帧的高度都是 20**。
+# ② **头身比：头（含头发）最宽 13、躯干（含手臂）最宽 14** —— 几乎一样宽，
+#    这是它看起来「敦实」的原因。
+#
+# 改前的 NPC 是「头 8 + 身体 15」：头是一根细高的长方形，身体鼓成钟形，
+# 正是用户说的「头上的长方形太细，身体太宽」。所以横向一起重排了：
+#    头（含发）10 → 躯干（含手臂）10 → 下摆 8 → 脚 4
+# 头不再比身体窄，整条轮廓上下收放对称。
 #
 # 三件容易搞错的事：
-#  ① 勇者各帧的内容高不是常数：走路起伏让它在 21..23 之间跳，朝上那两帧
-#     因为头发多 1px 才是 23。所以取**最高帧**当基准 —— 目标是
-#     「NPC 在任何一帧都不会比勇者高」，而不是「等于某一帧」。
-#  ② `add_outline` 会往上多占一行。所以**画的时候顶到第 4 行**，
-#     产出后内容顶行才是 3。
+#  ① 别用「非透明包围盒」量勇者 —— 见 SOLID_ALPHA。
+#  ② `add_outline` 会往上、往下各多占 1 行。所以**画的时候顶到第 5 行**、
+#     脚踩到第 22 行，产出后可见区间才是 4..23。
 #  ③ 行号一律用下面这张表，**不要在 _npc_base 里写裸数字** ——
 #     否则下一次「NPC 又变大了」会是六个角色各错一点，很难查。
 #
 # 行分配（自上而下，数字是**绘制**行号）：
-#   hat    4..6   帽/冠/发（尖顶 / 宽檐 / 兜帽 / 金冠 / 皮帽 / 花冠）
-#   head   7..14  脸（8 行；有帽子的那几种第 7 行被帽檐压住）
-#   eyes  10..11
-#   body  15..18  肩窄（袍子上段）
-#   robe  19..21  摆宽（袍子下段）
-#   hem   22..23  下摆（深色，A 字剪影的底）
-#   feet  24..25  脚 —— 必须踩到第 25 行，底部锚定才不浮空
-NPC_ART_TOP, NPC_ART_FEET = 4, 25   # 绘制行区间（描边前）；描边后顶行变 3
-NPC_CONTENT_TOP = NPC_ART_TOP - 1   # 产出后允许的内容顶行（add_outline 占一行）
+#   hat     5..7   帽/冠/发（尖顶 / 宽檐 / 兜帽 / 金冠 / 皮帽 / 花冠）
+#   face    8..14  脸 7 行 —— 与勇者的脸（9..15）等长
+#   eyes   11..12
+#   torso  15..18  躯干 4 行
+#   robe   19..21  长袍下段（下摆）3 行
+#   foot   22      鞋 1 行 —— 描边后踩到第 23 行 = 勇者的脚底行
+NPC_HAT_TOP, NPC_HAT_BOT = 5, 7
+NPC_FACE_TOP, NPC_FACE_BOT = 8, 14
+NPC_EYE_TOP = 11
+NPC_TORSO_TOP, NPC_TORSO_BOT = 15, 18
+NPC_ROBE_TOP, NPC_ROBE_BOT = 19, 21
+NPC_FOOT_ROW = 22
+
+NPC_ART_TOP, NPC_ART_FEET = NPC_HAT_TOP, NPC_FOOT_ROW   # 绘制行区间（描边前）
+NPC_CONTENT_TOP = NPC_ART_TOP - 1    # 产出后可见顶行（add_outline 往上占一行）
 NPC_FEET = NPC_ART_FEET
-NPC_BREATH_SPLIT = 22  # 呼吸帧的分界：这一行往上整体抬 1px，往下原地不动
+NPC_BREATH_SPLIT = NPC_ROBE_TOP      # 呼吸帧分界：这一行往上整体抬 1px，往下不动
+
+# ── 横向解剖（列号，画布 16 列）────────────────────────────────────────
+#
+# 安排的原则是**头不比身体窄**，而且**肩要比下摆宽**。三条一起定死了：
+#
+#   脸 / 头    x=4..11（8 宽）→ 可见 10
+#   躯干       x=5..10（6 宽）
+#   手臂       x=3..4 与 x=11..12（各 2 宽）→ 含手臂 10 宽 → 可见 12（最宽处）
+#   下摆       x=5..10（6 宽）→ 可见 8 —— **与躯干同宽，不再是 A 字大摆**
+#   脚         x=5..6 与 x=9..10
+#
+# 为什么下摆必须收窄：`add_outline` 是 **1px 八邻域膨胀**，所以「可见宽度」
+# ≈ 该行及上下各一行里最宽的那一段再 +2。改前的下摆画到 12 宽（可见 15），
+# 而头只有 6 宽（可见 8）—— 用户说的「头上的长方形太细，身体太宽」就是这个。
+#
+# 同理，想让某一段在**画面上**显出收腰，相邻两段的**绘制**宽度至少要差 2，
+# 只差 1 会被描边抹平（第一版重画就踩了这个：头和肩都画 10 宽，结果整只
+# 精灵在 12 宽上从头顶平到脚，变成一根柱子）。
+NPC_FACE_X, NPC_FACE_W = 4, 8        # 脸 = 头的绘制宽度：x=4..11（与勇者的脸等宽）
+NPC_TORSO_X, NPC_TORSO_W = 5, 6      # 躯干：x=5..10
+NPC_ARM_X, NPC_ARM_W = 3, 2          # 手臂：x=3..4 与 x=11..12（各 2 宽）→ 含臂 10 宽
+NPC_ROBE_X, NPC_ROBE_W = 5, 6        # 下摆：x=5..10（与躯干同宽）
+NPC_FOOT_X = 5                       # 脚：x=5..6 与 x=9..10
 
 
 def _put(im, x, y, w, h, color):
@@ -1061,116 +1125,130 @@ def _npc_base(spec) -> Image.Image:
 
     行号全部取自上面的纵向解剖表 —— **不要在这里写裸数字**，
     否则下一次「NPC 又变大了」会是六个角色各错一点，很难查。
+
+    画法上有一处是这次改动的核心：**头不是「脸」本身**。
+    先铺一层头发/兜帽占满 x=3..12，再把 8 宽的脸盖在中间 ——
+    于是「头」是 10 宽，和含手臂的躯干（也是 10 宽）一样宽。
+    改前是直接用 6 宽的脸当整颗头，于是头上顶着一根细高的长方形。
     """
     im = Image.new("RGBA", (NPC_W, NPC_H), (0, 0, 0, 0))
     robe = spec["robe"]
     dark = spec.get("robe_dark", spec["robe"])
     light = spec.get("robe_light", spec["robe"])
 
-    # 长袍：肩窄摆宽，两段矩形做出 A 字剪影；左亮右暗，让平面剪影有体积
-    _put(im, 4, 15, 8, 4, robe)
-    _put(im, 3, 19, 10, 3, robe)
-    _put(im, 2, 22, 12, 2, dark)
-    _put(im, 4, 15, 1, 7, light)
-    _put(im, 11, 15, 1, 7, dark)
-    if spec.get("apron"):
-        _put(im, 6, 17, 4, 5, spec["apron"])
-    # 手臂 + 手
-    _put(im, 2, 16, 2, 6, robe)
-    _put(im, 12, 16, 2, 6, robe)
-    _put(im, 2, 20, 2, 2, SKIN)
-    _put(im, 12, 20, 2, 2, SKIN)
-    # 脚（必须踩到第 25 行 —— 底部锚定会让浮空的角色悬在半空，有断言拦）
-    _put(im, 5, 24, 2, 2, dark)
-    _put(im, 9, 24, 2, 2, dark)
+    # ── 下摆（x=5..10）：与躯干同宽 —— 收掉 A 字大摆，「身体太宽」就是它 ─
+    rh = NPC_ROBE_BOT - NPC_ROBE_TOP + 1
+    _put(im, NPC_ROBE_X, NPC_ROBE_TOP, NPC_ROBE_W, rh, robe)
+    _put(im, NPC_ROBE_X, NPC_ROBE_TOP, 1, rh, light)                     # 左受光
+    _put(im, NPC_ROBE_X + NPC_ROBE_W - 1, NPC_ROBE_TOP, 1, rh, dark)     # 右背光
 
-    # 翅膀（仙子）：画在躯干之后，露在身体两侧
+    # ── 躯干（x=5..10）────────────────────────────────────────────────
+    th = NPC_TORSO_BOT - NPC_TORSO_TOP + 1
+    _put(im, NPC_TORSO_X, NPC_TORSO_TOP, NPC_TORSO_W, th, robe)
+    _put(im, NPC_TORSO_X, NPC_TORSO_TOP, 1, th, light)
+    _put(im, NPC_TORSO_X + NPC_TORSO_W - 1, NPC_TORSO_TOP, 1, th, dark)
+    if spec.get("apron"):
+        _put(im, NPC_TORSO_X + 1, NPC_TORSO_TOP + 1, NPC_TORSO_W - 2, th - 2, spec["apron"])
+
+    # ── 手臂（x=3..4 与 x=11..12）：全帧最宽的一段（含臂 10 → 可见 12）──
+    arm_top, arm_bot = NPC_TORSO_TOP + 1, NPC_TORSO_BOT
+    for ax in (NPC_ARM_X, NPC_W - NPC_ARM_X - NPC_ARM_W):
+        _put(im, ax, arm_top, NPC_ARM_W, arm_bot - arm_top + 1, robe)
+        _put(im, ax, arm_bot, NPC_ARM_W, 1, SKIN)          # 手
+
+    # ── 脚（第 22 行）：描边后踩到第 23 行 = 勇者的脚底行 ──────────────
+    _put(im, NPC_FOOT_X, NPC_FOOT_ROW, 2, 1, dark)
+    _put(im, NPC_FOOT_X + 4, NPC_FOOT_ROW, 2, 1, dark)
+
+    # ── 翅膀（仙子）：露在手臂外侧各 1 列 ─────────────────────────────
     if spec.get("wings"):
         w = spec["wings"]
-        _put(im, 0, 14, 3, 5, w)
-        _put(im, 13, 14, 3, 5, w)
+        _put(im, NPC_ARM_X - 1, NPC_TORSO_TOP, 1, th, w)                   # x=2
+        _put(im, NPC_W - NPC_ARM_X - 1, NPC_TORSO_TOP, 1, th, w)           # x=13
 
-    # 长发（公主）：垂到肩下
+    # ── 长发（公主）：顺着**手臂外侧那一列**垂到肩，不额外占宽度 ────────
     if spec.get("hair_len"):
         hc = spec.get("hair", dark)
-        _put(im, 4, 8, 2, spec["hair_len"], hc)
-        _put(im, 10, 8, 2, spec["hair_len"], hc)
+        hb = min(NPC_FACE_BOT + spec["hair_len"], NPC_TORSO_BOT - 1)
+        _put(im, NPC_ARM_X, NPC_FACE_BOT + 1, 1, hb - NPC_FACE_BOT, hc)
+        _put(im, NPC_W - NPC_ARM_X - 1, NPC_FACE_BOT + 1, 1, hb - NPC_FACE_BOT, hc)
 
-    # 头（8 行：7..14）。有帽子的那几种第 7 行被帽檐压住，看不见 —— 这是刻意的，
-    # 让六个人的脸在同一水平线上，只有头顶的记号不同。
-    _put(im, 5, 7, 6, 8, SKIN)
-    _put(im, 5, 14, 6, 1, SKIN_DK)
-    # 眼睛
-    _put(im, 6, 10, 1, 2, NPC_INK)
-    _put(im, 9, 10, 1, 2, NPC_INK)
-    # 蒙面（小偷）：下半张脸盖住，只剩眼缝
+    # ── 头：就是那张 8 宽的脸（可见 10），发际线压一行头发/帽檐 ─────────
+    # 改前这里只有 6 宽、却有 8 行高 —— 那根细高的长方形就是用户说的「太细」。
+    hair = spec.get("hair", dark)
+    _put(im, NPC_FACE_X, NPC_HAT_BOT, NPC_FACE_W, 1, hair)
+    _put(im, NPC_FACE_X, NPC_FACE_TOP, NPC_FACE_W, NPC_FACE_BOT - NPC_FACE_TOP + 1, SKIN)
+    _put(im, NPC_FACE_X, NPC_FACE_BOT, NPC_FACE_W, 1, SKIN_DK)     # 下巴压暗一行
+
+    # 蒙面（小偷）：下半张脸盖住 —— 在眼睛之前画，眼睛正好落在面罩上变成两条眼缝
     if spec.get("mask"):
-        _put(im, 5, 12, 6, 3, spec["mask"])
-        _put(im, 6, 10, 1, 1, SKIN)
-        _put(im, 9, 10, 1, 1, SKIN)
+        _put(im, NPC_FACE_X, NPC_FACE_BOT - 2, NPC_FACE_W, 3, spec["mask"])
 
-    # 胡须（老人）：从下巴往下铺，越长越显老
+    # 眼睛：离脸的左右边各 1 列、2 行高 —— 与勇者的眼睛同一套比例
+    _put(im, NPC_FACE_X + 1, NPC_EYE_TOP, 1, 2, NPC_INK)
+    _put(im, NPC_FACE_X + NPC_FACE_W - 2, NPC_EYE_TOP, 1, 2, NPC_INK)
+
+    # 胡须（老人）：从下巴往下铺，与脸同宽（窄了又会变成「细长条」）
     if spec.get("beard_len"):
         bc = spec["beard"]
-        _put(im, 5, 14, 6, spec["beard_len"], bc)
-        _put(im, 6, 14 + spec["beard_len"], 4, 1, bc)
+        bl = min(spec["beard_len"], NPC_TORSO_BOT - NPC_FACE_BOT)
+        _put(im, NPC_FACE_X, NPC_FACE_BOT + 1, NPC_FACE_W, bl, bc)
 
-    # 帽子 / 头发 —— 一律从第 4 行开始（这是「NPC 不比勇者高」的上界）
+    # ── 帽子 / 头顶记号：一律落在第 5..7 行，帽檐与头同宽（8）──────────
+    # 只有商人的宽檐帽刻意伸到 x=3..12（可见 12），作为「摆摊的」的记号。
     hat = spec.get("hat", "none")
     hc = spec.get("hat_color", dark)
-    hair = spec.get("hair", dark)
-    if hat == "point":  # 尖顶软帽：智者
-        _put(im, 5, 4, 6, 2, hc)
-        _put(im, 4, 6, 8, 2, hc)
-    elif hat == "wide":  # 宽檐帽：商人
-        _put(im, 5, 4, 6, 3, hc)
-        _put(im, 2, 7, 12, 1, hc)
-    elif hat == "hood":  # 兜帽：小偷 —— 只盖到眼睛上方，脸留出来给蒙面
-        _put(im, 4, 4, 8, 2, hc)
-        _put(im, 3, 6, 10, 2, hc)
-        # 两侧垂布把脸框住（不往里盖，否则整个头会变成一坨黑）
-        _put(im, 3, 8, 2, 7, hc)
-        _put(im, 11, 8, 2, 7, hc)
-    elif hat == "crown":  # 金冠：公主
-        _put(im, 5, 7, 6, 1, hair)
-        _put(im, 4, 6, 8, 1, hc)
-        _put(im, 4, 4, 1, 2, hc)
-        _put(im, 7, 4, 2, 2, hc)
-        _put(im, 11, 4, 1, 2, hc)
-    elif hat == "cap":  # 皮帽：商店（扁顶 + 宽檐，一眼是「看摊儿的」）
-        _put(im, 5, 4, 6, 2, hc)
-        _put(im, 4, 6, 8, 1, hc)
-    elif hat == "tiara":  # 花冠：仙子（花环 + 两侧各一朵，与其它五个的剪影都不同）
-        _put(im, 5, 4, 6, 2, hair)
-        _put(im, 4, 6, 8, 1, hc)
-        _put(im, 3, 5, 2, 2, hc)
-        _put(im, 11, 5, 2, 2, hc)
+    if hat == "point":      # 尖顶软帽：智者（2 → 4 → 8，逐行张开的锥形）
+        _put(im, 7, NPC_HAT_TOP, 2, 1, hc)
+        _put(im, 6, NPC_HAT_TOP + 1, 4, 1, hc)
+        _put(im, NPC_FACE_X, NPC_HAT_BOT, NPC_FACE_W, 1, hc)
+    elif hat == "wide":     # 宽檐帽：商人（唯一比头宽的一顶）
+        _put(im, 6, NPC_HAT_TOP, 4, 1, hc)
+        _put(im, NPC_TORSO_X, NPC_HAT_TOP + 1, NPC_TORSO_W, 1, hc)
+        _put(im, NPC_ARM_X, NPC_HAT_BOT, NPC_FACE_W + 2, 1, hc)   # x=3..12
+    elif hat == "hood":     # 兜帽：小偷 —— 罩住头顶，两侧垂布把脸夹成一条
+        _put(im, NPC_FACE_X, NPC_HAT_TOP, NPC_FACE_W, 3, hc)
+        _put(im, NPC_FACE_X, NPC_FACE_TOP, 1, 6, hc)
+        _put(im, NPC_FACE_X + NPC_FACE_W - 1, NPC_FACE_TOP, 1, 6, hc)
+    elif hat == "crown":    # 金冠：公主（一圈金带 + 三根尖）
+        _put(im, NPC_FACE_X, NPC_HAT_BOT, NPC_FACE_W, 1, hc)
+        for px in (NPC_FACE_X, NPC_FACE_X + 3, NPC_FACE_X + NPC_FACE_W - 1):
+            _put(im, px, NPC_HAT_TOP, 2 if px == NPC_FACE_X + 3 else 1, 2, hc)
+    elif hat == "cap":      # 皮帽：商店（扁顶 + 与头同宽的檐，与商人的宽檐帽分得开）
+        _put(im, NPC_TORSO_X, NPC_HAT_TOP, NPC_TORSO_W, 2, hc)
+        _put(im, NPC_FACE_X, NPC_HAT_BOT, NPC_FACE_W, 1, hc)
+    elif hat == "tiara":    # 花冠：仙子（发箍 + 两侧各一朵）
+        _put(im, NPC_FACE_X, NPC_HAT_TOP, NPC_FACE_W, 2, hair)
+        _put(im, NPC_FACE_X, NPC_HAT_BOT, NPC_FACE_W, 1, hc)
+        _put(im, NPC_ARM_X, NPC_HAT_BOT - 1, 1, 2, hc)                    # x=3
+        _put(im, NPC_W - NPC_ARM_X - 1, NPC_HAT_BOT - 1, 1, 2, hc)        # x=12
     else:
-        _put(im, 5, 4, 6, 3, hair)
+        _put(im, NPC_FACE_X, NPC_HAT_TOP, NPC_FACE_W, 3, hair)
 
     # 手持物 —— 「这个人是干什么的」最直接的表达。
-    # 注意法杖顶端的宝石也压在**第 4 行**：它比头高，但不能再高，
-    # 否则整帧的内容高度又回到 26，NPC 又会显得比勇者大。
+    # 一律放在右侧（x=13..15）且**不高于第 9 行**：抬高了会把内容顶行顶上去，
+    # 又变成「NPC 比勇者高」；也一律只占 1~2 列，免得把它算进「身体有多宽」。
+    # （量宽度时用的是「含中心那一列的主块」，道具是独立的一段，不会混进来。）
     prop = spec.get("prop", "none")
     pc = spec.get("prop_color", dark)
-    if prop == "staff":  # 法杖：比人高一截，顶端一颗宝石
-        _put(im, 14, 7, 1, 16, pc)
-        _put(im, 13, 4, 3, 3, spec.get("prop_gem", pc))
-    elif prop == "wand":  # 星杖：短一些，顶端是星
-        _put(im, 14, 12, 1, 10, pc)
-        _put(im, 13, 9, 3, 3, spec.get("prop_gem", pc))
-        _put(im, 14, 8, 1, 1, spec.get("prop_gem", pc))
-    elif prop == "pouch":  # 钱袋：挂在腰侧
-        _put(im, 12, 19, 3, 4, pc)
-        _put(im, 12, 18, 3, 1, dark)
-    elif prop == "coins":  # 手边一摞金币
-        _put(im, 12, 21, 3, 1, pc)
-        _put(im, 12, 19, 3, 1, pc)
-        _put(im, 12, 17, 3, 1, pc)
+    gem = spec.get("prop_gem", pc)
+    if prop == "staff":     # 法杖：杖身从腰边撑到地面，顶端一颗宝石
+        _put(im, 14, NPC_TORSO_TOP - 3, 1, NPC_FOOT_ROW - NPC_TORSO_TOP + 3, pc)
+        _put(im, 13, 9, 3, 3, gem)
+    elif prop == "wand":    # 星杖：再短一截，顶端一颗星
+        _put(im, 14, NPC_TORSO_TOP + 1, 1, NPC_FOOT_ROW - NPC_TORSO_TOP - 1, pc)
+        _put(im, 13, NPC_TORSO_TOP - 2, 3, 2, gem)
+        _put(im, 14, NPC_TORSO_TOP - 3, 1, 1, gem)
+    elif prop == "pouch":   # 钱袋：挂在腰侧
+        _put(im, 13, NPC_ROBE_TOP, 3, 4, pc)
+        _put(im, 13, NPC_ROBE_TOP - 1, 3, 1, dark)
+    elif prop == "coins":   # 手边一摞金币
+        _put(im, 13, NPC_TORSO_BOT - 1, 3, 2, pc)
+        _put(im, 13, NPC_TORSO_BOT - 2, 3, 1, gem)
     elif prop == "dagger":  # 短匕：斜插在腰侧
-        _put(im, 13, 16, 2, 2, spec.get("prop_grip", dark))
-        _put(im, 13, 18, 2, 3, pc)
-        _put(im, 14, 21, 1, 2, pc)
+        _put(im, 13, NPC_TORSO_TOP, 2, 2, spec.get("prop_grip", dark))
+        _put(im, 13, NPC_TORSO_TOP + 2, 2, 3, pc)
+        _put(im, 14, NPC_TORSO_TOP + 5, 1, 1, pc)
 
     return add_outline(im, INK)
 
@@ -1182,14 +1260,18 @@ def _breathe(base: Image.Image, robe, lift: int = 1) -> Image.Image:
     为什么不整张图上移：精灵是底部锚定的（board.ts: sp.anchor.set(0.5, 1)），
     整图上移会让脚离地 1px —— 那是「在飘」，不是「在呼吸」。
 
-    分界行是 `NPC_BREATH_SPLIT`（下摆的第一行）。原来写死 21，
-    解剖压缩到 22 行之后必须一起改 —— 写死的话补缝那一行会落到「腿的下方」，
+    分界行是 `NPC_BREATH_SPLIT`（**下摆**的第一行，现在是第 19 行）。
+    它随横向/纵向解剖一起改过两次：原来写死 21，第一次压缩解剖时改到 22，
+    这一轮下摆回到 19..21 —— 写死的话补缝那一行会落到腿或脚上，
     看起来像下摆被撕开一条口子。
+
+    补缝只在**肩线那一行**发生，所以宽度取「含手臂」的 10 列，
+    否则抬起来之后手臂的外侧会露出一个透明缺口。
     """
     out = Image.new("RGBA", base.size, (0, 0, 0, 0))
     out.paste(base.crop((0, lift, NPC_W, NPC_BREATH_SPLIT)), (0, 0))
     out.paste(base.crop((0, NPC_BREATH_SPLIT, NPC_W, NPC_H)), (0, NPC_BREATH_SPLIT))
-    _put(out, 3, NPC_BREATH_SPLIT - lift, 10, lift, robe)
+    _put(out, NPC_ARM_X, NPC_BREATH_SPLIT - lift, NPC_ARM_W * 2 + NPC_TORSO_W, lift, robe)
     return out
 
 
@@ -1213,8 +1295,15 @@ def verify_npc_art(images: dict) -> list:
 
     三条判据：
       1. 任意两个职能的静止帧不能逐像素相同；
-      2. 剪影（不透明像素集合）必须不同 —— 「同一张图换色」会被这条拦下；
-      3. 底行必须有像素，否则底部锚定会让角色浮在半空。
+      2. 剪影（实心像素集合）必须不同 —— 「同一张图换色」会被这条拦下；
+      3. 实心底行必须正好落在**鞋下一行的描边**上（`NPC_FOOT_ROW + 1`）——
+         精灵是底部锚定的（`anchor.set(0.5, 1)`），脚没有确定的落点就会出现
+         「一只脚踩地、一只脚悬空」这种只在画面上看得见的错。
+
+    判据 3 的期望行数**不是帧底**（第 25 行）：勇者那套素材脚底下还带着
+    2 行半透明影子，但身体本身也落在第 23 行（见 SOLID_ALPHA）。
+    NPC 要和勇者站得一样高，就得落在同一行 —— 所以这里钉的是解剖表，
+    不是「帧的最后一行为空就报错」那种想当然的写法。
 
     比较用 `tobytes()` 而不是 `getdata()`：后者在 Pillow 12 起被标记弃用
     （计划 Pillow 14 移除），而这个脚本每次构建都跑，警告会一直刷屏。
@@ -1224,7 +1313,7 @@ def verify_npc_art(images: dict) -> list:
 
     def silhouette(im):
         alpha = im.getchannel("A").tobytes()
-        return {i for i, a in enumerate(alpha) if a > 8}
+        return {i for i, a in enumerate(alpha) if a >= SOLID_ALPHA}
 
     for i, a in enumerate(ids):
         for b in ids[i + 1:]:
@@ -1234,67 +1323,148 @@ def verify_npc_art(images: dict) -> list:
             elif silhouette(fa) == silhouette(fb):
                 problems.append(f"{a} 与 {b} 剪影完全相同（只换了颜色）")
     for npc_id, frames in images.items():
-        if not silhouette(frames[0].crop((0, NPC_H - 1, NPC_W, NPC_H))):
-            problems.append(f"{npc_id} 最后一行为空，底部锚定会让它浮在半空")
+        base = frames[0]
+        _, bottom = solid_rows(base)
+        if bottom != NPC_FOOT_ROW + 1:
+            problems.append(
+                f"{npc_id} 的实心底行在 {bottom}，解剖表要求 {NPC_FOOT_ROW + 1}"
+                f"（鞋画在第 {NPC_FOOT_ROW} 行，描边再往下占一行）—— "
+                f"底部锚定下脚没踩在该在的位置，就会比勇者高一点或低一点"
+            )
     return problems
+
+
+def solid_core_width(im: Image.Image, y: int) -> int:
+    """
+    第 y 行上**含画布中心**的那一段实心像素有多宽。
+
+    为什么不是「最左到最右的跨度」：手持物（法杖 / 钱袋 / 金币）画在身体右侧，
+    描边之后会和身体的轮廓连成一片，跨度就会把道具算进「身体有多宽」里 ——
+    而「身体太宽」恰恰是这条断言要抓的东西，量法不能自己把它放大。
+    取「含中心的那一段」正好把独立的道具段排除在外。
+    """
+    px = im.load()
+    cx = im.width // 2
+    xs = [x for x in range(im.width) if px[x, y][3] >= SOLID_ALPHA]
+    if not xs:
+        return 0
+    if cx not in xs:
+        cx = min(xs, key=lambda v: abs(v - im.width // 2))
+    lo = hi = cx
+    while lo - 1 in xs:
+        lo -= 1
+    while hi + 1 in xs:
+        hi += 1
+    return hi - lo + 1
+
+
+# ── 勇者身上量出来的基准值（用上面的**实心**量法，别用包围盒）──────────
+#
+#   · 每一帧的实心内容都占 **20 行**：朝下 / 左 / 右是 4..23，朝上的两帧是 3..22
+#     —— walk 的起伏让整张精灵上下移 1 行，**高度始终是 20**。
+#     （帧高 26，脚底下那 2 行是半透明影子，不算内容。见 SOLID_ALPHA 的说明。）
+#   · 头（帽子 + 脸）那一段最宽 15，躯干（含手臂）14 —— **头不比身体窄**。
+#   · 全图最宽 15（朝下那帧的帽子两侧）。
+HERO_VISIBLE_H = 20
+HERO_MAX_W = 15
+
+# NPC 的头（发际线到下巴）主块宽度下限。
+# 脸 8 宽 + 左右各 1 描边 = 10。改前是「6 宽的脸 + 描边」= 8，
+# 那根又细又高的长方形就是用户说的「头上的长方形太细」。
+NPC_HEAD_MIN_W = 10
+# 下摆主块相对头允许超出多少。改前下摆量到 15（A 字大摆 + 手臂描边连成一片），
+# 头只有 8 —— 差 7。留 2 是给「肩比头略宽」这点正常结构。
+NPC_HEM_OVER_HEAD = 2
 
 
 def verify_npc_scale(npc_images: dict, hero_frames: list) -> list:
     """
-    NPC 必须和勇者**一样高**。
+    NPC 必须和勇者**一样高、头身比也一样**。
 
-    这条断言来自一个真实反馈：「NPC 模型改小一点，比例适中」。
-    量出来才知道：勇者帧的内容占 3..25（高 23，朝上的两帧因为头发多 1px
-    才到第 3 行，其余是 4..25），NPC 占 0..25（高 26）—— 两者都是 16×26 的帧、
-    同样 ×2 绘制，**视觉上 NPC 是勇者的 1.13 倍**，站在棋盘上就把勇者压住了。
-    这种错在代码里完全看不出来（两边都是「一个 16×26 的精灵」），
-    只能靠量内容包围盒。
+    这条断言来自两次真实反馈：
+      · 第一次「NPC 模型改小一点，比例适中」—— 当时 NPC 内容高 26，是勇者的 1.13 倍；
+      · 第二次「NPC 的模型应该和玩家角色类似，头上的长方形太细、身体太宽」
+        —— 高度对上了，**形状没对上**：头只有 6+2 宽，下摆却宽到 15。
 
-    判据（只量**静止帧** `frames[0]`，基准取勇者的**极值**而不是某一帧）：
-      1. 静止帧内容高 == 勇者最高帧（**23**，即朝上那两帧 3..25）；
-      2. 内容顶行 == 勇者最靠上的那一帧的顶行（**3**）；
-      3. 内容底行 == 勇者底行（两边都是底部锚定，不一致会一个站地一个浮空）。
+    两次都栽在同一件事上：**「内容占几行」的量法**。
+    第一版用「非透明包围盒」量勇者，把素材自带的 alpha=7 极淡边缘算了进去，
+    量出 22~23，于是把 NPC 也画成 23 —— 肉眼上看还是大了一圈。
+    现在一律走 `SOLID_ALPHA`（见那个常量的说明）。
 
-    ⚠️ **呼吸帧是特例，本断言不覆盖**。`frames` 的第 2、4 帧是呼吸帧，上身上移
-    1px 是刻意的动作，顶行会到 **2**、高 **24** —— 比勇者最高的 23 高 1px。
-    这是有界的观感代价，刻意留着：要消掉它得把整张 NPC 纵向解剖表再下移一行，
-    帽檐 / 翅膀 / 冠的行号全部重调，换来的只是「呼吸时也不超过勇者」这 1px。
-    想量全帧（会看到 24）时别以为断言坏了 —— 它是只量静止帧的。
+    判据：
+      1. 勇者自己各帧的可见高度必须一致（基准要靠它，不一致说明素材切帧变了）；
+      2. 静止帧的可见行区间 == 勇者朝下那帧的行区间（4..23），高度 == 20；
+      3. 呼吸帧：脚不走（底行不变），顶行不越过勇者的最顶行；
+      4. 头（发际线..下巴）主块宽度 ≥ `NPC_HEAD_MIN_W`；
+      5. 下摆主块宽度 ≤ 头 + `NPC_HEM_OVER_HEAD`；
+      6. 任意一行的可见跨度 ≤ 勇者的最宽行。
+
+    宽度用 `solid_core_width`（含中心的那一段），理由见那个函数。
     """
     problems: list[str] = []
     if not hero_frames:
         return ["verify_npc_scale 拿不到勇者帧，无法比较比例"]
 
-    def rows(im):
-        a = im.getchannel("A")
-        ys = [y for y in range(im.height) if any(a.getpixel((x, y)) for x in range(im.width))]
-        return (ys[0], ys[-1]) if ys else (im.height, -1)
+    hero_spans = [solid_rows(f) for f in hero_frames]
+    hero_heights = {b - a + 1 for a, b in hero_spans}
+    if len(hero_heights) != 1:
+        problems.append(
+            f"勇者各帧的可见高度不一致：{sorted(hero_heights)} —— 基准值要靠它，"
+            f"先查切帧（真正的走起伏只挪位置、不改高度）"
+        )
 
-    hero_spans = [rows(f) for f in hero_frames]
-    hero_top = min(s[0] for s in hero_spans)
-    hero_bottom = max(s[1] for s in hero_spans)
-    hero_h = hero_bottom - hero_top + 1
+    def core(im, y):
+        return solid_core_width(im, y)
+
+    # 帧序是 HERO_DIRS = 朝下/右/上/左 各 4 帧，第 0 帧就是朝下（最常看到的姿态）
+    ref_top, ref_bottom = hero_spans[0]
+    hero_top = min(a for a, _ in hero_spans)
+    hero_max_w = max(core(f, y) for f in hero_frames for y in range(f.height))
 
     for npc_id, frames in npc_images.items():
-        top, bottom = rows(frames[0])
+        base = frames[0]
+        top, bottom = solid_rows(base)
         h = bottom - top + 1
-        if h != hero_h:
+        if (top, bottom) != (ref_top, ref_bottom):
             problems.append(
-                f"NPC {npc_id} 内容高 {h}px，勇者最高帧 {hero_h}px —— 差 {h - hero_h}px。"
-                f"同帧尺寸同倍数下，这会让 NPC 在棋盘上显得比勇者大/小"
-                f"（用户反馈的「NPC 比例」就是这个）。请调 NPC 纵向解剖表"
+                f"NPC {npc_id} 静止帧可见行 {top}..{bottom}，勇者朝下那帧是 "
+                f"{ref_top}..{ref_bottom} —— 同帧尺寸同倍数下这就是「谁更大」。"
+                f"绘制区间应为 {NPC_ART_TOP}..{NPC_ART_FEET}（描边后即 {ref_top}..{ref_bottom}）"
             )
-        if top != hero_top:
+        elif h != HERO_VISIBLE_H:
+            problems.append(f"NPC {npc_id} 可见高 {h}，勇者是 {HERO_VISIBLE_H}")
+
+        head_w = max(core(base, y) for y in range(NPC_FACE_TOP, NPC_FACE_BOT))
+        hem_w = max(core(base, y) for y in range(NPC_ROBE_TOP + 1, NPC_ROBE_BOT + 1))
+        if head_w < NPC_HEAD_MIN_W:
             problems.append(
-                f"NPC {npc_id} 内容顶行在 {top}，勇者最靠上的一帧在 {hero_top} —— "
-                f"注意 add_outline 会往上多占一行，绘制时要顶到第 {NPC_ART_TOP} 行"
-                f"（产出后顶行才是 {NPC_CONTENT_TOP}）"
+                f"NPC {npc_id} 的头只有 {head_w} 列宽（要求 ≥ {NPC_HEAD_MIN_W}）—— "
+                f"脸是 {NPC_FACE_W} 宽 + 左右各 1 描边，再窄就回到「头上的长方形太细」"
             )
-        if bottom != hero_bottom:
+        if hem_w > head_w + NPC_HEM_OVER_HEAD:
             problems.append(
-                f"NPC {npc_id} 内容底行在 {bottom}，勇者在 {hero_bottom} —— "
-                f"两边都是底部锚定，底行不一致会一个站地一个浮空"
+                f"NPC {npc_id} 下摆 {hem_w} 列宽、头才 {head_w} 列 —— 差 {hem_w - head_w}。"
+                f"这就是「身体太宽」：下摆别做成 A 字大摆，与躯干同宽即可"
             )
+
+        widest = max((core(base, y) for y in range(base.height)), default=0)
+        if widest > hero_max_w:
+            problems.append(
+                f"NPC {npc_id} 最宽的一行 {widest} 列，勇者最宽 {hero_max_w} 列 —— 站一起会显得更大"
+            )
+
+        # 呼吸帧：脚不能走，头顶也不能越界
+        for i, fr in enumerate(frames[1:], start=1):
+            b_top, b_bottom = solid_rows(fr)
+            if b_bottom != ref_bottom:
+                problems.append(
+                    f"NPC {npc_id} 第 {i} 帧（呼吸）底行到了 {b_bottom} —— "
+                    f"底部锚定下脚离地会变成「在飘」，呼吸只该抬上身"
+                )
+            if b_top < hero_top:
+                problems.append(
+                    f"NPC {npc_id} 第 {i} 帧（呼吸）顶行到了 {b_top}，超过勇者最高的 {hero_top} 行"
+                )
     return problems
 
 

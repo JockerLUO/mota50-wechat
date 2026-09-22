@@ -21,6 +21,7 @@
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
+const { createHash } = require('node:crypto');
 const { chromium, findChromium } = require('./lib/chromium.cjs');
 
 const ROOT = path.resolve(__dirname, '..');
@@ -201,6 +202,44 @@ const server = http.createServer((req, res) => {
     '图集真的加载成功（不是静默回退成程序化图形）',
     probe.atlasReady === true,
     probe.atlasReady === true ? 'atlas.ready = true' : 'atlas.ready = false —— 当前画面是程序化图形，不是美术'
+  );
+
+  // ── 包里的图集必须是**刚出的那一份** ────────────────────────────────
+  //
+  // 上面那条只能证明「图集加载成功了」，证明不了「加载的是哪一版」。
+  // 而这两件事的差距，就是本轮用户反馈的「新的素材在模拟器中没有生效」：
+  //
+  //   `dist-minigame/assets/*.png` 是 `build:minigame` 时由
+  //   `tools/copy-minigame-assets.mjs` **拷过去的一份副本**。
+  //   只跑 `npm run assets`（重建图集）或只跑 `npm run build`（网页版）
+  //   都不会刷新它 —— 包内还是上一版美术。
+  //
+  // 症状之所以隐蔽：IDE 里一切正常（无报错、`atlasReady=true`、棋盘完整），
+  // 只是画的是旧画。不看对比图根本发现不了。
+  //
+  // 判据用内容哈希，不看时间戳：时间戳会被 checkout / 复制 / 打包抹掉，
+  // 而「字节一致」才是「模拟器里看到的就是我刚画的那份」的准确表述。
+  const atlasSrcDir = path.join(ROOT, 'assets', 'atlas');
+  const atlasDstDir = path.join(DIST, 'assets');
+  const hash12 = (p) => createHash('sha256').update(fs.readFileSync(p)).digest('hex').slice(0, 12);
+  const staleAtlas = [];
+  for (const file of fs.readdirSync(atlasSrcDir)) {
+    if (!file.endsWith('.png')) continue;
+    const dst = path.join(atlasDstDir, file);
+    if (!fs.existsSync(dst)) {
+      staleAtlas.push(`${file} 不在包内`);
+      continue;
+    }
+    const a = hash12(path.join(atlasSrcDir, file));
+    const b = hash12(dst);
+    if (a !== b) staleAtlas.push(`${file} 源=${a} 包=${b}`);
+  }
+  add(
+    '包内图集与 assets/atlas 逐字节一致（不是上一版美术）',
+    staleAtlas.length === 0,
+    staleAtlas.length
+      ? `${staleAtlas.join(' | ')} —— 重建过图集就要跑一次 npm run build:minigame`
+      : '一致'
   );
 
   add('离屏画布确实拿到了（createCanvas ≥ 2 次）', report.canvasCreates >= 2, `createCanvas × ${report.canvasCreates}`);
