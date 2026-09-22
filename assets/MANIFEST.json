@@ -1,6 +1,6 @@
 {
   "meta": {
-    "generatedAt": "2026-09-22T04:33:57+00:00",
+    "generatedAt": "2026-09-22T11:56:33+00:00",
     "generator": "tools/build-assets.py",
     "baseTile": 16,
     "rasterTile": 64,
@@ -56,7 +56,7 @@
       "h": 64,
       "drawScale": 0.5,
       "name": "wall",
-      "src": "0x72/wall_mid"
+      "src": "手绘 · 错缝砌法（直接画在出图网格上）"
     },
     "2": {
       "atlas": "terrain",
@@ -156,7 +156,7 @@
       "h": 64,
       "drawScale": 0.5,
       "name": "fakeWall",
-      "src": "0x72/wall_mid（与真墙同图，这是玩法本身）"
+      "src": "手绘 · 错缝砌法（与真墙同图，这是玩法本身）"
     },
     "1:top": {
       "atlas": "terrain",
@@ -166,7 +166,7 @@
       "h": 64,
       "drawScale": 0.5,
       "name": "wallTop",
-      "src": "0x72/wall_mid + wall_top_mid 翻转预合成（压顶落在本格上沿）"
+      "src": "手绘 · 墙身 + 石质压顶预合成（压顶落在本格上沿）"
     },
     "0:1": {
       "atlas": "terrain",
@@ -226,7 +226,7 @@
       "h": 64,
       "drawScale": 0.5,
       "name": "wall#1",
-      "src": "由 TERRAIN[1] 派生：竖缝位置重排，砌层与配色不变（第 1 号变体，32 网格）"
+      "src": "由 TERRAIN[1] 派生：砌层与错缝一致，残缺换一批位置（第 1 号变体）"
     },
     "1:2": {
       "atlas": "terrain",
@@ -236,7 +236,7 @@
       "h": 64,
       "drawScale": 0.5,
       "name": "wall#2",
-      "src": "由 TERRAIN[1] 派生：竖缝位置重排，砌层与配色不变（第 2 号变体，32 网格）"
+      "src": "由 TERRAIN[1] 派生：砌层与错缝一致，残缺换一批位置（第 2 号变体）"
     },
     "1:3": {
       "atlas": "terrain",
@@ -246,7 +246,7 @@
       "h": 64,
       "drawScale": 0.5,
       "name": "wall#3",
-      "src": "由 TERRAIN[1] 派生：竖缝位置重排，砌层与配色不变（第 3 号变体，32 网格）"
+      "src": "由 TERRAIN[1] 派生：砌层与错缝一致，残缺换一批位置（第 3 号变体）"
     },
     "1:4": {
       "atlas": "terrain",
@@ -256,7 +256,7 @@
       "h": 64,
       "drawScale": 0.5,
       "name": "wall#4",
-      "src": "由 TERRAIN[1] 派生：竖缝位置重排，砌层与配色不变（第 4 号变体，32 网格）"
+      "src": "由 TERRAIN[1] 派生：砌层与错缝一致，残缺换一批位置（第 4 号变体）"
     },
     "1:top:1": {
       "atlas": "terrain",
@@ -266,7 +266,7 @@
       "h": 64,
       "drawScale": 0.5,
       "name": "wallTop#1",
-      "src": "由 TERRAIN_TOP[1] 派生：墙身换变体后重新合成压顶（第 1 号变体）"
+      "src": "由 TERRAIN_TOP[1] 派生：墙身换变体后重新压顶（第 1 号变体）"
     },
     "1:top:2": {
       "atlas": "terrain",
@@ -276,7 +276,7 @@
       "h": 64,
       "drawScale": 0.5,
       "name": "wallTop#2",
-      "src": "由 TERRAIN_TOP[1] 派生：墙身换变体后重新合成压顶（第 2 号变体）"
+      "src": "由 TERRAIN_TOP[1] 派生：墙身换变体后重新压顶（第 2 号变体）"
     },
     "1:top:3": {
       "atlas": "terrain",
@@ -286,7 +286,7 @@
       "h": 64,
       "drawScale": 0.5,
       "name": "wallTop#3",
-      "src": "由 TERRAIN_TOP[1] 派生：墙身换变体后重新合成压顶（第 3 号变体）"
+      "src": "由 TERRAIN_TOP[1] 派生：墙身换变体后重新压顶（第 3 号变体）"
     },
     "1:top:4": {
       "atlas": "terrain",
@@ -296,7 +296,7 @@
       "h": 64,
       "drawScale": 0.5,
       "name": "wallTop#4",
-      "src": "由 TERRAIN_TOP[1] 派生：墙身换变体后重新合成压顶（第 4 号变体）"
+      "src": "由 TERRAIN_TOP[1] 派生：墙身换变体后重新压顶（第 4 号变体）"
     }
   },
   "monsters": {

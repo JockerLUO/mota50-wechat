@@ -39,7 +39,6 @@ import os
 import random
 import re
 import sys
-from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -71,7 +70,7 @@ CELL = 32               # 游戏棋盘的格子边长（设计像素，不随素
 #
 # ⚠️ SS=4 是 Scale2x 连做两遍。第二遍会把第一遍的 1px 直角磨圆 —— 对第三方
 # 位图（信息上限 16×16）这是可接受的代价（轮廓更平滑），但**程序化手绘的地形
-# （地板、楼梯）不这么走**：它们直接画在 RASTER_TILE 网格上（见「四、素材源」），
+# （地板、墙、楼梯）不这么走**：它们直接画在 RASTER_TILE 网格上（见「四、素材源」），
 # 超采样对它们是空操作。手绘在高网格上 = 真·细节翻倍；超采样 = 只把已有信息摊细。
 SS = 4
 SS_PASSES = SS.bit_length() - 1     # 4 → 2 次 Scale2x
@@ -423,14 +422,16 @@ def terrain_raster(im: Image.Image) -> Image.Image:
 
 def _mon_out(im: Image.Image, scale: int) -> Image.Image:
     """
-    怪物的出图帧：一律超采样到 RASTER_TILE 网格（包括「大家伙」）。
+    怪物的出图帧：统一放大到出图网格 RASTER_TILE（64）。
 
-    大家伙曾经不超采样（16 网格 ×3 = 48px），理由是「非整数倍会毛躁」——
-    那是 drawScale 只能取整时代的约束。现在 drawScale 是浮点（0.75），
-    且超采样只发生在**纹理分辨率**上，落屏尺寸不变；不跟的话它反而成了
-    全屏像素最粗的东西（每素材像素 8 个设备像素 vs 别人的 1.35）。
+    手绘怪物现在直接画在 32 网格上（MON_W），所以这里只 Scale2x 一遍到 64；
+    取自 0x72 的 16 网格怪物则放两遍到 64 —— 与旧版超采样到 64 等价。
+    落屏尺寸仍只由 drawScale 决定（见 _out_scale），不变。
     """
-    return supersample(im)
+    out = im
+    while out.width < RASTER_TILE or out.height < RASTER_TILE:
+        out = scale2x(out)
+    return out
 
 
 def _out_scale(scale: int) -> float:
@@ -512,6 +513,43 @@ STAIR_BASE = (44, 35, 24)       # 最下面那级的落地线
 STAIR_WELL = [(122, 102, 72), (92, 76, 54), (62, 51, 36), (34, 28, 20)]
 
 
+# ── 墙：手绘在**出图网格**上 ───────────────────────────────────────
+# 和地板同一个道理：0x72 的 wall_mid 只有 16×16、三个颜色，超采样只是把这三个
+# 色摊细 —— 「每个 16 网格单元内的独立颜色数」实测 1.15 → 1.18，几乎没有多出
+# 细节。墙是第二种满屏平铺的地形（地板之外就数它占屏最多），所以同样改成手绘。
+#
+# 砌法用**错缝**（running bond）：相邻两层的竖缝错开半块砖。这既是真的砌法，
+# 也正好用来打散「同一张图在重复」—— 每隔一层，缝的位置就换一次。
+WALL_BASE = (78, 63, 60)        # 砖身（仍在 0x72 的墙色族里，与其它地形的明暗关系不变）
+WALL_HI = (118, 96, 86)         # 上 / 左受光倒角
+WALL_SHADE = (56, 46, 45)       # 下 / 右背光倒角
+# 灰缝。比 0x72 的 (34,34,34) 略偏暖 —— 那个值正好等于史莱姆身体的深色，
+# 怪物会「粘」在墙上（这条是当年给地板重染色时才量出来的）。
+WALL_JOINT = (38, 32, 31)
+WALL_STAIN = (92, 70, 54)       # 锈斑 / 苔痕：比砖身暖一点，不是单纯的暗
+WALL_SEED = 20260923
+
+WALL_COURSE = 4 * SS            # 一层砌层 16 行 = 砖身 14 + 横缝 2
+WALL_BOND = 8 * SS              # 竖缝间距 32（半块砖 16）→ 砖身恒为 30 宽
+WALL_JW = max(2, SS) // 2 + SS // 2   # 缝宽 2px
+# 残缺的**数量**（不是位置）写死 —— 变体只换位置，配色多重集才守恒。
+# 破损（缺角 / 裂纹）一律用缝色：崩掉一块露出来的本来就是灰缝，不新增颜色。
+WALL_CHIPS = 6                  # 缺角：2×2
+WALL_CRACKS = 3                 # 裂纹：斜向 5px
+WALL_CRACK_LEN = 5
+WALL_STAINS = 3                 # 锈斑：3×2
+WALL_BEADS = 24                 # 麻点：单像素（用受光色，是亮点不是脏点）
+
+# 墙顶压顶：顶面 2 行 / 立面 11 行 / 下沿 1 行 / 投影 4 行。
+# 前三项之和 = 14 = 砖身上沿（含第一道横缝的上半），投影那 4 行正好吃掉第一层
+# 与第二层之间的整道横缝 —— 否则压顶底下会留下 2px 孤零零的缝，看着像画歪了。
+WALL_CAP_ROWS = (2, 11, 1, 4)
+WALL_CAP_HI = (206, 186, 164)   # 顶面（受光）
+WALL_CAP_FACE = (166, 138, 120) # 立面
+WALL_CAP_EDGE = (126, 104, 88)  # 下沿
+WALL_CAP_SHADOW = (44, 36, 33)  # 投影（压顶压在墙身上的那道影）
+
+
 def _floor(seed: int = FLOOR_SEED) -> Image.Image:
     """
     地板：错缝石板，直接画在 RASTER_TILE 网格上。
@@ -581,6 +619,148 @@ def _floor(seed: int = FLOOR_SEED) -> Image.Image:
         x, y = inner[rng.randrange(len(inner))]
         p[(x, y)] = FLOOR_HI + (255,)
     return im
+
+
+def _wall(seed: int = WALL_SEED) -> Image.Image:
+    """
+    墙：错缝砌法（running bond），直接画在 RASTER_TILE 网格上。
+
+    为什么手绘：见上面「墙」那一节的注释 —— 第三方位图超采样不产生新细节。
+
+    结构：一层砌层 16 行（砖身 14 + 横缝 2）；竖缝间距 32，相邻层错开半块（16）。
+    于是砖身恒为 30×14 —— 平铺时跨格也接得上：横缝在格子上下沿各出 1px、
+    竖缝在左右沿各出 1px，拼起来仍是 2px，不会在格子接缝处细一条。
+    ⚠️ 缝宽与缝距都必须**整除** RASTER_TILE，否则接缝会在每格边界露出来
+    （整片墙每隔 32px 多一条细线，缩略图上根本看不出，真机上一眼可见）。
+
+    ⚠️ `seed` 只影响最后一步的残缺：缝与倒角必须用**固定**的 WALL_SEED。
+    变体就是「同一配方、换一批残缺位置」派生出来的 —— 缝一变，平铺就连不上。
+    残缺全是**离散色 + 固定数量**，所以变体的配色多重集与底图完全相同。
+    """
+    n = RASTER_TILE
+    im = Image.new("RGBA", (n, n), WALL_BASE + (255,))
+    p = im.load()
+    base = WALL_BASE + (255,)
+    joint = WALL_JOINT + (255,)
+    jw = WALL_JW
+
+    def vjoint(cx: int, y0: int, y1: int):
+        """一道竖缝，占 [cx-1, cx]（与地板同一套约定：缝偏在 cx 的左上侧）。"""
+        for y in range(y0, y1):
+            for dx in range(-jw // 2, jw - jw // 2):
+                x = cx + dx
+                if 0 <= x < n:
+                    p[(x, y)] = joint
+
+    # 横缝：每层的上沿，宽 jw（与竖缝同宽）。第 0 层的 y=0 与最后一层的 y=n-1
+    # 各只画到半道 —— 另一半由相邻那张瓦片补上，拼起来正好是完整的一道缝。
+    # ⚠️ 缝宽必须与竖缝一致：只差一点的话，横竖缝会在满屏铺开时粗细不一。
+    for ci in range(n // WALL_COURSE + 1):
+        cy = ci * WALL_COURSE
+        for dy in range(-jw // 2, jw - jw // 2):
+            y = cy + dy
+            if 0 <= y < n:
+                for x in range(n):
+                    p[(x, y)] = joint
+
+    # 竖缝：错缝 —— 相邻层错开半块砖
+    for ci in range(n // WALL_COURSE):
+        y0, y1 = ci * WALL_COURSE, (ci + 1) * WALL_COURSE
+        phase = (ci % 2) * (WALL_BOND // 2)
+        for k in range(n // WALL_BOND + 1):
+            vjoint(phase + k * WALL_BOND, y0, y1)
+
+    # 倒角：贴着缝的那一圈。上/左提亮、下/右压暗 —— 砖因此读得出厚度
+    for y in range(n):
+        for x in range(n):
+            if p[(x, y)] != base:
+                continue
+            up = y > 0 and p[(x, y - 1)] == joint
+            lf = x > 0 and p[(x - 1, y)] == joint
+            dn = y < n - 1 and p[(x, y + 1)] == joint
+            rt = x < n - 1 and p[(x + 1, y)] == joint
+            if up or lf:
+                p[(x, y)] = WALL_HI + (255,)
+            elif dn or rt:
+                p[(x, y)] = WALL_SHADE + (255,)
+
+    # 残缺：缺角 / 裂纹 / 锈斑 / 麻点。数量写死，只换位置。
+    rng = random.Random(seed)
+    free = {(x, y) for y in range(n) for x in range(n) if p[(x, y)] == base}
+    order = sorted(free)
+    rng.shuffle(order)
+
+    def stamp(cells_of, color: tuple, what: str) -> None:
+        """从打乱后的候选点里找一个整块都空着的位置落笔。"""
+        while order:
+            x, y = order.pop()
+            if (x, y) not in free:
+                continue
+            cells = cells_of(x, y)
+            if cells is None or any(c not in free for c in cells):
+                continue
+            for c in cells:
+                free.discard(c)
+                p[c] = color
+            return
+        raise RuntimeError(f"墙的{what}放不下 —— 砖身像素不够，或网格参数冲突")
+
+    def rect(w: int, h: int):
+        return lambda x, y: [(x + dx, y + dy) for dy in range(h) for dx in range(w)]
+
+    def crack(x: int, y: int):
+        return [(x + i, y + i) for i in range(WALL_CRACK_LEN)]
+
+    for _ in range(WALL_CHIPS):
+        stamp(rect(2, 2), joint, "缺角")
+    for _ in range(WALL_CRACKS):
+        stamp(crack, joint, "裂纹")
+    for _ in range(WALL_STAINS):
+        stamp(rect(3, 2), WALL_STAIN + (255,), "锈斑")
+    for _ in range(WALL_BEADS):
+        stamp(rect(1, 1), WALL_HI + (255,), "麻点")
+    return im
+
+
+def _wall_cap(body: Image.Image) -> Image.Image:
+    """
+    墙顶：在本格上沿压一道**石质压顶**（手绘，不再是 0x72 的 wall_top_mid）。
+
+    为什么不再超采样第三方压顶：wall_top_mid 在 16 网格上只有最下面 4 行有内容，
+    放大到 64 网格后是一条糊掉的色带 —— 压在一张**手绘**的墙身上会明显比墙身
+    粗，正是这一轮要消灭的那种不一致。所以在出图网格上直接画：
+    顶面受光 → 立面 → 下沿 → 投影，让压顶「浮」在墙身上。
+
+    ⚠️ 投影那几行必须吃掉第一层砌层的横缝，否则压顶底下会留下 1px 孤零零的缝。
+    """
+    n = body.width
+    out = body.copy()
+    p = out.load()
+    joint = WALL_JOINT + (255,)
+    hi_r, face_r, edge_r, shadow_r = WALL_CAP_ROWS
+    face_end = hi_r + face_r
+    edge_end = face_end + edge_r
+    shadow_end = edge_end + shadow_r
+    for y in range(shadow_end):
+        if y < hi_r:
+            c = WALL_CAP_HI
+        elif y < face_end:
+            c = WALL_CAP_FACE
+        elif y < edge_end:
+            c = WALL_CAP_EDGE
+        else:
+            c = WALL_CAP_SHADOW
+        for x in range(n):
+            p[(x, y)] = c + (255,)
+    # 压顶的竖缝：与偶数层同相位（0 / 32）—— 横向平铺时块宽与墙身一致（都是 30）。
+    # 投影那几行是阴影不是石头，所以不断开。
+    for y in range(edge_end):
+        for k in range(n // WALL_BOND + 1):
+            for dx in range(-WALL_JW // 2, WALL_JW - WALL_JW // 2):
+                x = k * WALL_BOND + dx
+                if 0 <= x < n:
+                    p[(x, y)] = joint
+    return out
 
 
 def _stairs_down() -> Image.Image:
@@ -665,7 +845,10 @@ TERRAIN = {
     # 多出细节（只会把轮廓磨圆）。要真的更精细，只能在高网格上重画 ——
     # 见 `_floor()`。配色仍压在暖砂石族里，明度比断言见 verify_terrain 第 ④ 条。
     0: ("floor", _floor, "手绘 · 错缝石板（直接画在出图网格上，非第三方位图重染）"),
-    1: ("wall",       lambda: o72("wall_mid"),                         "0x72/wall_mid"),
+    # 墙：**手绘**错缝砌法。改动理由与地板完全相同（第三方位图超采样不产生新细节），
+    # 唯一差别是墙还多挂一条约束 —— 假墙必须和它逐像素一致，所以两者共用同一个
+    # 函数而不是「同一张源图」。
+    1: ("wall",       _wall,                                          "手绘 · 错缝砌法（直接画在出图网格上）"),
     2: ("prisonDoor", lambda: o72("doors_leaf_closed"),                "0x72/doors_leaf_closed（原色木门，区别于三色钥匙门）"),
     # 上/下楼梯：**同一族画法的两个方向**（侧视梯段），不是同一张图翻转。
     # 理由见上面「四之三」那一节：floor_ladder 近乎上下对称，翻转后肉眼分不出
@@ -684,7 +867,7 @@ TERRAIN = {
     8: ("doorBlue",   lambda: ramp(o72("doors_leaf_closed"), (14, 24, 58), (150, 194, 246)), "0x72/doors_leaf_closed @ 蓝渐变"),
     9: ("doorRed",    lambda: ramp(o72("doors_leaf_closed"), (58, 10, 16), (250, 138, 138)), "0x72/doors_leaf_closed @ 红渐变"),
     10: ("autoDoor",  lambda: o72("doors_leaf_open"),                  "0x72/doors_leaf_open"),
-    11: ("fakeWall",  lambda: o72("wall_mid"),                         "0x72/wall_mid（与真墙同图，这是玩法本身）"),
+    11: ("fakeWall",  _wall,                                          "手绘 · 错缝砌法（与真墙同图，这是玩法本身）"),
 }
 
 # 墙的「顶边」变体：上方没有墙时用这张，地牢立刻有了立体感。
@@ -695,20 +878,15 @@ TERRAIN = {
 # 它是给「贴到墙体上面那一格的下沿」这种用法画的。原样贴在本格会让整格
 # 四分之三透明，露出底色（白色面板），看起来像墙缺了一块。
 # 翻转过来让压顶落在本格的**上沿**，再和墙身合成为一张不透明图，本格就完整了。
+# 压顶同样改成手绘（见 `_wall_cap`）：第三方 wall_top_mid 只有 4 行内容，
+# 超采样后压在手绘墙身上会明显比墙身粗 —— 那是「只换了一半素材」的典型症状。
 def _wall_top_baked(body: Image.Image | None = None) -> Image.Image:
-    body = o72("wall_mid") if body is None else body
-    cap = o72("wall_top_mid").transpose(Image.FLIP_TOP_BOTTOM)
-    # 变体的墙身是 32 网格（超采样之后才生成变体），压顶必须跟着翻倍，
-    # 否则压顶只盖住上半个格子 —— 从外面看就是「墙顶缺了一条」。
-    if cap.width != body.width:
-        cap = terrain_raster(cap)
-    out = body.copy()
-    out.alpha_composite(cap)
-    return out
+    body = _wall() if body is None else body
+    return _wall_cap(body)
 
 
 TERRAIN_TOP = {
-    1: ("wallTop", _wall_top_baked, "0x72/wall_mid + wall_top_mid 翻转预合成（压顶落在本格上沿）"),
+    1: ("wallTop", _wall_top_baked, "手绘 · 墙身 + 石质压顶预合成（压顶落在本格上沿）"),
 }
 
 # ─────────────────────────────────────────────────────────────────────
@@ -725,11 +903,13 @@ TERRAIN_TOP = {
 #   **同一调色板内的像素重排**：用哪几个颜色、各用多少个，与底图完全相同。
 #   这不是靠自觉，verify_terrain 里有直方图断言。
 #
-# 两种地形各有一套做法，理由不同：
-#   地面：倒角（上/左暗边、下/右亮边）是地砖能连成一片的关键，**不动**；
-#         只把倒角上缺口的**位置**重排，再撒几粒同色小杂质。
-#   墙  ：四行一层的砌层结构（高光边 / 砖身 ×2 / 横缝）**不动**，动了会出现
-#         横向条带；只重排**竖缝**的位置 —— 砖缝错开正是真实砌法的样子。
+# 两种地形同一套做法，理由也相同：
+#   地面：缝与倒角是石板能连成一片的关键，**不动**；只换碎石 / 磨痕的位置。
+#   墙  ：砌层与错缝是砌法，**不动**（缝一变，平铺就连不上）；只换残缺的位置。
+#
+# 曾经给墙用过另一套做法 —— 在超采样后的成品图上把竖缝**整段平移**。那条路
+# 是「第三方位图没有配方、只能挪像素」逼出来的；墙改成手绘之后就有了配方，
+# 于是和地面一样退回「同一配方、换个种子」，配色多重集**天然守恒**。
 #
 # 门 / 楼梯 / 岩浆 / 虚空都是一格一格出现的，没有被平铺锁定，做了只是白占体积。
 
@@ -737,11 +917,9 @@ VARIANT_SEED = 20260921  # 固定种子：变体必须可重跑，不能每次�
 FLOOR_VARIANTS = 6       # 含底图本身（键 `0`；其余是 `0:1` … `0:5`）
 WALL_VARIANTS = 5        # 含底图本身（键 `1`；其余是 `1:1` … `1:4`）
 
-# 变体一律在**超采样之后**的 32 网格上生成（main() 里传进来的就是 32×32 的底图）。
-# 于是砌层厚度按 SS 同步放大（砖还是那么大，不然变体会和底图的砖对不上），
-# 而**竖缝与杂质都是 1px** —— 它们的粒度从 1/16 变 1/32，这才是新多出来的细节。
-WALL_COURSE = 4 * SS     # 墙八行一层：高光边 / 砖身 ×6 / 横缝（16 网格上是 4 行）
 SPECKLE = SS * SS        # 面积变 4 倍，杂质数量同步 ×4 才维持同样的疏密
+# （砌层厚度 WALL_COURSE / 缝距 WALL_BOND 定义在「墙」那一节 —— 它们是**画法**
+#   的参数，不是变体的参数，跟着手绘的墙走。）
 
 
 def _hist(im: Image.Image) -> dict:
@@ -788,68 +966,14 @@ def _floor_variants() -> list[Image.Image]:
     return [_floor(FLOOR_SEED + vi * 977) for vi in range(FLOOR_VARIANTS)]
 
 
-def _wall_palette(base: Image.Image) -> tuple[tuple, tuple, tuple]:
-    """墙的三档色（亮 / 中 / 暗）同样从底图推出。"""
-    colors = sorted(_hist(base), key=_lum, reverse=True)
-    if len(colors) < 3:
-        raise RuntimeError("墙底图不足三色，无法推出砌层配色")
-    return colors[0], colors[1], colors[2]
-
-
-def _row_major(row: list, skip: tuple) -> tuple:
-    """一行里出现最多、且不是 `skip` 的那个颜色。缝挪走之后要拿它补位。"""
-    cnt = Counter(c for c in row if c != skip)
-    return cnt.most_common(1)[0][0] if cnt else row[0]
-
-
-def _wall_variants(base: Image.Image) -> list[Image.Image]:
+def _wall_variants() -> list[Image.Image]:
     """
-    墙变体：砌层结构不变，只把**竖缝整段平移**到别的位置。
+    墙变体：砌层与错缝逐像素一致，只有残缺（缺角 / 裂纹 / 锈斑 / 麻点）换一批位置。
 
-    ⚠️ 这里必须是「挪像素」而不是「按配方重画一层墙」。
-    上一版是后者（每行先铺 hi/body 再点缝），在 16 网格上勉强压在 1/255 以内；
-    换到 32 网格后立刻崩 —— 底图经 Scale2x 之后，缝色的像素占比本来就和
-    「配方」算出来的不一样（实测差 2~3/255、偏离 84~116 个像素）。
-    按配方重画等于拿一个**近似**去对底图，网格越密差得越明显。
-
-    改成整段平移之后，每一行的颜色多重集与底图**逐行相同**：
-    逐通道平均色差恒为 0，像素偏离数恒为 0，断言量到的是「缝有没有动」，
-    而不是「两种砌法差多少」。
+    和地面同一个做法：`_wall()` 内部只有残缺那一步吃 seed。缝一旦跟着变，
+    平铺就会连不上（相邻两张瓦片的缝对不齐，整片墙会出现错位的长砖）。
     """
-    w, h = base.size
-    hi, body, joint = _wall_palette(base)
-    # WALL_COURSE 已经含了 SS（它本身就是出图网格上的砌层厚度）；这里再按
-    # base 的实际网格归一，免得有人传进一张没超采样的墙就悄悄算错。
-    course = WALL_COURSE * (h // RASTER_TILE or 1)
-    out = [base]
-    for vi in range(1, WALL_VARIANTS):
-        rng = random.Random(VARIANT_SEED * 211 + vi)
-        im = base.copy()
-        p = im.load()
-        for c0 in range(0, h - course + 1, course):
-            # 同一层用同一个位移，缝才是「整段错开」而不是「各错各的」——
-            # 后者看上去像墙面长了麻点，不像砌法。
-            shift = rng.randrange(1, w)
-            for dy in range(course):
-                y = c0 + dy
-                row = [p[(x, y)] for x in range(w)]
-                slots = [x for x, c in enumerate(row) if c == joint]
-                if not slots or len(slots) >= w:
-                    continue        # 整行都是暗色的横缝，没什么可挪的
-                fill = _row_major(row, joint)
-                for x in slots:
-                    p[(x, y)] = fill
-                for x in slots:
-                    p[((x + shift) % w, y)] = joint
-            # 「只出现在砖身下沿的短竖缝」是原图自带的一点不对称，保留它。
-            # 用**交换**而不是改色 —— 交换不动任何颜色的计数，断言依旧恒绿。
-            if rng.random() < 0.5:
-                x = rng.randrange(w)
-                y1 = c0 + rng.randrange(course - 1)
-                y2 = y1 + 1
-                p[(x, y1)], p[(x, y2)] = p[(x, y2)], p[(x, y1)]
-        out.append(im)
-    return out
+    return [_wall(WALL_SEED + vi * 977) for vi in range(WALL_VARIANTS)]
 
 
 def _variant_key(base_key: str, vi: int) -> str:
@@ -1563,23 +1687,29 @@ def _npc_base(spec) -> Image.Image:
 
 def _breathe(base: Image.Image, robe, lift: int = 1) -> Image.Image:
     """
-    呼吸帧：头与躯干整体上移 `lift` 像素，**下摆与脚原地不动**，缝隙用袍色补上。
+    呼吸帧：头与躯干整体上移 `lift` 像素，**脚原位不动**，下摆跟着上身一起抬。
 
     为什么不整张图上移：精灵是底部锚定的（board.ts: sp.anchor.set(0.5, 1)），
     整图上移会让脚离地 1px —— 那是「在飘」，不是「在呼吸」。
 
     分界行是 `NPC_BREATH_SPLIT`（**下摆**的第一行，现在是第 19 行）。
-    它随横向/纵向解剖一起改过两次：原来写死 21，第一次压缩解剖时改到 22，
-    这一轮下摆回到 19..21 —— 写死的话补缝那一行会落到腿或脚上，
-    看起来像下摆被撕开一条口子。
 
-    补缝只在**肩线那一行**发生，所以宽度取「含手臂」的 10 列，
-    否则抬起来之后手臂的外侧会露出一个透明缺口。
+    ⚠️ 补缝的做法是这一版的关键修复：上一版用**平铺的袍色**填那条水平缝
+    （`_put(out, ..., robe)`），结果腰上出现一条全宽平色带，把角色「撕成
+    上下两半」—— 正是用户说的「抖动时上下分离」。而且那条缝只覆盖
+    x=3..12，手臂外侧还会透出透明缺口，看起来更像裂开了。
+
+    现在改成：把**下摆的第一行原样向上平移 `lift` 行**填进缝里。这样躯干与上身
+    始终是连续延伸的一条，袍子跟着上身一起抬，腰上不再有平色带、也不会透底，
+    只是「上半身整体往上喘了一口气」。
     """
     out = Image.new("RGBA", base.size, (0, 0, 0, 0))
     out.paste(base.crop((0, lift, NPC_W, NPC_BREATH_SPLIT)), (0, 0))
     out.paste(base.crop((0, NPC_BREATH_SPLIT, NPC_W, NPC_H)), (0, NPC_BREATH_SPLIT))
-    _put(out, NPC_ARM_X, NPC_BREATH_SPLIT - lift, NPC_ARM_W * 2 + NPC_TORSO_W, lift, robe)
+    # 缝：下摆首 `lift` 行原样上移填进缝，全宽、且是真实像素 —— 杜绝平色带与透明缺口
+    seam = base.crop((0, NPC_BREATH_SPLIT, NPC_W, NPC_BREATH_SPLIT + lift))
+    for k in range(lift):
+        out.paste(seam, (0, NPC_BREATH_SPLIT - lift + k))
     return out
 
 
@@ -1807,7 +1937,7 @@ def verify_npc_scale(npc_images: dict, hero_frames: list) -> list:
 # 渲染层让精灵「站在脚下名牌的上沿」（board.ts: sp.anchor.set(0.5, 1)），
 # 帧底留白 = 怪物浮在半空。有断言（verify_monster_fit 的 padIdle，与旧素材同一套）。
 
-MON_W = MON_H = 16
+MON_W = MON_H = 32  # 手绘怪物绘制网格：相对旧版 16 翻 4 倍像素，是「更精细」的主来源（落屏尺寸不变，仍经 _mon_out 升到 64）
 
 MON_INK = (42, 32, 40, 255)
 MON_WHITE = (250, 250, 252, 255)
@@ -1816,6 +1946,26 @@ MON_BONE = (232, 226, 206, 255)
 
 def _mon_canvas() -> Image.Image:
     return Image.new("RGBA", (MON_W, MON_H), (0, 0, 0, 0))
+
+
+def _ell(im, cx, cy, rx, ry, color):
+    """轴对齐实心椭圆（含边）。坐标可为小数，自动夹在画布内 —— 怪物造型的主力原语。"""
+    if ry <= 0 or rx <= 0:
+        return
+    y0 = max(0, int(math.floor(cy - ry)))
+    y1 = min(MON_H, int(math.ceil(cy + ry)) + 1)
+    for y in range(y0, y1):
+        dy = (y + 0.5 - cy) / ry
+        if abs(dy) >= 1:
+            continue
+        hw = int(round(rx * math.sqrt(max(0.0, 1 - dy * dy))))
+        if hw < 0:
+            continue
+        x0 = int(round(cx - hw))
+        x1 = int(round(cx + hw))
+        if x1 < x0:
+            continue
+        _put(im, x0, y, x1 - x0 + 1, 1, color)
 
 
 def _sym(im, x, y, w, h, color):
@@ -1866,16 +2016,17 @@ def _stamp(rows: list[str], legend: dict[str, tuple]) -> Image.Image:
     return im
 
 
-def _mon_squash(base: Image.Image) -> Image.Image:
+def _mon_squash(base: Image.Image, lift: int = 2) -> Image.Image:
     """
-    呼吸帧：内容整体上抬 1px，再把原来的底行补回最底 —— **脚不离地**。
+    呼吸帧：内容整体上抬 `lift` px，再把最底 `lift` 行补回最底 —— **脚不离地**。
 
     整张图上移是不行的：底部锚定下那就是「怪物飘起来了」。
     补回底行的做法让身体看起来在「喘」，与 NPC 的呼吸帧是同一个套路。
+    `lift` 取 2（32 网格下 = 1 个落屏像素），1px 在 32 网格上会被 Scale2x 吃掉看不见。
     """
     out = Image.new("RGBA", base.size, (0, 0, 0, 0))
-    out.paste(base.crop((0, 1, MON_W, MON_H)), (0, 0))
-    out.paste(base.crop((0, MON_H - 1, MON_W, MON_H)), (0, MON_H - 1))
+    out.paste(base.crop((0, lift, MON_W, MON_H)), (0, 0))
+    out.paste(base.crop((0, MON_H - lift, MON_W, MON_H)), (0, MON_H - lift))
     return out
 
 
@@ -1884,11 +2035,8 @@ def _mon_squash(base: Image.Image) -> Image.Image:
 # 每个形状只吃 spec 里的颜色，不关心自己代表谁 —— 「皇帝史莱姆」和
 # 「绿史莱姆」的差别在 spec，不在函数里。
 #
-# 两条实现路线，按「形状是算出来的还是画出来的」分：
-#   · **算出来的**（史莱姆的圆顶、乌贼张开的腕、石头人的直角、魔王对称的角）
-#     用 `_put` / `_sym` 一行行生成 —— 半径、张角本来就是算法。
-#   · **画出来的**（蝙蝠的膜翼、龙）用 `_stamp` + 字符模板 —— 形状本身就是一笔一笔的，
-#     写成坐标只会出现「写出来是锚、读代码看不出来」这种事故（见 _stamp 的注释）。
+# 全部形状都用 `_put` / `_sym` / `_ell` 一行行程序化生成 —— 半径、张角、椭圆
+# 本来就是算法，坐标法在 32 网格上写起来比字符模板更准也更易复查。
 
 # ── 蝙蝠模板 ───────────────────────────────────────────────────────
 #
@@ -1970,189 +2118,320 @@ DRAGON_ROWS = [
 
 
 def _mon_slime(s) -> Image.Image:
-    """史莱姆：圆顶 + 扁底，两只眼。`top` 越小越「大只」。"""
+    """史莱姆（DQ 风）：圆顶水滴身 + 大白眼黑瞳 + 微笑 + 左上高光 + 右下阴影；`top` 越小越「大只」。"""
     im = _mon_canvas()
     body, dark, light = s["body"], s["dark"], s["light"]
-    top = s.get("top", 6)
-    # 半宽逐行 +1 直到满宽 8，做出水袋一样的圆顶
-    for i, y in enumerate(range(top, MON_H)):
-        hw = min(2 + i, 8)
-        _put(im, 8 - hw, y, hw * 2, 1, body)
-    # 底部两行压暗：让圆顶「坐」在地上而不是浮着
-    for y in range(MON_H - 2, MON_H):
-        _put(im, 0, y, MON_W, 1, dark)
-    # 顶部高光（偏左上，光从左上打）
-    _put(im, 4, top + 2, 3, 2, light)
-    # 眼睛落在圆顶中段，2×2 的黑豆眼最像果冻
-    ey = top + 5
-    _put(im, 5, ey, 2, 2, MON_INK)
-    _put(im, 9, ey, 2, 2, MON_INK)
-    _put(im, 7, ey + 2, 2, 1, dark)  # 嘴
-    if s.get("crown"):  # 史莱姆王：一顶三尖金冠
+    top = s.get("top", 7)
+    cx = MON_W / 2
+    maxhw = 13
+    # 身体：sqrt 圆顶（窄顶、宽底），底两行收一点成「脚」
+    for y in range(top, MON_H):
+        t = (y - top) / (MON_H - 1 - top)
+        hw = int(round(maxhw * math.sqrt(max(0.0, t))))
+        if y >= MON_H - 3:
+            hw -= (y - (MON_H - 4))
+        if hw < 1:
+            hw = 1
+        _put(im, int(round(cx - hw)), y, hw * 2 + 1, 1, body)
+    # 底两行压暗（坐在地上）
+    for y in (MON_H - 2, MON_H - 1):
+        t = (y - top) / (MON_H - 1 - top)
+        hw = int(round(maxhw * math.sqrt(max(0.0, t))))
+        if y >= MON_H - 3:
+            hw -= (y - (MON_H - 4))
+        if hw < 1:
+            hw = 1
+        _put(im, int(round(cx - hw)), y, hw * 2 + 1, 1, dark)
+    # 左上高光
+    _ell(im, cx - 5, top + 6, 4, 3, light)
+    # 右下阴影（身体右侧）
+    for y in range(top + 10, MON_H - 1):
+        t = (y - top) / (MON_H - 1 - top)
+        hw = int(round(maxhw * math.sqrt(max(0.0, t))))
+        if y >= MON_H - 3:
+            hw -= (y - (MON_H - 4))
+        if hw < 1:
+            hw = 1
+        _put(im, int(round(cx + hw - 3)), y, 3, 1, dark)
+    # 大白眼 + 黑瞳（DQ 标志）
+    _ell(im, cx - 5, top + 11, 3, 4, MON_WHITE)
+    _ell(im, cx + 5, top + 11, 3, 4, MON_WHITE)
+    _ell(im, cx - 5, top + 12, 1, 2, MON_INK)
+    _ell(im, cx + 5, top + 12, 1, 2, MON_INK)
+    # 微笑弧
+    my = top + 18
+    for dx in range(-3, 4):
+        yy = my + (dx * dx) // 5
+        _put(im, int(round(cx + dx)), yy, 1, 1, MON_INK)
+    # 史莱姆王：金冠
+    if s.get("crown"):
         g = s["crown"]
-        _put(im, 5, 2, 6, 1, g)          # 冠圈
-        for x in (5, 7, 10):             # 三个尖（中间那个两像素宽）
-            _put(im, x, 1, 2 if x == 7 else 1, 1, g)
+        _put(im, int(round(cx - 6)), max(0, top - 1), 13, 2, g)
+        for sx in (int(round(cx - 6)), int(round(cx)), int(round(cx + 6))):
+            _put(im, sx, max(0, top - 4), 2, 3, g)
     return im
 
 
 def _mon_bat(s) -> Image.Image:
-    """
-    蝙蝠：尖耳 + 小头 + **张开的膜翼**（宽腰鼓形），身体垂在下面。
+    """蝙蝠（DQ「德拉基」风）：**圆球身 + 大眼 + 头顶呆毛 + 一对小圆翅**。
 
-    剪影的关键是**腰鼓**：翼的轮廓必须「窄 → 宽 → 窄」地鼓出来。
-    第一版八行都满宽，读出来是**锚**；只把中腰加宽、上下收回去，才像蝙蝠。
-
-    图例：`m` 翼膜（暗） / `M` 翼膜受光 / `b` 身体 / `i` 眼 / `w` 獠牙。
+    与上一版的关键差别：上一版把「像蝙蝠」押在**翼展**上（大张的膜翼 + 指骨），
+    画出来是一团方块。DQ 的德拉基恰好相反 —— 身体是**一颗球**（占画面 2/3），
+    翅膀只是贴在身后的**两片小圆叶**，识别靠的是**大眼与獠牙**。
+    `span` 让翅膀更长（大蝙蝠）、`fangs` 加獠牙（吸血蝙蝠）。
     """
-    legend = {"m": s["dark"], "M": s["light"], "b": s["body"], "i": MON_INK, "w": MON_WHITE}
-    # 宽翼（大蝙蝠 / 吸血蝙蝠）比窄翼多铺两行到满幅 —— 一眼分得出「更大只」
-    rows = BAT_WIDE if s.get("span") else BAT_NARROW
-    im = _stamp(rows, legend)
-    if s.get("fangs"):  # 吸血蝙蝠：獠牙落在头下缘中央，与「大蝙蝠」只差这一处
-        _put(im, 7, 3, 2, 1, MON_WHITE)
+    im = _mon_canvas()
+    body, dark, light = s["body"], s["dark"], s["light"]
+    cx = MON_W / 2
+    # 小圆翅：两侧各一片「上尖下圆」的小叶，上端与身体上部齐平 —— 贴身，不张
+    for side in (-1, 1):
+        for k in range(6):
+            x = int(round(cx + side * (10 + k)))
+            if not (0 <= x < MON_W):
+                continue
+            top = int(round(13 - k * 1.6))
+            bot = int(round(23 - k * 0.8))
+            for y in range(max(0, top), min(MON_H, bot + 1)):
+                _put(im, x, y, 1, 1, body if (k % 2 == 0) else dark)
+        # 翅外缘一行压暗，让小叶从球身上读得出来
+        tipx = int(round(cx + side * 15))
+        if 0 <= tipx < MON_W:
+            _put(im, tipx, 12, 1, 9, dark)
+    # 圆球身体：一颗球占画面 2/3（y=7..31）
+    _ell(im, cx, 19, 11, 12, body)
+    _ell(im, cx - 4, 13, 4, 4, light)          # 左上高光（右下不压暗 —— 深色椭圆会读成黑斑）
+    # 头顶呆毛（两根，德拉基的招牌），毛尖压暗
+    _put(im, int(round(cx - 4)), 2, 2, 6, body)
+    _put(im, int(round(cx + 2)), 2, 2, 6, body)
+    _put(im, int(round(cx - 4)), 2, 2, 2, dark)
+    _put(im, int(round(cx + 2)), 2, 2, 2, dark)
+    # 大眼：眼白占脸近 1/3，瞳孔小而偏下（DQ 德拉基的「呆萌」来源）
+    _ell(im, cx - 4, 16, 3, 4, MON_WHITE)
+    _ell(im, cx + 4, 16, 3, 4, MON_WHITE)
+    _put(im, int(round(cx - 4)), 17, 2, 3, MON_INK)
+    _put(im, int(round(cx + 2)), 17, 2, 3, MON_INK)
+    # 嘴 + 獠牙
+    _put(im, int(round(cx - 1)), 23, 2, 1, MON_INK)
+    if s.get("fangs"):
+        _put(im, int(round(cx - 2)), 24, 1, 3, MON_WHITE)
+        _put(im, int(round(cx + 1)), 24, 1, 3, MON_WHITE)
     return im
 
 
 def _mon_dragon(s) -> Image.Image:
-    """
-    魔龙：**侧视** —— 长吻大头在左，翼从背脊向右上扇开，尾巴向右伸，两条腿落地。
-
-    为什么改成侧视：正面视角下「两翼 + 身体 + 两条腿」在 16px 里必然糊成一团方块，
-    第一版画出来就是「上下一般宽的柱子 + 顶上一排刺」，看不出是龙。
-    侧视把四个识别记号（角 / 长吻 / 背上的翼 / 尾巴）分到了四个不同的方向，
-    16px 也读得出来。
-
-    图例：`k` 角（骨色） / `b` 身体 / `B` 腹甲（亮） / `W` 翼膜 / `L` 腿与尾 / `i` 眼 / `w` 獠牙。
-    """
-    legend = {"k": MON_BONE, "b": s["body"], "B": s["belly"], "W": s["wing"],
-              "L": s["dark"], "i": s["eye"], "w": MON_WHITE}
-    return _stamp(DRAGON_ROWS, legend)
+    """魔龙（DQ 风，侧视朝左）：大头长吻 + 双角 + 巨眼 + 张口獠牙；背脊展翼；身体 + 腹甲；两腿落地；尾带箭尖。"""
+    im = _mon_canvas()
+    body, belly, wing, dark, eye = s["body"], s["belly"], s["wing"], s["dark"], s["eye"]
+    cx = MON_W / 2
+    # 身体（椭圆，偏右）
+    _ell(im, cx + 3, 19, 9, 8, body)
+    _ell(im, cx + 3, 22, 7, 5, belly)            # 腹甲（亮）
+    # 颈（从左上头连到身体）
+    for y in range(11, 20):
+        x = int(round(cx + 3 - (y - 11) * 0.9))
+        _put(im, x, y, 5, 1, body)
+    # 头（左上）
+    _ell(im, cx - 6, 11, 6, 5, body)
+    # 长吻（向左突出）
+    _put(im, int(round(cx - 13)), 10, 8, 4, body)
+    _put(im, int(round(cx - 14)), 11, 4, 2, body)
+    # 嘴（开口 + 獠牙）
+    _put(im, int(round(cx - 13)), 13, 9, 1, dark)
+    _put(im, int(round(cx - 12)), 14, 1, 2, MON_WHITE)
+    _put(im, int(round(cx - 8)), 14, 1, 2, MON_WHITE)
+    # 眼
+    _put(im, int(round(cx - 6)), 9, 3, 3, MON_WHITE)
+    _put(im, int(round(cx - 5)), 10, 2, 2, eye)
+    # 双角（从头顶向右上弯，骨色）
+    for k in range(7):
+        _put(im, int(round(cx - 6 + k * 0.6)), int(round(9 - k)), 2, 2, MON_BONE)
+    _put(im, int(round(cx - 1)), 3, 2, 2, MON_BONE)
+    # 背脊翼（膜，从背向右上扇开，带指骨）
+    for k in range(1, 13):
+        x = int(round(cx + 6 + k * 0.7))
+        if x > MON_W - 2:
+            break
+        up = int(round(8 - 4 * (k / 12)))
+        down = int(round(20 - 2 * (k / 12)))
+        if down < up + 3:
+            down = up + 3
+        col = wing if (k % 2 == 0) else dark
+        for y in range(up, down + 1):
+            _put(im, x, y, 1, 1, col)
+        if k in (4, 8, 11):
+            _put(im, x, up, 1, down - up + 1, dark)
+    # 两腿（落地到最底行）
+    for side in (-1, 1):
+        _put(im, int(round(cx + 3 + side * 5)), 26, 3, 6, dark)
+        _put(im, int(round(cx + 3 + side * 5)), 30, 4, 2, body)
+    # 尾（从身体右下方伸出，带箭尖，到最底行）
+    for k in range(10):
+        y = 24 + k
+        x = int(round(cx + 11 + k * 0.8))
+        if x > MON_W - 2 or y > MON_H - 1:
+            break
+        _put(im, x, y, 2, 2, body)
+    _put(im, int(round(cx + 18)), MON_H - 1, 3, 1, body)
+    return im
 
 
 
 def _mon_kraken(s) -> Image.Image:
-    """
-    大乌贼：宽圆头 + 侧鳍 + 六条**向外张开**的腕。
+    """大乌贼（DQ 风）：**饱满圆头占 2/3 + 正面大眼 + 六条短触手（短、弯、末端卷）**。
 
-    第一版的腕是六根竖直色条，配上窄头，剪影读出来是一个「穿竖条纹袍子的人」。
-    修正两处：① 外套膜加宽（最宽 12），让头成为剪影的主体；
-    ② 腕按 `dir` 每行向外挪 1px，末端铺开到整幅宽度 —— 「张开」才是乌贼。
+    与上一版的关键差别：上一版触手是**竖直长色条**（一直伸到画布底），
+    读出来像外星人。DQ 的头足怪关键词是**头大触手短** —— 头占画面 2/3，
+    触手只有头直径那么长、向外弯、末端向内卷一个小钩。
     """
     im = _mon_canvas()
     body, dark, light = s["body"], s["dark"], s["light"]
-    # 外套膜（宽圆头）
-    for x, y, w in [(6, 1, 4), (5, 2, 6), (4, 3, 8), (3, 4, 10),
-                    (2, 5, 12), (2, 6, 12), (3, 7, 10), (4, 8, 8)]:
-        _put(im, x, y, w, 1, body)
-    _put(im, 3, 3, 4, 2, light)
-    # 侧鳍
-    _sym(im, 1, 2, 2, 3, dark)
-    # 大眼（白底黑瞳 —— 与其它怪的小豆眼不同，一眼认出「不是人形」）
-    _put(im, 4, 4, 3, 3, MON_WHITE)
-    _put(im, 9, 4, 3, 3, MON_WHITE)
-    _put(im, 5, 5, 2, 2, MON_INK)
-    _put(im, 9, 5, 2, 2, MON_INK)
-    # 六条腕：(起点 x, 每行外移方向)。中间的直着往下，两侧逐行外张。
-    for x0, dr in [(1, -1), (3, -1), (6, 0), (8, 0), (11, 1), (13, 1)]:
-        for i, y in enumerate(range(9, MON_H)):
-            x = max(0, min(MON_W - 2, x0 + dr * i))
-            _put(im, x, y, 1, 1, light)                            # 左侧受光
-            _put(im, x + 1, y, 1, 1, body if (y % 2 == 0) else dark)  # 右侧隔行压暗
+    cx = MON_W / 2
+    # 饱满圆头（y=1..20，占画面 2/3）：顶部窄、中部鼓、底部略收
+    for y in range(1, 21):
+        t = (y - 1) / 20
+        hw = int(round(12 * math.sin(min(1.0, t) * math.pi * 0.66)))
+        if hw < 2:
+            hw = 2
+        _put(im, int(round(cx - hw)), y, hw * 2 + 1, 1, body)
+    _ell(im, cx - 5, 7, 4, 4, light)             # 左上高光
+    _ell(im, cx + 6, 15, 4, 3, dark)             # 右下阴影
+    # 侧鳍（小，贴头两侧）
+    _put(im, 2, 8, 3, 5, dark)
+    _put(im, MON_W - 5, 8, 3, 5, dark)
+    # 大眼（长在头的**正面**，白底黑瞳）
+    _ell(im, cx - 4, 13, 3, 4, MON_WHITE)
+    _ell(im, cx + 4, 13, 3, 4, MON_WHITE)
+    _put(im, int(round(cx - 4)), 14, 2, 3, MON_INK)
+    _put(im, int(round(cx + 2)), 14, 2, 3, MON_INK)
+    # 六条短触手：从头底伸出，锥形、向外弯、末端向内卷钩 —— 只到 y=31（12 行）
+    for x0, dr in [(-9, -0.9), (-5, -0.45), (-1, 0.0),
+                   (1, 0.0), (5, 0.45), (9, 0.9)]:
+        x = int(round(cx + x0))
+        for i in range(11):
+            y = 20 + i
+            if y >= MON_H:
+                break
+            cur = dr if i < 8 else -dr * 0.6     # 末端反向 = 卷钩
+            x = max(0, min(MON_W - 2, int(round(x + cur))))
+            _put(im, x, y, 2, 1, body if (i % 2 == 0) else dark)
+            if i in (2, 6):                      # 吸盘
+                _put(im, x + 1, y, 1, 1, light)
     return im
 
 
 def _mon_golem(s) -> Image.Image:
-    """
-    石头人：方块躯干 + 砖缝 + 发光的眼。全程只有直角，和生物形成对比。
-
-    第一版把手臂画成与躯干同宽同高的一条横带（躯干 10 宽 + 两条 3 宽的臂 = 满宽 16），
-    结果剪影是一根**灰长条上顶着一个小头**。修正：手臂收窄到 2 宽、贴在躯干两侧，
-    躯干收成 8 宽，并单独做出拳头 —— 「头小、肩宽、腿短」才是石头人。
-    """
+    """石头人（DQ 风）：方块头 + 发光眼 + 砖缝躯干 + 方块手臂拳头 + 短腿落地。全程直角，和生物剪影区分。"""
     im = _mon_canvas()
     face, dark, light, seam = s["body"], s["dark"], s["light"], s["seam"]
-    # 头（方块，比躯干窄一半）
-    _put(im, 6, 2, 4, 4, face)
-    _put(im, 6, 2, 4, 1, light)
-    _put(im, 6, 3, 1, 1, s["glow"])
-    _put(im, 9, 3, 1, 1, s["glow"])
-    _put(im, 7, 6, 2, 1, dark)  # 短脖子
-    # 躯干（8 宽）
-    _put(im, 4, 7, 8, 6, face)
-    _put(im, 4, 7, 8, 1, light)
-    # 砖缝：一条竖缝 + 两条错开的横缝 = 立刻读成「砌起来的石头」
-    _put(im, 7, 8, 1, 5, seam)
-    _put(im, 4, 9, 3, 1, seam)
-    _put(im, 8, 11, 4, 1, seam)
-    _put(im, 5, 10, 1, 2, seam)  # 裂缝
-    # 手臂 + 拳头：比躯干矮一档、窄一档，让「肩宽」来自躯干而不是手臂
-    _sym(im, 2, 8, 2, 5, dark)
-    _sym(im, 2, 8, 2, 1, face)
-    _sym(im, 2, 13, 2, 2, dark)
-    # 腿（方块，踩到第 15 行）
-    _sym(im, 5, 13, 2, 3, dark)
+    cx = MON_W / 2
+    # 头（方块，比躯干窄）
+    _put(im, 10, 4, 12, 9, face)
+    _put(im, 10, 4, 12, 1, light)            # 头顶高光
+    _put(im, 10, 4, 1, 9, light)             # 左缘高光
+    _put(im, 11, 7, 3, 3, s["glow"])         # 左眼（发光）
+    _put(im, 18, 7, 3, 3, s["glow"])         # 右眼
+    _put(im, 14, 12, 4, 1, dark)             # 嘴
+    # 躯干（方块）
+    _put(im, 7, 13, 18, 12, face)
+    _put(im, 7, 13, 18, 1, light)
+    # 砖缝：竖缝 + 错开横缝（立刻读成「砌起来的石头」）
+    _put(im, 15, 14, 1, 11, seam)
+    _put(im, 7, 17, 8, 1, seam)
+    _put(im, 16, 20, 9, 1, seam)
+    _put(im, 10, 16, 1, 3, seam)             # 裂缝
+    _put(im, 21, 18, 1, 3, seam)
+    # 手臂 + 拳头（贴躯干两侧，比躯干矮一档）
+    _sym(im, 3, 14, 4, 10, dark)
+    _sym(im, 3, 14, 4, 2, face)
+    _sym(im, 3, 23, 4, 2, dark)              # 拳头
+    # 腿（短，落地到最底行）
+    _sym(im, 9, 25, 5, 7, dark)
     return im
 
 
 def _mon_vampire(s) -> Image.Image:
-    """吸血鬼：高领 + 尖牙 + 红眼 + 下摆呈蝙蝠状的斗篷。斗篷的缺口是识别记号。"""
+    """吸血鬼（DQ「德拉库拉」风）：**竖起的高领尖角**（最标志性的剪影）+ 白脸 + 红眼獠牙。
+
+    与上一版的关键差别：上一版领子矮（6 行）脸小（8×7），整体读成「穿紫袍的幽灵」。
+    DQ 吸血鬼的剪影是**两片竖起的尖领**包住一张白脸 —— 领高接近脸高的一倍，
+    白脸与深领形成强对比，一眼认出「这是吸血鬼不是法师」。
+    """
     im = _mon_canvas()
     skin, cape, dark, light = s["body"], s["cape"], s["dark"], s["light"]
-    # 头发（美人尖）
-    _put(im, 4, 2, 8, 2, dark)
-    _put(im, 7, 4, 2, 1, dark)
-    # 高领 —— 竖起来的领子是吸血鬼最直白的记号
-    _sym(im, 3, 4, 2, 3, cape)
-    _sym(im, 3, 4, 2, 1, light)
-    # 脸
-    _put(im, 5, 4, 6, 4, skin)
-    _put(im, 6, 5, 1, 1, s["eye"])
-    _put(im, 9, 5, 1, 1, s["eye"])
-    # 獠牙
-    _put(im, 7, 7, 1, 1, MON_WHITE)
-    _put(im, 8, 7, 1, 1, MON_WHITE)
-    # 斗篷：上窄下宽，底缘挖出蝙蝠翼一样的凹口
-    _put(im, 3, 8, 10, 4, cape)
-    _put(im, 2, 12, 12, 2, cape)
-    _put(im, 2, 14, 12, 1, cape)
-    _put(im, 3, 15, 4, 1, cape)
-    _put(im, 9, 15, 4, 1, cape)  # 底缘缺口 → 剪影成「翼」
-    _put(im, 6, 8, 4, 3, light)  # 胸前的内衬
-    # 手（苍白的手从斗篷里伸出来）
-    _sym(im, 1, 10, 2, 2, skin)
+    cx = MON_W / 2
+    # 竖起的高领：两侧「尖朝上、底朝下」的三角，领尖上放高举的手 —— DQ 吸血鬼的招牌姿势
+    for k in range(9):                  # k=0 顶(尖) → 8 底(宽)
+        y = 5 + k
+        w = 2 + k // 3                  # 2 → 4
+        x = int(round(cx - 8 - k * 0.4))
+        _put(im, x, y, w, 1, cape)
+        _put(im, MON_W - x - w, y, w, 1, cape)
+        if k < 3:                       # 领尖受光
+            _put(im, x, y, 1, 1, light)
+            _put(im, MON_W - x - w, y, 1, 1, light)
+    # 高举的双手（苍白）：按在领尖外侧 —— DQ 吸血鬼就是「双手举起」的姿势
+    _put(im, int(round(cx - 10)), 3, 2, 3, skin)
+    _put(im, int(round(cx + 8)), 3, 2, 3, skin)
+    # 黑发（美人尖）
+    _put(im, int(round(cx - 4)), 5, 9, 2, dark)
+    _put(im, int(round(cx - 1)), 7, 3, 2, dark)
+    # 白脸（与深领强对比 —— 上一版败在脸太小太暗）
+    _put(im, int(round(cx - 4)), 7, 9, 8, skin)
+    _put(im, int(round(cx - 3)), 9, 2, 2, s["eye"])   # 红眼
+    _put(im, int(round(cx + 1)), 9, 2, 2, s["eye"])
+    _put(im, int(round(cx - 1)), 13, 3, 1, dark)      # 嘴
+    _put(im, int(round(cx - 2)), 13, 1, 2, MON_WHITE) # 獠牙
+    _put(im, int(round(cx + 1)), 13, 1, 2, MON_WHITE)
+    # 斗篷：钟形到脚，最底行满宽（落地断言）
+    for y in range(15, MON_H):
+        t = (y - 15) / (MON_H - 1 - 15)
+        w = int(round(16 + t * 14))     # 16 → 30
+        _put(im, int(round(cx - w / 2)), y, w, 1, cape)
+    _put(im, int(round(cx - 3)), 16, 6, 5, light)     # 胸前内衬
     return im
 
 
 def _mon_demon(s) -> Image.Image:
-    """魔王：巨角 + 发光眼 + 膜翼 + 獠牙。`crown` 给真身加王冠以区分两只。"""
+    """魔王（DQ 风）：巨角 + 发光眼 + 膜翼 + 獠牙 + 胸甲；`crown` 给真身加王冠以区分两只。"""
     im = _mon_canvas()
     body, dark, light = s["body"], s["dark"], s["light"]
-    # 巨角（往外上方弯）
-    _sym(im, 3, 1, 2, 3, MON_BONE)
-    _sym(im, 2, 1, 1, 2, MON_BONE)
-    # 膜翼
-    for x, y, w in [(1, 3, 2), (0, 4, 3), (0, 5, 3), (0, 6, 3), (1, 7, 2), (1, 8, 2)]:
-        _sym(im, x, y, w, 1, dark)
-    _sym(im, 1, 3, 2, 1, light)
+    cx = MON_W / 2
+    # 巨角（往外上方弯，骨色）
+    for k in range(9):
+        _put(im, int(round(cx - 4 - k * 0.7)), int(round(2 + k * 0.6)), 3, 2, MON_BONE)
+        _put(im, int(round(cx + 1 + k * 0.7)), int(round(2 + k * 0.6)), 3, 2, MON_BONE)
+    # 膜翼（两侧，从肩扇开，带指骨）
+    for side in (-1, 1):
+        bx = cx + side * 7
+        for k in range(1, 13):
+            x = int(round(bx + side * k * 0.9))
+            if x < 1 or x > MON_W - 2:
+                continue
+            up = int(round(7 - 4 * (k / 12)))
+            down = int(round(20 - (k / 12)))
+            if down < up + 3:
+                down = up + 3
+            col = dark if (k % 2 == 0) else body
+            for y in range(up, down + 1):
+                _put(im, x, y, 1, 1, col)
+            if k in (4, 8, 11):
+                _put(im, x, up, 1, down - up + 1, MON_BONE)
     # 头
-    _put(im, 5, 3, 6, 4, body)
-    _put(im, 6, 4, 2, 1, s["glow"])
-    _put(im, 9, 4, 2, 1, s["glow"])
-    _put(im, 6, 6, 4, 1, dark)
-    _put(im, 6, 7, 1, 1, MON_WHITE)
-    _put(im, 9, 7, 1, 1, MON_WHITE)
+    _ell(im, cx, 12, 6, 5, body)
+    _put(im, int(round(cx - 4)), 11, 2, 2, s["glow"])
+    _put(im, int(round(cx + 2)), 11, 2, 2, s["glow"])
+    _put(im, int(round(cx - 3)), 15, 6, 1, dark)     # 嘴
+    _put(im, int(round(cx - 2)), 16, 1, 2, MON_WHITE)  # 獠牙
+    _put(im, int(round(cx + 1)), 16, 1, 2, MON_WHITE)
     if s.get("crown"):
-        _put(im, 5, 1, 6, 1, s["crown"])
-        for x in (5, 7, 10):
-            _put(im, x, 0, 1, 1, s["crown"])
-            if x == 7:
-                _put(im, 8, 0, 1, 1, s["crown"])
+        _put(im, int(round(cx - 5)), 5, 10, 2, s["crown"])     # 冠圈
+        for sx in (int(round(cx - 5)), int(round(cx)), int(round(cx + 5))):
+            _put(im, sx, 2, 2, 3, s["crown"])                  # 三尖
     # 躯干 + 胸甲
-    _put(im, 4, 8, 8, 5, body)
-    _put(im, 6, 9, 4, 3, dark)
-    # 腿
-    _sym(im, 4, 13, 3, 3, dark)
+    _ell(im, cx, 22, 8, 8, body)
+    _ell(im, cx, 24, 5, 5, dark)
+    # 腿（落地到最底行）
+    _sym(im, int(round(cx - 9)), 28, 4, 4, dark)
     return im
 
 
@@ -2765,15 +3044,9 @@ def main() -> int:
     for code, (name, fn, src) in TERRAIN_TOP.items():
         push_terrain(f"{code}:top", name, fn(), src)
 
-    # 变体。墙的变体要在「去压顶的墙身」上生成，再把压顶合上去 ——
-    # 反过来（在带压顶的图上重排竖缝）会把压顶那三行也当成砖身画掉。
-    #
-    # ⚠️ 变体在**超采样之后**的 32 网格上生成：底图先 scale2x，再在其上重排竖缝、
-    # 撒杂质。这样杂质与竖缝的粒度是 1/32 而不是 1/16 —— 高网格带来的细节
-    # 主要来自这里（第三方位图本身没有更多信息可以放大出来）。
-    _base = {k: im for k, im, _ in terr_cells}
-    _wall_bodies = _wall_variants(terrain_raster(_base["1"]))
-    # 地板是手绘的，变体由配方直接生成（缝不动、只换碎石），不经过 supersample
+    # 变体由**配方**直接生成（缝不动、只换残缺），不经过 terrain_raster ——
+    # 地板与墙都是手绘的，本来就在出图网格上。
+    _wall_bodies = _wall_variants()
     for vi, im in enumerate(_floor_variants()):
         if vi:
             push_terrain(_variant_key("0", vi), f"floor#{vi}", im,
@@ -2781,11 +3054,11 @@ def main() -> int:
     for vi, im in enumerate(_wall_bodies):
         if vi:
             push_terrain(_variant_key("1", vi), f"wall#{vi}", im,
-                         f"由 TERRAIN[1] 派生：竖缝位置重排，砌层与配色不变（第 {vi} 号变体，32 网格）")
+                         f"由 TERRAIN[1] 派生：砌层与错缝一致，残缺换一批位置（第 {vi} 号变体）")
     for vi, body in enumerate(_wall_bodies):
         if vi:
             push_terrain(f"1:top:{vi}", f"wallTop#{vi}", _wall_top_baked(body),
-                         f"由 TERRAIN_TOP[1] 派生：墙身换变体后重新合成压顶（第 {vi} 号变体）")
+                         f"由 TERRAIN_TOP[1] 派生：墙身换变体后重新压顶（第 {vi} 号变体）")
 
     # 变体数量写进 MANIFEST —— 渲染层据此决定哈希取模，不写死常量
     manifest["meta"]["terrainVariants"] = {
