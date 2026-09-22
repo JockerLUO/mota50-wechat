@@ -13,8 +13,10 @@ build-assets.py —— 把 assets/raw 下的原始素材，加工成游戏真正
 三条硬规则
 ----------
 1. raw/ 只读。任何变换都在这里用代码表达，绝不手工修图 —— 否则重跑就冲掉了。
-2. 保持 16px 基准。输出的精灵是 16×16（大家伙是 32×32），运行时按 2 倍整数
-   放大到 32px 的格子。整数倍最近邻放大，像素画不会被插值糊掉。
+2. 保持 16px **绘制**网格。手绘与程序化坐标都写在这套网格上；出图时统一
+   Scale2x 升到 32px 网格（超采样 SS=2），运行时 1:1 画进 32px 的格子 ——
+   落屏的设计像素数不变，但一个素材像素占的设备像素从 ~5.4 降到 ~2.7。
+   整数倍最近邻放大，像素画不会被插值糊掉。
 3. 找不到源就明说。不猜、不硬塞，manifest 里如实标 generated 或 null，
    渲染层据此回退到程序化矢量图形（src/render/icons.ts）。
 
@@ -37,6 +39,7 @@ import os
 import random
 import re
 import sys
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -54,10 +57,27 @@ RAW = ROOT / "assets" / "raw"
 ATLAS_DIR = ROOT / "assets" / "atlas"
 PREVIEW_DIR = ROOT / "assets" / "preview"
 
-BASE_TILE = 16          # 精灵的基准边长
-CELL = 32               # 游戏棋盘的格子边长（= BASE_TILE × 2）
-DRAW_SCALE = 2          # 常规绘制倍数
-BIG_SCALE = 3           # 「大家伙」绘制倍数（仍是整数，像素不糊）
+BASE_TILE = 16          # 精灵的**绘制网格**边长（所有手绘 / 程序化坐标都在这套网格上）
+CELL = 32               # 游戏棋盘的格子边长（设计像素，不随素材网格变化）
+
+# ── 超采样：让「落屏像素点」更密 ─────────────────────────────────
+# 素材画在 16 网格上、运行时 ×2 放大到 32px 的格子；在 dpr=3 的手机上，
+# **一个素材像素要占 ~5.4 个设备像素** —— 画面的颗粒感来源就是这个，不是渲染器。
+# 所以「更精细」要做的是**在 32 网格上出图**：帧尺寸 ×SS、drawScale ÷ SS，
+# 落屏的设计像素数一点不变（verify-visual 的 A17 断言这件事）。
+#
+# 放大算法必须是 Scale2x 而不是双线性：它按 4 邻域决定 2×2 块里的对角填充，
+# 消掉阶梯锯齿的同时**保留硬边**，像素画不会变糊。
+#   第三方位图 —— 由此获得平滑的轮廓（锯齿是「粗」最主要的观感来源）；
+#   程序化微细节（变体杂质、砖缝）—— 改到**放大之后**再生成，
+#   粒度因此从 1/16 变成 1/32，那才是真正多出来的细节。
+SS = 2
+SS_PASSES = SS.bit_length() - 1     # 2 → 1 次 Scale2x
+RASTER_TILE = BASE_TILE * SS        # 32：图集里瓦片的边长
+DRAW_SCALE = 1                      # 帧已经是落屏网格，不再放大
+BIG_SCALE = 3                       # 「大家伙」：仍是 16 网格 ×3。它不参与超采样 ——
+                                    # 32×1.5 是非整数倍，会让「有的像素占 2 个、
+                                    # 有的占 1 个」，体型最大的怪反而最毛躁。
 
 # ─────────────────────────────────────────────────────────────────────
 # 一、工具：调色板变换
@@ -323,6 +343,86 @@ def bottom_center(im: Image.Image, cw: int, ch: int) -> Image.Image:
     return canvas
 
 
+def scale2x(im: Image.Image) -> Image.Image:
+    """
+    像素画专用放大 ×2（AdvMAME Scale2x）。
+
+    每个源像素展开成 2×2，块内四个格子的取值由 4 邻域决定：
+
+        A B C
+        D E F        E0 = D 当 D==B      否则 E
+        G H I        E1 = F 当 B==F      否则 E
+                     E2 = D 当 D==H      否则 E
+                     E3 = F 当 H==F      否则 E
+
+    于是斜向的阶梯会被「抹平」成真正的斜边，而直边（B==H 或 D==F）保持不动 ——
+    这正是像素画要的：**去锯齿但不插值**。双线性会把整张图糊成一团，
+    NEAREST 则什么都不做，只有 Scale2x 两者都不占。
+    """
+    im = im.convert("RGBA")
+    w, h = im.size
+    src = im.load()
+    out = Image.new("RGBA", (w * 2, h * 2))
+    dst = out.load()
+
+    def at(x: int, y: int):
+        # 越界一律当作「和中心同色」：不这样写，边缘像素会凭空长出一条边框
+        return src[x, y] if 0 <= x < w and 0 <= y < h else None
+
+    for y in range(h):
+        for x in range(w):
+            E = src[x, y]
+            B, D, F, H = at(x, y - 1), at(x - 1, y), at(x + 1, y), at(x, y + 1)
+            B = E if B is None else B
+            D = E if D is None else D
+            F = E if F is None else F
+            H = E if H is None else H
+            x0, y0 = x * 2, y * 2
+            if B != H and D != F:
+                dst[x0, y0] = D if D == B else E
+                dst[x0 + 1, y0] = F if B == F else E
+                dst[x0, y0 + 1] = D if D == H else E
+                dst[x0 + 1, y0 + 1] = F if H == F else E
+            else:
+                dst[x0, y0] = dst[x0 + 1, y0] = dst[x0, y0 + 1] = dst[x0 + 1, y0 + 1] = E
+    return out
+
+
+def supersample(im: Image.Image) -> Image.Image:
+    """
+    把 16 网格的帧搬到 32 网格（SS 倍）。
+
+    已经是 32 网格的（0x72 的门原本就是 32×32）**原样返回** ——
+    再放大一次会落到 64，而地形精灵是按格子宽度画的，64 又被压回 32，
+    等于白丢一半像素还多绕一步。
+    """
+    if im.width >= RASTER_TILE and im.height >= RASTER_TILE:
+        return im
+    out = im
+    for _ in range(SS_PASSES):
+        out = scale2x(out)
+    return out
+
+
+def _mon_out(im: Image.Image, scale: int) -> Image.Image:
+    """
+    怪物的出图帧：常规怪升到 32 网格，「大家伙」保持 16 网格 ×3。
+
+    后者不参与超采样是刻意的：32 × 1.5 是非整数倍，会出现「有的像素占 2 个
+    屏幕像素、有的只占 1 个」，体型最大的几只反而最毛躁。
+    """
+    return im if scale == BIG_SCALE else supersample(im)
+
+
+def _out_scale(scale: int) -> int:
+    """
+    MONSTERS 表里写的倍数是对**绘制网格**（16）而言的；出图网格翻了 SS 倍，
+    倍数要同步除掉，落屏的设计像素数才不变（16×2 = 32 = 32×1）。
+    「大家伙」不走这条路 —— 它没有超采样，倍数自然也不用动。
+    """
+    return BIG_SCALE if scale == BIG_SCALE else scale // SS
+
+
 # ─────────────────────────────────────────────────────────────────────
 # 四、素材源
 # ─────────────────────────────────────────────────────────────────────
@@ -487,6 +587,10 @@ TERRAIN = {
 def _wall_top_baked(body: Image.Image | None = None) -> Image.Image:
     body = o72("wall_mid") if body is None else body
     cap = o72("wall_top_mid").transpose(Image.FLIP_TOP_BOTTOM)
+    # 变体的墙身是 32 网格（超采样之后才生成变体），压顶必须跟着翻倍，
+    # 否则压顶只盖住上半个格子 —— 从外面看就是「墙顶缺了一条」。
+    if cap.width != body.width:
+        cap = supersample(cap)
     out = body.copy()
     out.alpha_composite(cap)
     return out
@@ -521,7 +625,12 @@ TERRAIN_TOP = {
 VARIANT_SEED = 20260921  # 固定种子：变体必须可重跑，不能每次构建都换一批
 FLOOR_VARIANTS = 6       # 含底图本身（键 `0`；其余是 `0:1` … `0:5`）
 WALL_VARIANTS = 5        # 含底图本身（键 `1`；其余是 `1:1` … `1:4`）
-WALL_COURSE = 4          # 墙四行一层：高光边 / 砖身 / 砖身 / 横缝
+
+# 变体一律在**超采样之后**的 32 网格上生成（main() 里传进来的就是 32×32 的底图）。
+# 于是砌层厚度按 SS 同步放大（砖还是那么大，不然变体会和底图的砖对不上），
+# 而**竖缝与杂质都是 1px** —— 它们的粒度从 1/16 变 1/32，这才是新多出来的细节。
+WALL_COURSE = 4 * SS     # 墙八行一层：高光边 / 砖身 ×6 / 横缝（16 网格上是 4 行）
+SPECKLE = SS * SS        # 面积变 4 倍，杂质数量同步 ×4 才维持同样的疏密
 
 
 def _hist(im: Image.Image) -> dict:
@@ -585,10 +694,10 @@ def _floor_variants(base: Image.Image) -> list[Image.Image]:
             for q in rng.sample(pts, n):  # 缺口数量不变，只换位置
                 p[q] = bead
         # 小杂质（石子 / 磨痕）：数量刻意很少 —— 撒多了就成麻点，比重复更难看
-        for _ in range(rng.randint(2, 3)):
+        for _ in range(rng.randint(2 * SPECKLE, 3 * SPECKLE)):
             p[(rng.randrange(2, w - 2), rng.randrange(2, h - 2))] = bead_dark
         if vi % 2 == 0:
-            for _ in range(rng.randint(1, 2)):
+            for _ in range(rng.randint(1 * SPECKLE, 2 * SPECKLE)):
                 p[(rng.randrange(2, w - 2), rng.randrange(2, h - 2))] = bead_light
         out.append(im)
     return out
@@ -602,8 +711,26 @@ def _wall_palette(base: Image.Image) -> tuple[tuple, tuple, tuple]:
     return colors[0], colors[1], colors[2]
 
 
+def _row_major(row: list, skip: tuple) -> tuple:
+    """一行里出现最多、且不是 `skip` 的那个颜色。缝挪走之后要拿它补位。"""
+    cnt = Counter(c for c in row if c != skip)
+    return cnt.most_common(1)[0][0] if cnt else row[0]
+
+
 def _wall_variants(base: Image.Image) -> list[Image.Image]:
-    """墙变体：砌层结构不变，只重排竖缝位置。"""
+    """
+    墙变体：砌层结构不变，只把**竖缝整段平移**到别的位置。
+
+    ⚠️ 这里必须是「挪像素」而不是「按配方重画一层墙」。
+    上一版是后者（每行先铺 hi/body 再点缝），在 16 网格上勉强压在 1/255 以内；
+    换到 32 网格后立刻崩 —— 底图经 Scale2x 之后，缝色的像素占比本来就和
+    「配方」算出来的不一样（实测差 2~3/255、偏离 84~116 个像素）。
+    按配方重画等于拿一个**近似**去对底图，网格越密差得越明显。
+
+    改成整段平移之后，每一行的颜色多重集与底图**逐行相同**：
+    逐通道平均色差恒为 0，像素偏离数恒为 0，断言量到的是「缝有没有动」，
+    而不是「两种砌法差多少」。
+    """
     w, h = base.size
     hi, body, joint = _wall_palette(base)
     out = [base]
@@ -612,22 +739,27 @@ def _wall_variants(base: Image.Image) -> list[Image.Image]:
         im = base.copy()
         p = im.load()
         for c0 in range(0, h - WALL_COURSE + 1, WALL_COURSE):
-            xs = sorted(rng.sample(range(w), rng.choice((2, 3))))
-            for dy in range(WALL_COURSE - 1):
+            # 同一层用同一个位移，缝才是「整段错开」而不是「各错各的」——
+            # 后者看上去像墙面长了麻点，不像砌法。
+            shift = rng.randrange(1, w)
+            for dy in range(WALL_COURSE):
                 y = c0 + dy
-                row = hi if dy == 0 else body
-                for x in range(w):
-                    p[(x, y)] = row
-                for x in xs:
-                    p[(x, y)] = joint  # 竖缝贯穿本层的高光边与砖身
-            # 横缝整行都是暗色 → 跨瓦片天然连续，砌层不会错位
-            for x in range(w):
-                p[(x, c0 + WALL_COURSE - 1)] = joint
-            # 原图本来就有「只出现在砖身下沿的短竖缝」，保留一点这种不对称
+                row = [p[(x, y)] for x in range(w)]
+                slots = [x for x, c in enumerate(row) if c == joint]
+                if not slots or len(slots) >= w:
+                    continue        # 整行都是暗色的横缝，没什么可挪的
+                fill = _row_major(row, joint)
+                for x in slots:
+                    p[(x, y)] = fill
+                for x in slots:
+                    p[((x + shift) % w, y)] = joint
+            # 「只出现在砖身下沿的短竖缝」是原图自带的一点不对称，保留它。
+            # 用**交换**而不是改色 —— 交换不动任何颜色的计数，断言依旧恒绿。
             if rng.random() < 0.5:
                 x = rng.randrange(w)
-                if x not in xs:
-                    p[(x, c0 + WALL_COURSE - 2)] = joint
+                y1 = c0 + rng.randrange(WALL_COURSE - 1)
+                y2 = y1 + 1
+                p[(x, y1)], p[(x, y2)] = p[(x, y2)], p[(x, y1)]
         out.append(im)
     return out
 
@@ -2287,7 +2419,9 @@ def verify_terrain(cells: dict) -> list[str]:
     #      对应「难看」的那一条，①② 是它的两道护栏。
     # 墙顶(1:top) 的上限放宽：它是把压顶 alpha 合成到换过砖身的底上，
     # 而压顶有半透明像素，合成结果天然会比纯重排多动一些像素。
-    for family, drift_cap in (("0", 8), ("1", 8), ("1:top", 24)):
+    # 上限按 SS² 放大：瓦片像素数变 4 倍，同样「相对幅度」的重排/杂质绝对量
+    # 也是 4 倍 —— 不跟着放，这条断言就会只因为换了网格而红。
+    for family, drift_cap in (("0", 8 * SPECKLE), ("1", 8 * SPECKLE), ("1:top", 24 * SPECKLE)):
         keys = [k for k in cells if k == family or k.startswith(family + ":")]
         if family == "1":  # `1:top` 自成一族，别混进来
             keys = [k for k in keys if not k.startswith("1:top")]
@@ -2511,6 +2645,8 @@ def main() -> int:
             "generatedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "generator": "tools/build-assets.py",
             "baseTile": BASE_TILE,
+            "rasterTile": RASTER_TILE,
+            "supersample": SS,
             "cell": CELL,
             "drawScale": DRAW_SCALE,
             "bigScale": BIG_SCALE,
@@ -2540,16 +2676,20 @@ def main() -> int:
 
     # 变体。墙的变体要在「去压顶的墙身」上生成，再把压顶合上去 ——
     # 反过来（在带压顶的图上重排竖缝）会把压顶那三行也当成砖身画掉。
+    #
+    # ⚠️ 变体在**超采样之后**的 32 网格上生成：底图先 scale2x，再在其上重排竖缝、
+    # 撒杂质。这样杂质与竖缝的粒度是 1/32 而不是 1/16 —— 高网格带来的细节
+    # 主要来自这里（第三方位图本身没有更多信息可以放大出来）。
     _base = {k: im for k, im, _ in terr_cells}
-    _wall_bodies = _wall_variants(_base["1"])
-    for vi, im in enumerate(_floor_variants(_base["0"])):
+    _wall_bodies = _wall_variants(supersample(_base["1"]))
+    for vi, im in enumerate(_floor_variants(supersample(_base["0"]))):
         if vi:
             push_terrain(_variant_key("0", vi), f"floor#{vi}", im,
-                         f"由 TERRAIN[0] 派生：倒角缺口重排 + 同色小杂质（第 {vi} 号变体）")
+                         f"由 TERRAIN[0] 派生：倒角缺口重排 + 同色小杂质（第 {vi} 号变体，32 网格）")
     for vi, im in enumerate(_wall_bodies):
         if vi:
             push_terrain(_variant_key("1", vi), f"wall#{vi}", im,
-                         f"由 TERRAIN[1] 派生：竖缝位置重排，砌层与配色不变（第 {vi} 号变体）")
+                         f"由 TERRAIN[1] 派生：竖缝位置重排，砌层与配色不变（第 {vi} 号变体，32 网格）")
     for vi, body in enumerate(_wall_bodies):
         if vi:
             push_terrain(f"1:top:{vi}", f"wallTop#{vi}", _wall_top_baked(body),
@@ -2562,10 +2702,16 @@ def main() -> int:
         "1:top": WALL_VARIANTS,
     }
 
+    # 出图这一步才升到 32 网格。变体在上面已按 32 网格生成，supersample 会原样放过。
+    terr_cells = [(k, supersample(im), info) for k, im, info in terr_cells]
+
+    # 断言跑在**出图网格**（32）上：变体是在 32 网格上生成的，底图必须同网格，
+    # 否则「像素偏离数」会被尺寸差直接顶穿（实测恒差 768 = 1024−256），
+    # 那条断言就变成了在量网格而不是量配色。
+    terr_by_key = {k: im for k, im, _ in terr_cells}
+
     for _, im, _ in terr_cells:
         terr_shelf.add(im)
-
-    terr_by_key = {k: im for k, im, _ in terr_cells}
     terr_sheet, terr_entries = terr_shelf.render()
     for (key, im, info), e in zip(terr_cells, terr_entries):
         terr_sheet.paste(im, (e["x"], e["y"]), im)
@@ -2620,6 +2766,9 @@ def main() -> int:
     # 「NPC 比勇者大」同理 —— 两边都是 16×26 的帧，只有量内容包围盒才知道差了 4px
     for p in verify_npc_scale(npc_rendered, hero_walk_frames):
         missing.append("NPC 比例断言失败：" + p)
+
+    # NPC 比例断言跑完（它按 16×26 判），才把角色帧升到 32 网格
+    actor_cells = [(k, supersample(im)) for k, im in actor_cells]
 
     actor_shelf = Shelf(512)
     actor_place = []
@@ -2677,12 +2826,13 @@ def main() -> int:
             frames = mon_art_frames(mid)
             for anim in ("idle", "run"):
                 for fi, im in enumerate(frames):
+                    im = _mon_out(im, scale)          # 出图网格；artH 必须按出图后量
                     top, bot = _art_rows(im)
                     mon_cells.append((f"{mid}.{anim}.{fi}", im))
                     mon_meta.append({
                         "monster": mid, "anim": anim, "frame": fi,
                         "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
-                        "note": note, "drawScale": scale,
+                        "note": note, "drawScale": _out_scale(scale),
                         "artH": bot - top + 1, "artPadBottom": im.height - 1 - bot,
                     })
             continue
@@ -2703,11 +2853,13 @@ def main() -> int:
                 # 它们的像素密度本来就是别家的两倍，按原尺寸画反而显小，归一化才是对的。
                 if im.size != (BASE_TILE, BASE_TILE):
                     im = im.resize((BASE_TILE, BASE_TILE), Image.NEAREST)
+                im = _mon_out(im, scale)
                 top, bot = _art_rows(im)
                 art_bbox = (bot - top + 1, im.height - 1 - bot)
                 mon_cells.append((f"{mid}.{anim}.{fi}", im))
                 mon_meta.append({"monster": mid, "anim": anim, "frame": fi,
-                                 "src": f"0x72/{src_name}", "note": eff_note, "drawScale": scale,
+                                 "src": f"0x72/{src_name}", "note": eff_note,
+                                 "drawScale": _out_scale(scale),
                                  "artH": art_bbox[0], "artPadBottom": art_bbox[1]})
 
     mon_shelf = Shelf(512)
@@ -2815,6 +2967,14 @@ def main() -> int:
         item_cells.append((iid, im))
         item_meta.append({"item": iid, "src": src})
 
+    # 三色钥匙是「颜色即玩法」，而黄钥匙是构建期造出来的（原素材没有），
+    # 最容易在换素材时悄悄跑偏 —— 断言而不是靠眼看。
+    # 顺序要紧：先按 16 网格判（判据就是照 16 写的），再升网格出图。
+    for p in verify_items(dict(item_cells), ken(126)):
+        missing.append("道具断言失败：" + p)
+
+    item_cells = [(k, supersample(im)) for k, im in item_cells]
+
     for key, im in item_cells:
         item_shelf.add(im)
     item_sheet, item_entries = item_shelf.render()
@@ -2822,11 +2982,6 @@ def main() -> int:
         item_sheet.paste(im, (e["x"], e["y"]), im)
         meta.update({"atlas": "items", "x": e["x"], "y": e["y"], "w": im.width, "h": im.height})
     item_sheet.save(ATLAS_DIR / "items.png")
-
-    # 三色钥匙是「颜色即玩法」，而黄钥匙是构建期造出来的（原素材没有），
-    # 最容易在换素材时悄悄跑偏 —— 断言而不是靠眼看
-    for p in verify_items(dict(item_cells), ken(126)):
-        missing.append("道具断言失败：" + p)
 
     for m in item_meta:
         manifest["items"][m["item"]] = {

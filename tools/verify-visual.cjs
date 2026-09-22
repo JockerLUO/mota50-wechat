@@ -32,6 +32,8 @@
  *   A14 攻击动画：挥剑全程勇者精灵的形体和尺寸**不变**，靠 `attackFx` 的时间轴演
  *   A15 对话折行：台词折行不超卡片内宽、不以收尾标点开头（中文行首禁则）
  *   A16 上下楼梯：两张瓦片既不逐像素相同、也不互为上下翻转，且形体走向各就各位
+ *   A17 像素密度：图集帧升到 32 网格（原始素材 ×2）、drawScale 减半，落屏尺寸不变
+ *   A18 文字光栅化分辨率跟随设备像素比（dsf=3 时必须是 3，写死 2 会挂）
  *
  * 用法：node tools/verify-visual.cjs [--verbose]（先 npm run build）
  */
@@ -690,7 +692,7 @@ function check(name, ok, detail) {
     const notSeen = shouldSee.filter((id) => !seenMon.has(id));
     const uids = [...monUids].filter((u) => u !== null);
     check(
-      `A12 手绘怪物：${shouldSee.length} 只全部落在一张图集上（帧 16×16 与 MANIFEST 一致）`,
+      `A12 手绘怪物：${shouldSee.length} 只全部落在一张图集上（帧 ${MANIFEST.meta.rasterTile}×${MANIFEST.meta.rasterTile} 与 MANIFEST 一致）`,
       handDrawn.length >= 10 &&
         fellBack.length === 0 &&
         frameBad.length === 0 &&
@@ -1083,6 +1085,132 @@ function check(name, ok, detail) {
         `（${stair ? (stair.upCols[0] ?? 0).toFixed(2) : '?'} → ${stair ? (stair.upCols[stair.upCols.length - 1] ?? 0).toFixed(2) : '?'}）互为不同形体`,
       stairBad.length === 0,
       stairBad.slice(0, 3).join(' | ') || `${tDown.src} ／ ${tUp.src}`
+    );
+
+    // ── A17 像素密度：网格翻倍，但落屏尺寸一点不变 ──
+    //
+    // 「画面更精细」有两条路，代价差一个量级，容易走错：
+    //   ① 把设计稿放大 —— 五块面板全部重排，版面与断言跟着动一片；
+    //   ② 把**素材网格**翻倍 —— 出图从 16 网格升到 32 网格，drawScale 相应减半，
+    //      落屏的设计像素数不变（16×2 = 32×1）。
+    // 这一版走 ②。所以这条断言要同时钉住两件事，缺一条就是假的：
+    //   密 —— 图集帧的边长必须是原始素材的 supersample 倍（真的多画了像素）；
+    //   不变 —— 帧边长 × drawScale 必须仍等于格子边长（否则版面全歪）。
+    //
+    // 光看画面分不出这两件事：32 网格的图按 1:1 画、和 16 网格的图按 2× 画，
+    // 落屏**一模一样**。所以只能靠断言，不能靠眼看。
+    const meta = MANIFEST.meta ?? {};
+    const ss = Number(meta.supersample ?? 1);
+    const rasterTile = Number(meta.rasterTile ?? meta.baseTile ?? 16);
+    const cell = Number(meta.cell ?? 32);
+    const densBad = [];
+    if (ss < 2) densBad.push(`MANIFEST.supersample=${ss} —— 图集仍是绘制网格，没有超采样`);
+    if (rasterTile !== Number(meta.baseTile) * ss) {
+      densBad.push(`rasterTile(${rasterTile}) ≠ baseTile(${meta.baseTile}) × supersample(${ss})`);
+    }
+    // 逐条地形帧：边长 = rasterTile，且 drawScale = 1（1 个素材像素 = 1 个设计像素）
+    const thinTerrain = Object.entries(MANIFEST.terrain).filter(
+      ([k, v]) => v && (v.w !== rasterTile || v.h !== rasterTile || v.drawScale !== 1)
+    );
+    if (thinTerrain.length) {
+      densBad.push(
+        `地形帧没有全部升到 ${rasterTile} 网格 / drawScale=1：` +
+          thinTerrain.slice(0, 3).map(([k, v]) => `${k}=${v.w}×${v.h}×${v.drawScale}`).join(' ')
+      );
+    }
+    // 角色：走路帧宽 = rasterTile、drawScale = 1（勇者落屏必须还是 32×52）
+    const heroNode = MANIFEST.actors?.hero;
+    const heroFrame0 = heroNode?.walk?.down?.[0];
+    if (!heroFrame0 || heroFrame0.w !== rasterTile || heroNode.drawScale !== 1) {
+      densBad.push(`勇者帧 ${heroFrame0?.w}×${heroFrame0?.h} × drawScale ${heroNode?.drawScale} —— 不是 ${rasterTile} 网格 1:1`);
+    }
+    // 怪物：非「大家伙」帧宽 = rasterTile 且落屏 = 一格；大家伙维持 16 网格 ×3
+    const monBad = [];
+    for (const [id, node] of Object.entries(MANIFEST.monsters)) {
+      if (!node) continue;
+      const onScreen = node.frame.w * node.drawScale;
+      if (node.drawScale === meta.bigScale) {
+        if (node.frame.w !== Number(meta.baseTile)) {
+          monBad.push(`${id} 是大家伙却已是 ${node.frame.w} 网格（应当维持 ${meta.baseTile}）`);
+        }
+      } else if (node.frame.w !== rasterTile || onScreen !== cell) {
+        monBad.push(`${id} ${node.frame.w}×${node.drawScale}=${onScreen}（应 ${rasterTile}×1=${cell}）`);
+      }
+    }
+    if (monBad.length) densBad.push(`怪物网格/落屏不对：${monBad.slice(0, 3).join(' ')}`);
+
+    // 「密」的实证：拿发布出去的图集帧，和**第三方原始素材**比边长。
+    // 只看 MANIFEST 的数字等于只信构建脚本的自述；这里量的是两张真图。
+    const rawFloor = path.join(ROOT, 'assets/raw/0x72/frames/floor_1.png');
+    let rawCmp = null;
+    if (fs.existsSync(rawFloor) && terrainPng) {
+      const rawB64 = fs.readFileSync(rawFloor).toString('base64');
+      const atlasB64 = fs.readFileSync(path.join(DIST, 'assets', terrainPng)).toString('base64');
+      rawCmp = await page.evaluate(
+        async ({ raw, atlas, rect }) => {
+          const side = async (b64) => {
+            const bin = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+            const bmp = await createImageBitmap(new Blob([bin], { type: 'image/png' }));
+            return { w: bmp.width, h: bmp.height };
+          };
+          return { raw: await side(raw), frame: rect };
+        },
+        { raw: rawB64, atlas: atlasB64, rect: { w: MANIFEST.terrain['0'].w, h: MANIFEST.terrain['0'].h } }
+      );
+      if (rawCmp.frame.w !== rawCmp.raw.w * ss) {
+        densBad.push(
+          `地砖帧 ${rawCmp.frame.w} ≠ 原始 floor_1 ${rawCmp.raw.w} × ${ss} —— 网格没有真的翻倍`
+        );
+      }
+    } else {
+      densBad.push(`找不到 ${path.relative(ROOT, rawFloor)} 或发布图集，无法核对网格`);
+    }
+
+    // 「不变」的实证：量落屏的勇者。A14 已经量过形体，这里量的是**尺寸数值** ——
+    // 网格翻倍若把落屏一起放大了，这里会立刻变成 64×104。
+    const heroNow = await page.evaluate(() => window.mota.game.board.__hero());
+    if (!heroNow || Math.round(heroNow.size.w) !== 32 || Math.round(heroNow.size.h) !== 52) {
+      densBad.push(`勇者落屏 ${heroNow ? `${heroNow.size.w}×${heroNow.size.h}` : '?'} —— 应当是 32×52（与翻倍前一致）`);
+    }
+
+    check(
+      `A17 像素密度：图集 ${rasterTile} 网格（原始 ${meta.baseTile} ×${ss}）、drawScale=${meta.drawScale}，` +
+        `落屏勇者仍 ${heroNow ? `${Math.round(heroNow.size.w)}×${Math.round(heroNow.size.h)}` : '?'}`,
+      densBad.length === 0,
+      densBad.slice(0, 3).join(' | ') ||
+        `地砖 ${rawCmp ? `${rawCmp.raw.w} → ${rawCmp.frame.w}` : '?'}，格子 ${cell}px 不变`
+    );
+
+    // ── A18 文字光栅化分辨率跟随屏幕 ──
+    //
+    // 这一条以前是**写死 2**：手机 dpr=3，文字按 2× 光栅化后上屏还要再拉 1.5 倍。
+    // 中文笔画细，这一道拉伸就是「面板文字发虚」的全部来源，而且它影响的是每一块面板。
+    // 只在本页（dsf=2）断言会恒绿 —— 写死 2 也能过。所以**另开一个 dsf=3 的页面**：
+    // 那里期望值必须是 3，写死 2 的实现会当场挂掉。
+    const trBad = [];
+    const main = await page.evaluate(() => window.mota.game.__probe());
+    const expectMain = Math.min(3, Math.max(2, Math.round(main.resolution)));
+    if (main.textResolution !== expectMain) {
+      trBad.push(`dsf=${main.resolution}：文字分辨率 ${main.textResolution}，应为 ${expectMain}`);
+    }
+    const page3 = await browser.newPage({ viewport: { width: 420, height: 1024 }, deviceScaleFactor: 3 });
+    let hi = null;
+    try {
+      await page3.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'load', timeout: 30000 });
+      await page3.waitForFunction(() => !!(window.mota && window.mota.game), null, { timeout: 20000 });
+      hi = await page3.evaluate(() => window.mota.game.__probe());
+    } finally {
+      await page3.close();
+    }
+    if (!hi) trBad.push('dsf=3 的页面没能起来，无法验证高像素比下的文字分辨率');
+    else if (hi.resolution !== 3) trBad.push(`dsf=3 的页面报出的 resolution=${hi.resolution}，设备像素比没生效`);
+    else if (hi.textResolution !== 3) {
+      trBad.push(`dsf=3 时文字仍按 ${hi.textResolution}× 光栅化 —— 又被拉伸了 3/${hi.textResolution} 倍`);
+    }
+    check(
+      `A18 文字分辨率跟随屏幕：dsf=${main.resolution} → ${main.textResolution}×，dsf=3 → ${hi ? hi.textResolution : '?'}×`,
+      trBad.length === 0,
+      trBad.slice(0, 3).join(' | ') || '两个像素比下都等于屏幕的 dpr'
     );
 
     check('无控制台错误', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | ') || '干净');

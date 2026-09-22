@@ -42,6 +42,8 @@ import {
   Toolbar,
   boardBox,
   label,
+  setTextResolution,
+  textResolution,
   type BattleLike,
   type DetailTarget
 } from './render/hud';
@@ -187,6 +189,10 @@ export class Game {
     });
     sh.attach(app.canvas);
 
+    // 文字按**屏幕**的分辨率光栅化。写死 2 时，dpr=3 的手机上所有中文都被拉伸过
+    // 一道 —— 这一行就是「面板文字发虚」的全部来源。必须在建任何 Text 之前设。
+    setTextResolution(app.renderer.resolution);
+
     const game = new Game(app, data);
     sh.onKey((key) => game.onKey(key));
     sh.onResize(() => game.resize());
@@ -263,6 +269,9 @@ export class Game {
       // 换成名字后，`=== 'webgl'` 这个断言不需要任何额外解释。
       rendererType: RendererType[this.app.renderer.type]?.toLowerCase() ?? `unknown(${this.app.renderer.type})`,
       resolution: this.app.renderer.resolution,
+      // 文字光栅化分辨率。它必须与 `resolution`（设备像素比）一致 ——
+      // 写死 2 而屏幕是 3 时，每一块面板上的中文都会被拉伸过一道，画面看着就「虚」。
+      textResolution: textResolution(),
       screen: { w: this.app.renderer.width, h: this.app.renderer.height },
       // 图集是不是**真的**加载成功了。
       //

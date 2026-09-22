@@ -123,13 +123,21 @@ python3 tools/preview-board.py    # 目视核对用的对照图
 
 ## 6. 四条关键设计决策
 
-### 6.1 16px 基准 + 2 倍整数放大
+### 6.1 16px 绘制基准 + 超采样出图（×2）+ 1:1 落屏
 
-棋盘格子是 **32px**（`LAYOUT.board.cell`），素材基准是 **16×16**，
-运行时按 **×2 整数倍最近邻**绘制。整数倍是关键：非整数倍会把像素画的
-硬边插值成糊边，整套素材的「像素感」当场消失。
+棋盘格子是 **32px**（`LAYOUT.board.cell`），手绘 / 程序化坐标都写在 **16×16 的
+绘制网格**上；**出图时统一 Scale2x 升到 32px 网格**（`SS = 2`），运行时
+**1:1 最近邻**画进格子。落屏的设计像素数不变（16×2 = 32×1），但一个素材像素
+占的设备像素从 ~5.4 降到 ~2.7 —— 这是「画面更精细」的来源，详见
+`ui-prototype.md` §20。
+
+为什么是 Scale2x 而不是双线性：它按 4 邻域决定 2×2 块内的对角填充，
+斜向阶梯被抹成真正的斜边、直边原样保留 —— **去锯齿但不插值**。
+双线性会把硬边糊掉，NEAREST 则什么都不做。
 
 「大家伙」用 **×3 = 48px**，溢出格子 8px —— 仍然是整数倍，像素依旧清晰。
+它**刻意不参与超采样**：32 × 1.5 是非整数倍，会出现「有的像素占 2 个屏幕像素、
+有的只占 1 个」，体型最大的几只反而最毛躁。
 
 ### 6.2 怪物靠「调色板变体」成族，而不是逐个重画
 
@@ -186,7 +194,8 @@ orc / orcWarrior ·  bat / bigBat / vampireBat ·  knight / knightCaptain / dark
 
 0x72 里 `ogre` / `big_demon` / `big_zombie` 是 **32×32**（像素密度是别家的两倍）。
 如果原样混入，`drawScale=3` 会算成 **96px（整整 3 格）**。
-所以构建时强制归一化到 16×16，**落屏尺寸只由 `drawScale` 决定**。
+所以构建时强制归一化到 16×16（绘制网格），**落屏尺寸只由 `drawScale` 决定**。
+（常规怪出图时再超采样到 32 网格、倍数同步除掉，见 §6.1。）
 
 ---
 
@@ -284,10 +293,11 @@ orc / orcWarrior ·  bat / bigBat / vampireBat ·  knight / knightCaptain / dark
 
 ```jsonc
 {
-  "meta": { "baseTile": 16, "cell": 32, "drawScale": 2, "bigScale": 3, "atlases": { … } },
+  "meta": { "baseTile": 16, "rasterTile": 32, "supersample": 2, "cell": 32,
+            "drawScale": 1, "bigScale": 3, "atlases": { … } },
 
   "terrain": {
-    "0":  { "atlas": "terrain", "x": 0,  "y": 0, "w": 16, "h": 16, "drawScale": 2,
+    "0":  { "atlas": "terrain", "x": 0,  "y": 0, "w": 32, "h": 32, "drawScale": 1,
             "name": "floor", "src": "0x72/floor_1 @ 提亮 ×1.5" },
     "1":  { … },  "1:top": { … },   // 上方无墙时的「顶边」变体
     "11": { … }                     // 假墙：与 "1" 逐像素相同
@@ -305,8 +315,8 @@ orc / orcWarrior ·  bat / bigBat / vampireBat ·  knight / knightCaptain / dark
 
   "monsters": {
     "skeleton": {
-      "src": "0x72/skelet", "note": "骨色原样", "drawScale": 2,
-      "frame": { "w": 16, "h": 16 },
+      "src": "0x72/skelet", "note": "骨色原样", "drawScale": 1,
+      "frame": { "w": 32, "h": 32 },
       "idle": [ {x,y,w,h,atlas} ×4 ], "run": [ … ×4 ]
     },
     "未映射的怪": null              // 明确标 null，渲染层据此回退程序化图形
@@ -451,7 +461,7 @@ NPC 长得一模一样」，地图上根本分不出谁是卖东西的、谁是�
 
 **两种缩放策略，不是一个**
 
-- **怪物 / 角色 → 整数倍**（常规 ×2、BOSS ×3）。32–52px 这个尺度上，
+- **怪物 / 角色 → 整数倍**（常规 32 网格 1:1、BOSS 16 网格 ×3）。32–52px 这个尺度上，
   非整数倍会让像素宽窄不一，肉眼可见。
 - **道具 / 图标 → `fitSize()` 等比适配**。小图标上的非整数缩放看不出来，
   而等比是必须的 —— 拉成正方形会把剑压扁。
@@ -462,7 +472,7 @@ NPC 长得一模一样」，地图上根本分不出谁是卖东西的、谁是�
 
 **验证方式**：`atlasverify.mjs`（Playwright + 本地 Chromium）从
 `window.mota.game` 读**场景图**而不是只看截图 —— 断言 121 个地形槽位、
-76 个像素精灵全部 `scaleMode === 'nearest'`、勇者走路帧 16×26 / 挥剑帧 20×26、
+76 个像素精灵全部 `scaleMode === 'nearest'`、勇者走路帧 32×52 / 挥剑帧 40×52（构建期已超采样）、
 控制台零错误，并逐层打开商人 / 商店 / 战斗面板取图。
 
 ---

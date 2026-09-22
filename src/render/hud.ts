@@ -118,11 +118,31 @@ export function boardBox(): { x: number; y: number; w: number; h: number } {
 
 const FONT = '"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC",sans-serif';
 
+/**
+ * 文本光栅化分辨率。
+ *
+ * 以前这里**写死 2**：手机是 dpr=3，文字按 2× 光栅化之后上屏还要再被拉 1.5 倍 ——
+ * 中文笔画本来就细，这一道拉伸就是「文字发虚」的全部来源，而它影响的是**每一块面板**。
+ * 现在跟随渲染器分辨率，由 `app.ts` 在 init 之后写进来。
+ *
+ * 夹在 [2,3]：低于 2 中文会出毛边；高于 3 纹理开销翻一倍却换不来可见差别。
+ */
+let TEXT_RESOLUTION = 2;
+
+export function setTextResolution(r: number): void {
+  if (!Number.isFinite(r) || r <= 0) return;
+  TEXT_RESOLUTION = Math.min(3, Math.max(2, Math.round(r)));
+}
+
+/** 给验证脚本读 —— 「文字分辨率是否跟上了屏幕」必须有断言，不能靠眼看。 */
+export function textResolution(): number {
+  return TEXT_RESOLUTION;
+}
+
 export function label(text: string, size: number, fill: number, weight: TextStyleOptions['fontWeight'] = '500'): Text {
-  // resolution 提到 2，让中文在 canvas 上不发虚（Pixi 的文本默认按 1x 光栅化）
   return new Text({
     text,
-    resolution: 2,
+    resolution: TEXT_RESOLUTION,
     style: { fontFamily: FONT, fontSize: size, fill, fontWeight: weight }
   });
 }

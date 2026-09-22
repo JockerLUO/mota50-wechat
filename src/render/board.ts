@@ -661,7 +661,7 @@ export class Board extends Container {
       if (tex) {
         const sp = new Sprite(tex);
         // 等比填充，留 2px 边距 —— 所有拾取物落屏大小一致，最好辨认。
-        // 不能拉伸填满：剑是 10×21、药水是 16×16、金币是 8×8，拉平方会把剑压扁加宽。
+        // 不能拉伸填满：剑是 20×42、药水是 32×32、金币是 16×16，拉平方会把剑压扁加宽。
         const box = S - 4;
         const size = fitSize(tex.width, tex.height, box);
         sp.anchor.set(0.5, 1);
