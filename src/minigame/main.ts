@@ -9,13 +9,15 @@
  *                        它自己**不含任何 import**，排在第一位就保证最先求值。
  *                        （非取证构建里它整个是空实现，见 `beacon.ts`。）
  *   ① `./env`          —— 副作用：装全局垫片（document / MouseEvent / 事件总线）。
- *                        同样**不含任何 import**，紧跟其后。
+ *                        它是 env/ 子树的门面；子树**内部**可以互相 import，
+ *                        但**不许 import 子树之外的任何东西**（尤其 pixi.js），
+ *                        否则 pixi 会反过来排到它前面求值。见 env/index.ts 文件头。
  *   ② `./pixi-adapter` —— 副作用：把 `DOMAdapter` 换成小游戏实现。
  *                        它是第一个 import pixi 的模块，因此 pixi 在它之后求值。
  *   ③ 其余模块          —— 此时环境已经完全就绪。
  *
  * 排错了不会立刻报错（Pixi 主入口在模块顶层只做 extensions 注册，不碰 DOM），
- * 但会在很后面冒出莫名其妙的 `xxx is not defined`。所以 `env.ts` 里留了
+ * 但会在很后面冒出莫名其妙的 `xxx is not defined`。所以 `env/globals.ts` 里留了
  * `assertInstalled()` 做兜底断言。
  *
  * 构建：`npm run build:minigame` → `dist-minigame/game.js`（单文件 IIFE）
@@ -33,7 +35,7 @@ import { Game } from '../app';
 const log = (...args: unknown[]) => console.log('[mota]', ...args);
 
 /**
- * 取触摸桥的自述（`env.ts` 里挂的 `globalThis.__motaTouch`）。
+ * 取触摸桥的自述（`env/touch.ts` 里挂的 `globalThis.__motaTouch`）。
  *
  * 用 try/catch 包着是因为它只在垫片装成功后才存在 —— 而「取不到」本身也是证据
  * （说明 wx 没拿到、或 env 没装上），所以返回 null 而不是抛。
@@ -93,7 +95,7 @@ if (!probe.ok) {
         // 所以「IDE 里美术是矢量图」并不代表「真机也没美术」。
         atlasReady: snapshot.atlasReady,
         atlasError: snapshot.atlasError ?? null,
-        // 触摸桥在**这个宿主**里实际选了哪条路（见 env.ts 的 installTouchBridge）。
+        // 触摸桥在**这个宿主**里实际选了哪条路（见 env/touch.ts 的 installTouchBridge）。
         // 这一项是给「模拟器/真机点不动」这类问题准备的：`canReal=false` 意味着
         // 上屏画布不是宿主真 canvas，我们派发的合成事件到不了 Pixi 挂在原生
         // document/window 上的监听 —— 那时要换机制（遮蔽宿主监听），而不是继续猜。

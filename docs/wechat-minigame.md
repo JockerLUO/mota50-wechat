@@ -2,9 +2,10 @@
 
 本文记录把本项目的 PixiJS 8 游戏跑进微信小游戏环境的过程、依据与结论。
 
-- 产物：`dist-minigame/game.js`（单文件 IIFE，约 2.00 MB / gzip 424 KB）
+- 产物：`dist-minigame/game.js`（单文件 IIFE，约 2.11 MB / gzip 458 KB）
 - 构建：`npm run build:minigame`
-- 验证：`npm run verify:minigame`（无 DOM 环境实测，26 项判据 = 21 常驻 + 5 取证，退出码 0/1）
+- 验证：`npm run verify:minigame`（无 DOM 环境实测，25 项常驻判据；用
+  `npm run build:minigame:beacon` 的取证构建再跑，另得 6 项取证判据 = 31。退出码 0/1）
 
 ---
 
@@ -36,29 +37,68 @@ Pixi 8 的 `DOMAdapter` 只有 **9 个方法**（`environment-browser/BrowserAda
 
 ```
 src/minigame/
-  env.ts          运行时垫片（document / MouseEvent / 事件总线 / 上屏画布预订）
-                  ⚠️ 不含任何 import，必须由入口第一个 import
+  beacon.ts       启动取证探针（无 DOM 宿主下唯一的观测口；非取证构建里是空实现）
+                  ⚠️ 不含任何 import，必须由入口**第一位** import
+  env/            运行时垫片（document / MouseEvent / 事件总线 / 上屏画布预订）
+                  ⚠️ 子树内不许 import 子树之外的任何东西，必须由入口第二位 import
+    state.ts        共享槽位（envState）+ Any / wxApi
+    assign.ts       属性只读时的安全赋值 + nativeDom 判据
+    system.ts       wx.getSystemInfoSync() 的唯一入口
+    events.ts       三份事件总线 + hookEventTarget
+    mouse-event.ts  MiniMouseEvent
+    navigator.ts    Intl / navigator 补齐
+    canvas.ts       getContext 补丁 + 离屏 / 上屏画布
+    document.ts     document 替身
+    globals.ts      installGlobals 的装配顺序 + assertInstalled
+    touch.ts        wx.onTouch* → 总线
+    display.ts      上屏画布预订
+    bare.ts         裸标识符可达性自查（**必须裸读**，见 §11）
+    index.ts        门面 + 副作用（安装顺序即依赖顺序）
   pixi-adapter.ts 替换 DOMAdapter 为小游戏实现（第一个 import pixi 的模块）
   probe.ts        WebGL2 能力探针（真编译一段 #version 300 es 着色器）
   host.ts         宿主实现（尺寸 / dpr / 事件 / 启动失败弹窗）
   main.ts         入口，import 顺序即全部要害
 ```
 
-### 为什么 `env.ts` 不能有任何 `import`
+### 为什么 `env/` 子树不许 `import` 子树之外的东西
 
-ESM 的求值顺序是「依赖先于自身」。只要 `env.ts` 里写上 `import { DOMAdapter } from 'pixi.js'`，
-整个 Pixi 就会在它**之前**求值 —— 而 Pixi 的模块体里已经在读全局了
+**先说这条规则保护的是什么。** 拆成目录之前，这条写的是「`env.ts` 不能有任何 `import`」。
+那个写法**保护的是结果，不是原因** —— 真正要保证的是下面这条链：
+
+```
+入口的第一个 import 是 ./env
+  → env 子树整体先求值
+    → 垫片装好、wx.createCanvas() 第一次调用被我们抢下
+      → 此后才轮到 pixi 的模块体
+```
+
+ESM 的求值顺序是「依赖先于自身」。只要 `env/` 里某一层写了 `import { DOMAdapter } from 'pixi.js'`，
+**整个 Pixi 就会在它之前求值** —— 而 Pixi 的模块体里已经在读全局了
 （`ismobilejs` 读 `navigator`、`canvasUtils` 造画布）。垫片还没装上就先用上了。
+
+拆成目录后，`env/` **内部**互相 import 是完全安全的：那些兄弟模块同样排在 pixi 之前
+（`main.ts` 的 import 顺序没变，`env/` 子树是一个整体）。真正会打破上面那条链的只有一种情况：
+**`env/` 里 import 了 `env/` 之外的东西**，尤其是 `pixi.js`。所以规则收窄成现在这句。
+
+> 需要 `DOMAdapter` 的那部分在 `pixi-adapter.ts`，入口里排在 `env` 之后 import；
+> `env/` 自己一个字节的 pixi 都不碰。
 
 入口的 import 顺序（**不要重排**）：
 
 ```ts
+import { beaconStage } from './beacon'; // ⓪ 侧效应 + 取证（比 ① 还严格，见下）
 import './env';          // ① 侧效应：装垫片 + 预订上屏画布
 import './pixi-adapter'; // ② 侧效应：装 DOMAdapter（它是第一个 import pixi 的模块）
 ```
 
-`env.ts` 里的 `assertInstalled()` 会把顺序错误变成一句人话，而不是让人去追
+`env/globals.ts` 里的 `assertInstalled()` 会把顺序错误变成一句人话，而不是让人去追
 一串 `document is not defined`。
+
+> **为什么 `beacon.ts` 要排在 `env/` 前面**，而且它比 `env/` 更严格（自己一个 import 都不能有）：
+> 它要抓的正是「连垫片都没装上就死了」这种情况 —— 那恰恰是最可能发生的一种。
+> 排在后面就等于「观测器比被观测对象晚到」。它住在 `src/minigame/beacon.ts`，
+> 不在 `env/` 里，因为它需要网络 / 存储 API（要发回本机的 HTTP 端点），
+> 放进 `env/` 会违反上面那条规则。
 
 ---
 
@@ -80,7 +120,7 @@ TypeError: Cannot destructure property 'userAgent' of
 —— 一个**模块级常量**。`isSafari()` 读 `DOMAdapter.get().getNavigator()`，
 而那一刻适配器还是默认的 `BrowserAdapter`（`getNavigator: () => navigator`）。
 
-**修法**：`env.ts` 的 `installNavigator()` 排在 `installGlobals()` 第一句，
+**修法**：`env/navigator.ts` 的 `installNavigator()` 排在 `installGlobals()` 第一句，
 `gpu: null` 是刻意的（`isWebGPUSupported()` 读 `navigator.gpu`，给 null 才干脆返回 false）。
 
 #### ⚠️ 同一处的第二层：「有原生 DOM」≠「有可用的 `navigator`」（2026-09-21 补）
@@ -124,7 +164,7 @@ lib/rendering/renderers/canvas/utils/canvasUtils.mjs
 那一刻我们的适配器还没装上，于是它们走默认 `BrowserAdapter.createCanvas`
 → `document.createElement('canvas')` → 把上屏画布离屏用掉了。
 
-**修法**：`env.ts` 的 `reserveDisplayCanvas()` 挂在模块顶层侧效应里。
+**修法**：`env/display.ts` 的 `reserveDisplayCanvas()` 挂在模块顶层侧效应里。
 本模块不含任何 import，只要入口把它排第一位，就保证先于整个模块图求值 ——
 **做第一个跑起来的模块**是唯一解法。
 
@@ -321,9 +361,10 @@ touchstart 时**先**补一个 `mousemove`：网页上指针本来就会先移�
 ## 6. 验证：两种宿主，两套判据
 
 ```bash
-npm run verify:minigame   # 无 DOM 宿主（Web Worker），26 项判据 = 21 常驻 + 5 取证
-npm run verify:dom        # 有原生 DOM 宿主（IDE 模拟器同类），14 项判据
-npm run verify:all        # 以上两者 + verify:visual
+npm run verify:minigame   # 无 DOM 宿主（Web Worker），25 项常驻判据
+                          #   （取证构建 build:minigame:beacon 下另加 6 项 = 31）
+npm run verify:dom        # 有原生 DOM 宿主（IDE 模拟器同类），19 项判据
+npm run verify:all        # 以上两者 + verify:sandbox + verify:visual，共 75 条
 ```
 
 **小游戏产物要跑在两类差异极大的宿主上，两类路径都必须测。**
@@ -811,7 +852,7 @@ print(json.loads(d['0']['__motaBeacon']['data']))
 
 ### 9.3 真正的根因：**「宿主有 `globalThis.Intl`」≠「裸标识符 `Intl` 读得到」**
 
-上一轮的修法是 `env.ts` 里 `globalThis.Intl = {}`。它在可扩展的全局上有效，
+上一轮的修法是 `env/navigator.ts` 里 `globalThis.Intl = {}`。它在可扩展的全局上有效，
 在白名单沙箱里**写了个寂寞**：
 
 - `safeAssign` 返回 `true`（没抛错，看起来成功了）；
@@ -845,7 +886,7 @@ var Intl = (typeof globalThis === "object" && globalThis && globalThis.Intl) || 
 
 只垫**宿主可能没有、而且我们不需要给它行为**的全局。当前是 `Intl` 与 `navigator`
 两个 —— 都不是「顺手多垫的」，而是**实测各报过一次错**（§9.3 / §9.5）。
-其余全局不垫，理由见上。注意垫进来的那个对象**必须与 `env.ts` 共用同一个引用**，
+其余全局不垫，理由见上。注意垫进来的那个对象**必须与 `env/` 共用同一个引用**，
 否则会在真机上悄悄退回成简陋的那一份（§9.5 的纪律）。
 
 ### 9.5 `navigator` 是同一个坑的第二例（**加垫片后立刻暴露**）
@@ -873,18 +914,18 @@ pixi 默认适配器写的是 `getNavigator: () => navigator`（裸标识符）�
 早于我们把 `DOMAdapter` 换成小游戏实现。于是它读到 `undefined`，当场炸。
 
 **规则因此是通用的：垫片要同时覆盖 `globalThis` 与裸标识符两条路径。**
-`env.ts` 的 `safeAssign` 只管前一条（按值判断，在真机/浏览器上都有效），
+`env/assign.ts` 的 `safeAssign` 只管前一条（按值判断，在真机/浏览器上都有效），
 后一条只有词法绑定管得着。
 
 #### 一个必须守住的纪律：**一个对象、两处引用**
 
-`navigator` 这一条不能像 `Intl` 那样各垫各的 —— 否则 `env.ts` 用
+`navigator` 这一条不能像 `Intl` 那样各垫各的 —— 否则 `env/` 用
 `wx.getSystemInfoSync()` 合成的 UA 会被**挡在作用域外**（pixi 只看得见 intro 里
 那份简陋的），拿真问题换假问题。做法：
 
 - **intro**：宿主有就沿用宿主那份；没有就造一份 **空 UA** 的，并**同时挂到
-  `globalThis.navigator`** 上（空 UA 是为了让 `env.ts` 仍然判「不可用」）。
-- **`env.ts`**：改成**就地补字段**（`Object.assign(existing, fields)`），不再整对象替换。
+  `globalThis.navigator`** 上（空 UA 是为了让 `env/` 仍然判「不可用」）。
+- **`env/navigator.ts`**：改成**就地补字段**（`Object.assign(existing, fields)`），不再整对象替换。
   加 `try/catch` 兜底 —— 宿主对象可能是只读的（浏览器的 `navigator` 就是），
   就地补字段抛错会连坐 `installGlobals()` 后面的全部步骤（第三轮黑屏的成因）。
 
@@ -901,7 +942,7 @@ pixi 默认适配器写的是 `getNavigator: () => navigator`（裸标识符）�
 | 判据 | 拦的是什么 |
 |---|---|
 | 普通宿主：模块图完整求值到适配层（停在「未找到全局 wx」） | 产物**自身的作用域**被构建配置弄坏（`_a is not defined` 那次） |
-| 普通宿主 + 缺 `Intl`：不因 Intl 倒下 | 垫片路径（全局可扩展，`env.ts` 够用） |
+| 普通宿主 + 缺 `Intl`：不因 Intl 倒下 | 垫片路径（全局可扩展，`env/` 够用） |
 | 白名单沙箱（缺 `Intl`/`navigator`，且**两条路径分叉**）：不因这两个全局倒下 | 只有词法垫片能救的那条路径 |
 | **对照**：同一沙箱里「属性路径装好值、裸读仍死」必须复现 | 证明上一类判据不是想象出来的场景（它每一次都有真实报错对应） |
 | **裸标识符视图**：产物内部量出的 7 个垫片全部可用 | 「垫了却没接上」与「还有别的全局是死的」 |
@@ -917,19 +958,19 @@ pixi 默认适配器写的是 `getNavigator: () => navigator`（裸标识符）�
 ### 9.7 边界：词法垫片只解决「看得见」，不解决「有行为」
 
 intro 的职责只有一条：**让裸标识符有个落脚点**，并且（对需要行为的那些）
-**选或造出那个落脚对象**，行为仍由 `env.ts` 在同一个对象上补（`Object.assign` 就地补字段）。
+**选或造出那个落脚对象**，行为仍由 `env/` 在同一个对象上补（`Object.assign` 就地补字段）。
 当前七个：`Intl`、`navigator`、`document`、`performance`、
 `requestAnimationFrame` / `cancelAnimationFrame`、`MouseEvent`。
 
 `document` / 事件那一套**不能**只靠 intro 的原因不是「不需要行为」，而是时机与复杂度：
 
-- 它们需要 `env.ts` 里那些有行为的替身（事件总线、`getBoundingClientRect` 补丁、
+- 它们需要 `env/` 里那些有行为的替身（事件总线、`getBoundingClientRect` 补丁、
   `createElement` 路由表）——intro 里造不出来，只能先占位；
 - 还要配合 `wx.createCanvas()` **第一次**调用的时机（抢上屏画布，见 §2）——
   比 intro 晚得多也讲究得多。
 
 换句话说：**intro 是「让裸标识符有个落脚点」的兜底，不是垫片的替代品。**
-真机路径仍然完全由 `env.ts` 承担；intro 存在的唯一理由是那些
+真机路径仍然完全由 `env/` 承担；intro 存在的唯一理由是那些
 `globalThis` 与作用域链分叉的宿主。
 
 ### 9.8 第三个错：`unsafe-eval` —— 垫片修完之后**才**轮得到它
@@ -1054,9 +1095,9 @@ intro 选对象的判据改成了「`createElement` 是不是函数」（**可�
 #### 与其一轮修一个，不如先把「裸路径是死的」清单一次列完
 
 前四例都是**等 IDE 报一次错**才知道的。这时做了一个决定性的改动：
-**把测量点搬进产物自己的作用域**，让 `env.ts` 直接量一遍。
+**把测量点搬进产物自己的作用域**，让 `env/` 直接量一遍。
 
-- 位置：`env.ts` 的 `reportBareReachability()`，跑在模块作用域里，
+- 位置：`env/bare.ts` 的 `reportBareReachability()`，跑在模块作用域里，
   结果挂在 `globalThis.__motaEnvBare`，由探针在 `shim` 埋点取走。
 - 为什么非要在这里量：**pixi 是产物的一部分，它读的就是产物自己的作用域链**。
   从外面（浏览器控制台、`new Function`、宿主侧注入）量到的永远是宿主那一侧。
@@ -1092,13 +1133,13 @@ intro 选对象的判据改成了「`createElement` 是不是函数」（**可�
 这就是「② 不成立」的实测形态。）
 
 `MouseEvent` 这条还多一个形态上的坑：它的兜底要**转发**给 `globalThis.MouseEvent`
-（也就是 `env.ts` 装的 `MiniMouseEvent`），所以它**不能**像 `performance` 那样
+（也就是 `env/mouse-event.ts` 装的 `MiniMouseEvent`），所以它**不能**像 `performance` 那样
 把自己挂到 `globalThis` 上 —— 会自我递归。它走**懒转发**：调用那一刻才去取。
 
 #### 现在这句规则可以说完整了
 
 > **垫片必须同时覆盖 `globalThis.X` 与裸标识符 `X` 两条路径。**
-> 前者靠 `env.ts` 的 `safeAssign`（真机/浏览器够用），后者只有**构建期词法绑定**管得着。
+> 前者靠 `env/assign.ts` 的 `safeAssign`（真机/浏览器够用），后者只有**构建期词法绑定**管得着。
 > 判断某个宿主里两者是否分叉，看探针的 `bare`（裸路径）与 `env`（属性路径）两栏 ——
 > 不一致就是这个坑；`ReferenceError` 而属性有值，就是它的指纹。
 
@@ -1113,7 +1154,7 @@ intro 选对象的判据改成了「`createElement` 是不是函数」（**可�
 **现象**（用户实测）：IDE 模拟器预览跑起来了、画面完整，玩家点它没反应；
 同一份产物在 PC 端微信预览里**能点**。
 
-**根因**：`env.ts` 的 `installTouchBridge()` 开头写着 `if (nativeDom) return;` ——
+**根因**：`env/touch.ts` 的 `installTouchBridge()` 开头写着 `if (nativeDom) return;` ——
 「宿主有原生 DOM 就让路」。这个前提在小游戏里**不成立**：
 
 | 宿主 | 玩家在画面上点一下，事件从哪来 |
@@ -1383,10 +1424,11 @@ npm run verify:sandbox    # 干净 V8（node:vm）宿主实测，9 条判据（�
 npm run verify:visual     # 渲染层回归，22 条判据（A1–A20，含版面/位面/道具栏/手绘怪物、
                           #   脚下无标记 / 浏览出口 / 攻击动画 / 对话折行 / 上下楼梯 /
                           #   像素密度 / 文字分辨率 / 手绘墙 / 待机呼吸）
-npm run verify:minigame   # 无 DOM 环境实测，25 条判据（含禁 unsafe-eval ×3、图集逐字节一致、触摸端到端）
+npm run verify:minigame   # 无 DOM 环境实测，25 条常驻判据（含禁 unsafe-eval ×3、图集逐字节一致、触摸端到端）
+                          #   取证构建（build:minigame:beacon）下另加 6 条 = 31
 npm run verify:dom        # 有原生 DOM 宿主实测，19 条判据（含触摸端到端 ×4、图集 ×1）
                           #   注：驱动 UI 的点击必须模拟真实节奏，见 §9.13
-npm run verify:all        # 以上四套，共 74 条判据
+npm run verify:all        # 以上四套，共 75 条判据（9 + 22 + 25 + 19）
 ```
 
 另有两个不在四套之列的取证工具 —— 它们读的都是**工具自己落盘的状态**，

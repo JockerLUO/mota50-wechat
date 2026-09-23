@@ -6,16 +6,31 @@
  *   core/    战斗与商店公式（Node 校验器与浏览器共用同一份实现）
  *   game/    可序列化状态 + 规则引擎
  *   render/  PixiJS 绘制
- *   app.ts   输入分发、自动寻路、主循环 —— 只有这一层知道「谁调谁」
+ *   app/     输入分发、自动寻路、主循环 —— 只有这一层知道「谁调谁」
  *
  * 画布按设计尺寸 420×940 布局，再整体缩放到窗口：
  * 微信小游戏的标准做法（设计稿尺寸固定，运行时按屏幕等比缩放）。
+ *
+ * ## 这个目录里为什么四块东西是分开的
+ *
+ * 原先这里是**一个 1013 行的 `app.ts`**。拆开之后留下的这层是「编排」：
+ * 它同时知道引擎、棋盘、五块面板与两个浮层，而这份「什么都知道」恰恰是它的职责
+ * —— 所以**没有**继续往下拆。硬把「输入」「对话」「交易」切成独立模块，
+ * 就得让它们各自持有一份 `Game` 的引用，耦合只是换了个地方藏。
+ *
+ * 真正**正交**的三块被请了出去，因为它们不需要知道「谁调谁」：
+ *   pathing.ts         BFS 寻路与方向判定（纯算法，只读 state/data）
+ *   death-overlay.ts   阵亡遮罩的渲染构建（纯绘制，接收一个回调）
+ *   probe.ts           三个只读快照 —— 探针与游戏逻辑无关，且**不该**顺着
+ *                      `this` 乱摸字段（见该文件头）
+ *
+ * 判断标准就一句：**搬出去之后，它还需不需要 `this`？** 不需要的才搬。
  */
 
-import { Application, Container, Graphics, Rectangle, RendererType } from 'pixi.js';
-import { host } from './host';
-import { loadData, type GameData, type Stat } from './data';
-import { DIRS, createInitialState, entityAt, pushLog, tileAt, type Dir, type GameState } from './game/state';
+import { Application, Container } from 'pixi.js';
+import { host } from '../host';
+import { loadData, type GameData, type Stat } from '../data';
+import { createInitialState, entityAt, pushLog, tileAt, type Dir, type GameState } from '../game/state';
 import {
   arriveOnFloor,
   buyStat,
@@ -29,10 +44,10 @@ import {
   travelTo,
   useItem,
   type NpcTalk
-} from './game/engine';
-import { Board } from './render/board';
-import { Backdrop } from './render/backdrop';
-import { atlas, loadAtlas } from './render/atlas';
+} from '../game/engine';
+import { Board } from '../render/board';
+import { Backdrop } from '../render/backdrop';
+import { loadAtlas } from '../render/atlas';
 import {
   DetailPanel,
   FloorPanel,
@@ -40,21 +55,16 @@ import {
   LAYOUT,
   StatusBar,
   Toolbar,
-  boardBox,
-  label,
   setTextResolution,
-  textResolution,
   type BattleLike,
   type DetailTarget
-} from './render/hud';
-import { DialoguePanel } from './render/dialogue-panel';
-import { MerchantPanel, ShopPanel } from './render/trade';
-import { T, UI, npcRole, realm, realmOf, setRealm } from './render/theme';
-
-interface Cell {
-  x: number;
-  y: number;
-}
+} from '../render/hud';
+import { DialoguePanel } from '../render/dialogue-panel';
+import { MerchantPanel, ShopPanel } from '../render/trade';
+import { npcRole, realm, realmOf, setRealm } from '../render/theme';
+import { buildDeathOverlay } from './death-overlay';
+import { dirToward, enterable, pathTo, type Cell } from './pathing';
+import { layoutSnapshot, panelsSnapshot, probeSnapshot, type LayoutSnapshot, type ProbeView } from './probe';
 
 export class Game {
   private data: GameData;
@@ -218,196 +228,40 @@ export class Game {
   }
 
   /**
-   * 供控制台与自动化验证读取的精简状态快照。
-   * 渲染层不参与它 —— 拿到的是引擎的真值，所以能用来判断「画面是否只是看起来对」。
+   * 把探针要读的字段**显式列成一份清单**（见 `probe.ts` 的文件头）。
+   *
+   * 这个方法是「Game 的内部结构」与「探针」之间唯一的接触面：
+   * 想让探针多读一个字段，就得在这里加一行 —— 于是「探针能看到什么」
+   * 永远是可审的，而不是靠 `this` 随便摸。
    */
-  __probe(): Record<string, unknown> {
+  private probeView(): ProbeView {
     return {
-      ok: true,
-      floor: this.state.floor,
-      pos: { ...this.state.pos },
-      hp: this.state.hp,
-      atk: this.state.atk,
-      def: this.state.def,
-      gold: this.state.gold,
-      buyTimes: this.state.buyTimes,
-      claimed: [...this.state.claimed],
+      state: this.state,
       modal: this.modal,
-      /** 对话框是否开着 —— 自动化截图要单独摆这个状态 */
-      dialogue: this.dialogue.isOpen,
-      /** 每个 NPC 已搭话次数：台词轮换的输入，也是「对话真的在变」的证据 */
-      talked: { ...this.state.talked },
-      keys: { ...this.state.keys },
-      bag: Object.keys(this.state.bag),
-      passives: [...this.state.passives],
-      visitedCount: this.state.visited.length,
-      steps: this.state.stats.steps,
-      kills: this.state.stats.kills,
-      hpLost: this.state.stats.hpLost,
-      dead: this.state.dead,
-      lastLog: this.state.log.at(-1)?.text ?? null,
-      // 见 lastBoardClick 的说明：用来把「事件没送到」和「送到了但走不通」分开
-      lastBoardClick: this.lastBoardClick ? { ...this.lastBoardClick } : null,
-      displayFloor: this.browseFloor ?? this.state.floor,
-      /**
-       * 是否正处于「楼层浏览」。
-       *
-       * 单列出来是因为它是**唯一会让棋盘输入整体失效**的状态（所有入口都写
-       * `browseFloor !== null` 就 return）。所以它一旦残留，症状就是「点了没反应」，
-       * 而不是某个显式的错误 —— 必须能被断言直接看到。
-       */
-      browsing: this.browseFloor !== null,
-      /** 工具栏中间那颗按钮的文案，断言「返回键真的摆出来了」用它 */
+      browseFloor: this.browseFloor,
+      lastBoardClick: this.lastBoardClick,
+      dialogueOpen: this.dialogue.isOpen,
       toolbarBrowseLabel: this.toolbar.browseLabel,
-      // 渲染器信息：小游戏端要确认拿到的**不是**降级后的 CanvasRenderer。
-      //
-      // ⚠️ 这里返回**名字**，而不是 `renderer.type` 的原始数字，是踩过之后的决定：
-      // `RendererType` 是数字枚举（WEBGL=1 / WEBGPU=2 / BOTH=3 / CANVAS=4），
-      // 而 `1` 看起来太像「某种布尔或序号」—— 实测中就被读成了
-      // 「不是 webgl，而是 1（某个简化渲染器）」，白白怀疑了半天。
-      // 换成名字后，`=== 'webgl'` 这个断言不需要任何额外解释。
-      rendererType: RendererType[this.app.renderer.type]?.toLowerCase() ?? `unknown(${this.app.renderer.type})`,
-      resolution: this.app.renderer.resolution,
-      // 文字光栅化分辨率。它必须与 `resolution`（设备像素比）一致 ——
-      // 写死 2 而屏幕是 3 时，每一块面板上的中文都会被拉伸过一道，画面看着就「虚」。
-      textResolution: textResolution(),
-      screen: { w: this.app.renderer.width, h: this.app.renderer.height },
-      // 图集是不是**真的**加载成功了。
-      //
-      // 这一条单列出来，是因为「URL 格式对」和「图真的加载到了」是两回事：
-      // 前者只能证明路径写法没错，加载失败时 `ready` 保持 false，渲染层静默换用
-      // `icons.ts` 的程序化图形 —— 画面照旧出得来，只是美术不对。
-      // 也就是说这一条失败时**看不出任何异常**，只能靠显式断言。
-      atlasReady: atlas.ready,
-      // 图集失败的原因。`ready=false` 本身是**静默回退**（画面只是变朴素），
-      // 真机上光看画面分不出「加载失败」与「本来就没素材」—— 把原因带出来。
-      atlasError: atlas.lastError,
-      // 场景背景（塔的位面）。`paintedFloor` 是背景层**真正画出来**的那一层，
-      // 与 state.floor 分开报：换层时两者短暂不一致，正是这类 bug 的现场。
-      realm: {
-        id: realm().id,
-        name: realm().name,
-        horizon: this.backdrop.horizon,
-        paintedFloor: this.backdrop.paintedFloor
-      }
+      renderer: this.app.renderer,
+      backdrop: this.backdrop,
+      rects: { hud: this.status.cardRect, detail: this.detail.cardRect, items: this.itemBar.cardRect },
+      root: this.root
     };
   }
 
-  /**
-   * 版面实测快照 —— 「各模块间隙相等，且棋盘没有被挤小」必须能被断言。
-   *
-   * 读的是**渲染树里各面板回填的卡片矩形**（`UI.tag.rect`），不是 LAYOUT 常量：
-   * 常量写的是意图，卡片矩形是真正画出来的那一版。棋盘那一块用 `boardBox()` ——
-   * 它是「格子区 + 塔壁 + 城垛」的整体视觉盒，而间隙必须按它算：
-   * 只按格子区算出来的间隙是假的（旧版就是这么把 20px 算成了 −4）。
-   */
-  __layout(): {
-    W: number;
-    H: number;
-    gap: number;
-    pad: number;
-    modules: Array<{ id: string; x: number; y: number; w: number; h: number }>;
-    /** 真正参与排版的模块 id（道具栏为空时会缺一个） */
-    placed: string[];
-    /** 道具栏是不是「空背包 → 整栏不占位」 */
-    itemsHidden: boolean;
-    gaps: Array<{ after: string; value: number }>;
-    boardCell: number;
-    boardSpan: number;
-    boardBox: { x: number; y: number; w: number; h: number };
-  } {
-    const bb = boardBox();
-    const modules = [
-      { id: 'hud', ...this.status.cardRect },
-      { id: 'board', ...bb },
-      {
-        id: 'toolbar',
-        x: LAYOUT.toolbar.x,
-        y: LAYOUT.toolbar.y,
-        w: LAYOUT.toolbar.w,
-        h: LAYOUT.toolbar.h
-      },
-      { id: 'detail', ...this.detail.cardRect },
-      { id: 'items', ...this.itemBar.cardRect }
-    ];
-    // 道具栏 h = 0 表示「空背包，整栏不占位」。这时它必须整块从版面里**摘出去**，
-    // 而不是留一条 0 高的缝 —— 否则 `detail → items` 与 `items → 底` 两条
-    // 会变成 28 与 142 这样的假间隙，A8 立刻报错，而画面其实是对的。
-    const placed = modules.filter((m) => m.h > 0);
-    const gaps: Array<{ after: string; value: number }> = [{ after: 'top', value: placed[0].y }];
-    for (let i = 0; i < placed.length - 1; i++) {
-      gaps.push({ after: placed[i].id, value: placed[i + 1].y - (placed[i].y + placed[i].h) });
-    }
-    const last = placed[placed.length - 1];
-    gaps.push({ after: last.id, value: LAYOUT.H - (last.y + last.h) });
-    return {
-      W: LAYOUT.W,
-      H: LAYOUT.H,
-      gap: LAYOUT.gap,
-      pad: LAYOUT.pad,
-      modules,
-      /** 参与排版的模块（h=0 的已摘除）。断言用这个 */
-      placed: placed.map((m) => m.id),
-      itemsHidden: this.itemBar.cardRect.h === 0,
-      gaps,
-      boardCell: LAYOUT.board.cell,
-      boardSpan: LAYOUT.board.cell * 11,
-      boardBox: bb
-    };
+  /** 供控制台与自动化验证读取的精简状态快照（实现在 `probe.ts`） */
+  __probe(): Record<string, unknown> {
+    return probeSnapshot(this.probeView());
   }
 
-  /**
-   * 面板版式快照 —— 「所有面板共用一套版式」这件事必须能被断言。
-   *
-   * ## 为什么从渲染树读，而不是让每个面板自报数字
-   *
-   * 自报的是「我以为我设了多少」，读树拿到的是「真的设进去多少」。
-   * 这一轮就抓到过两者的差别：交易浮层的标题横向用了 `+UI.pad`(14)，
-   * 而短条占 12..15 —— 标题压在自己的短条上，源码里却看不出任何异常。
-   *
-   * ## 偏移是逐级累加出来的，不是 `getGlobalPosition()`
-   *
-   * 全局坐标会被 `root.scale`（按屏幕/dpr 算出来的那个系数）乘一遍，
-   * 同一个偏移在不同设备像素比下量出来是 23 / 46 / 69。累加**本地** x/y
-   * 得到的是设计坐标，与 dpr 无关 —— 断言才能写成一个确定的数。
-   */
+  /** 版面实测快照（实现在 `probe.ts`） */
+  __layout(): LayoutSnapshot {
+    return layoutSnapshot(this.probeView());
+  }
+
+  /** 面板版式快照（实现在 `probe.ts`） */
   __panels(): Array<{ panel: string; title: string; dx: number; dy: number; fontSize: number | null }> {
-    type Rect = { x: number; y: number; w: number; h: number };
-    type Node = {
-      label?: string;
-      x: number;
-      y: number;
-      text?: string;
-      style?: { fontSize?: number };
-      cardRect?: Rect;
-      children?: unknown[];
-    };
-    const out: Array<{ panel: string; title: string; dx: number; dy: number; fontSize: number | null }> = [];
-    const walk = (n: Node, owner: string, dx: number, dy: number, rect: Rect | null): void => {
-      const lb = typeof n.label === 'string' ? n.label : undefined;
-      const isPanel = !!lb && lb.startsWith(UI.tag.panel);
-      const name = isPanel ? lb.slice(UI.tag.panel.length) : owner;
-      // 进到一块面板里，累加器归零：之后量到的都是「相对这块面板左上角」
-      const ax = isPanel ? 0 : dx + n.x;
-      const ay = isPanel ? 0 : dy + n.y;
-      // 卡片矩形沿路径继承：交易浮层把矩形记在 ModalShell 上、标题是它的子节点，
-      // 所以标题要找的是「路径上最近的那一个」，不是自己身上那一个。
-      // 宽高为 0 的是「还没 layout 过」的占位矩形（浮层只在 open() 时才定高），
-      // 不能拿它当基准 —— 否则会量出「面板在 (0,0)」这种假坐标。
-      const card = n.cardRect && n.cardRect.w > 0 ? n.cardRect : rect;
-      if (lb === UI.tag.title && card) {
-        out.push({
-          panel: name,
-          title: n.text ?? '',
-          dx: Math.round(ax - card.x),
-          dy: Math.round(ay - card.y),
-          fontSize: n.style?.fontSize ?? null
-        });
-      }
-      for (const c of n.children ?? []) walk(c as Node, name, ax, ay, card);
-    };
-    walk(this.root as unknown as Node, 'root', 0, 0, null);
-    return out;
+    return panelsSnapshot(this.probeView());
   }
 
   /**
@@ -503,11 +357,11 @@ export class Game {
       { x: e.x + 1, y: e.y },
       { x: e.x, y: e.y - 1 },
       { x: e.x, y: e.y + 1 }
-    ].filter((s) => this.enterable(s.x, s.y, false));
+    ].filter((s) => enterable(this.state, this.data, s.x, s.y, false));
     if (spots.length === 0) return `${e.id} 四周都站不下人`;
     this.state.pos = { ...spots[0] };
     this.board.setHeroPos(this.state.pos.x, this.state.pos.y, false);
-    const d = this.dirToward(this.state.pos, { x: e.x, y: e.y });
+    const d = dirToward(this.state.pos, { x: e.x, y: e.y });
     if (!d) return '站不到身侧';
     this.doStep(d);
     return `搭话 ${npcId}（第 ${before + 1} 次）`;
@@ -578,7 +432,7 @@ export class Game {
     this.lastBoardClick = { x, y };
     if (this.walking || this.state.dead || this.browseFloor !== null || this.modal !== null) return;
 
-    const path = this.pathTo(x, y);
+    const path = pathTo(this.state, this.data, x, y);
     if (!path || path.length === 0) {
       pushLog(this.state, '走不过去。', 'warn');
       this.sync();
@@ -596,7 +450,7 @@ export class Game {
           const info = this.data.byChar[ch];
           if (ent || !info?.passable || info.stairs || ch === 'w') break;
         }
-        const dir = this.dirToward(this.state.pos, cell);
+        const dir = dirToward(this.state.pos, cell);
         if (!dir) break;
         const kind = this.doStep(dir);
         if (kind === 'blocked' || kind === 'talk' || kind === 'stairs' || kind === 'battle') break;
@@ -606,73 +460,6 @@ export class Game {
       this.walking = false;
       this.sync();
     }
-  }
-
-  private dirToward(from: Cell, to: Cell): Dir | null {
-    if (to.y === from.y && to.x === from.x + 1) return 'right';
-    if (to.y === from.y && to.x === from.x - 1) return 'left';
-    if (to.x === from.x && to.y === from.y + 1) return 'down';
-    if (to.x === from.x && to.y === from.y - 1) return 'up';
-    return null;
-  }
-
-  /** 能否走进某格（供寻路使用）。isTarget 时放宽，因为目标格可以是怪物 / 门 / 假墙 */
-  private enterable(x: number, y: number, isTarget: boolean): boolean {
-    if (x < 0 || y < 0 || x > 10 || y > 10) return false;
-    const ch = tileAt(this.state, this.data, this.state.floor, x, y);
-    const info = this.data.byChar[ch];
-    if (!info?.passable) return false;
-    if (isTarget) return true;
-    if (entityAt(this.state, this.data, this.state.floor, x, y)) return false;
-    if (info.stairs) return false; // 别把楼梯当中转点，会意外换层
-    if (ch === 'w') return false;
-    return true;
-  }
-
-  /** BFS 寻路。目标不可直入时（门 / 墙 / 岩浆）退化成「走到它旁边再撞一下」 */
-  private pathTo(tx: number, ty: number): Cell[] | null {
-    const startK = `${this.state.pos.x},${this.state.pos.y}`;
-    const targetK = `${tx},${ty}`;
-    const prev = new Map<string, string>();
-    const dist = new Map<string, number>([[startK, 0]]);
-    const q: Cell[] = [{ x: this.state.pos.x, y: this.state.pos.y }];
-
-    const reconstruct = (k: string): Cell[] => {
-      const out: Cell[] = [];
-      let cur: string | undefined = k;
-      while (cur && cur !== startK) {
-        const [x, y] = cur.split(',').map(Number);
-        out.unshift({ x, y });
-        cur = prev.get(cur);
-      }
-      return out;
-    };
-
-    while (q.length) {
-      const cur = q.shift()!;
-      const cd = dist.get(`${cur.x},${cur.y}`) ?? 0;
-      for (const d of Object.values(DIRS)) {
-        const nx = cur.x + d.dx;
-        const ny = cur.y + d.dy;
-        const k = `${nx},${ny}`;
-        if (dist.has(k)) continue;
-        if (!this.enterable(nx, ny, nx === tx && ny === ty)) continue;
-        dist.set(k, cd + 1);
-        prev.set(k, `${cur.x},${cur.y}`);
-        q.push({ x: nx, y: ny });
-      }
-    }
-
-    if (dist.has(targetK)) return reconstruct(targetK);
-
-    let best: { k: string; d: number } | null = null;
-    for (const [k, d] of dist) {
-      const [x, y] = k.split(',').map(Number);
-      if (Math.abs(x - tx) + Math.abs(y - ty) !== 1) continue;
-      if (!best || d < best.d) best = { k, d };
-    }
-    if (!best) return null;
-    return [...reconstruct(best.k), { x: tx, y: ty }];
   }
 
   // ── 动作 ──────────────────────────────────────────────────────────
@@ -956,58 +743,12 @@ export class Game {
     this.backdrop.setFloor(floor);
   }
 
+  /** 阵亡遮罩（实现在 `death-overlay.ts`）—— 只在这里决定「重开要做什么」 */
   private showDeath(): void {
-    const g = new Graphics();
-    g.rect(0, 0, LAYOUT.W, LAYOUT.H).fill({ color: 0x0f172a, alpha: 0.55 });
-    g.eventMode = 'static';
-    g.hitArea = new Rectangle(0, 0, LAYOUT.W, LAYOUT.H);
-    this.deathLayer.addChild(g);
-
-    const px = 60;
-    const py = Math.round((LAYOUT.H - 186) / 2);
-    const pw = LAYOUT.W - 120;
-    const ph = 186;
-    const panel = new Graphics();
-    panel.roundRect(px, py, pw, ph, 16).fill(T.panel);
-    panel.roundRect(px, py, pw, ph, 16).stroke({ width: 1, color: T.panelBorder });
-    this.deathLayer.addChild(panel);
-
-    const title = label('勇者阵亡', 22, T.danger, '800');
-    title.anchor.set(0.5, 0);
-    title.x = LAYOUT.W / 2;
-    title.y = py + 26;
-    this.deathLayer.addChild(title);
-
-    const sub = label(
-      `在第 ${this.state.floor} 层倒下　步数 ${this.state.stats.steps}　击杀 ${this.state.stats.kills}`,
-      12,
-      T.inkMuted
+    buildDeathOverlay(
+      this.deathLayer,
+      { floor: this.state.floor, steps: this.state.stats.steps, kills: this.state.stats.kills },
+      () => this.restart()
     );
-    sub.anchor.set(0.5, 0);
-    sub.x = LAYOUT.W / 2;
-    sub.y = py + 64;
-    this.deathLayer.addChild(sub);
-
-    const tip = label('巫师领域是唯一致死途径，战斗前会先被拦下。', 11, T.inkFaint);
-    tip.anchor.set(0.5, 0);
-    tip.x = LAYOUT.W / 2;
-    tip.y = py + 88;
-    this.deathLayer.addChild(tip);
-
-    const btn = new Container();
-    btn.x = LAYOUT.W / 2 - 60;
-    btn.y = py + 122;
-    const bg = new Graphics();
-    bg.roundRect(0, 0, 120, 38, 19).fill(T.hero);
-    const bt = label('重新开始', 14, T.onDark, '700');
-    bt.anchor.set(0.5);
-    bt.x = 60;
-    bt.y = 19;
-    btn.addChild(bg, bt);
-    btn.eventMode = 'static';
-    btn.cursor = 'pointer';
-    btn.hitArea = new Rectangle(0, 0, 120, 38);
-    btn.on('pointertap', () => this.restart());
-    this.deathLayer.addChild(btn);
   }
 }

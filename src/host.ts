@@ -3,7 +3,7 @@
  *
  * 为什么要有这一层：
  *   项目里有 5 处直接碰浏览器 API（`document.getElementById`、`window.devicePixelRatio`、
- *   `window.addEventListener`），小游戏三者全都没有。散落在 `app.ts` / `main.ts` 里做
+ *   `window.addEventListener`），小游戏三者全都没有。散落在 `src/app/game.ts` / `src/main.ts` 里做
  *   `if (isMiniGame)` 判断，会让「哪些是真实依赖」变得看不清；收进一个接口后，
  *   `grep -rn "document\|window\." src/` 只要看这个文件就够了。
  *

@@ -8,9 +8,10 @@
  * 交易界面已经盖在脸上了。这一版把顺序倒过来 —— 先说话，
  * 玩家自己按「交易」才开摊（原版魔塔就是这个顺序）。
  *
- * ## 与 hud.ts 的分工
+ * ## 与 render/hud/ 的分工
  *
- * 版式令牌、`panel()` / `label()` / `wrap()` / `Pill` 全部来自 hud.ts，
+ * 版式令牌、`panel()` / `label()` / `wrap()` / `Pill` 全部来自 `render/hud/`
+ * （`layout.ts` / `text.ts` / `toolbar.ts`），
  * 这里只负责「把一段台词摆好看」。它不读游戏状态、不做任何判断 ——
  * 台词是引擎的 `NpcTalk` 算好的，`tradeLabel` 由编排层决定。
  * 这样「换一句台词」永远只改 `src/game/dialogue.ts` 一处。
@@ -49,9 +50,9 @@ const MAX_LINES = 7;
  * 正文每行最多多少「单位」—— **算出来的，不是猜的**。
  *
  * 可用像素宽 = 卡片宽 − 左右内边距；单位口径是「1 单位 ≈ 1 个正文字号宽」
- * （中文 1、西文 0.55，见 hud.ts `unitOf`）。上一版这里写死 32，
+ * （中文 1、西文 0.55，见 `hud/text.ts` 的 `unitOf`）。上一版这里写死 32，
  * 而 32 单位实际排到 368px > 可用 352px —— 42/98 行捅出卡片右边缘，
- * 就是「对话内容不会换行」的那条反馈。见 hud.ts `unitsPerLine`。
+ * 就是「对话内容不会换行」的那条反馈。见 `hud/text.ts` 的 `unitsPerLine`。
  */
 const BODY_PX = CARD.w - UI.pad * 2;
 const LINE_UNITS = unitsPerLine(BODY_PX, UI.fs.body);

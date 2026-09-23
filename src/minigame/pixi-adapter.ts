@@ -2,7 +2,7 @@
  * 把 `DOMAdapter` 换成小游戏实现。
  *
  * 本文件是「垫片」与「项目其余部分」的分界线 —— 它是第一个 `import 'pixi.js'` 的模块，
- * 因此必须在 `env.ts` **之后**求值。入口 `main.ts` 里它排在 `./env` 后面就是为这个。
+ * 因此必须在 `env/` 子树 **之后**求值。入口 `main.ts` 里它排在 `./env` 后面就是为这个。
  *
  * Pixi 8.21 的 `DOMAdapter` 只有 9 个方法（`environment-browser/BrowserAdapter.mjs`
  * 整个文件 23 行），所以换起来成本很低 —— 这一点和 Pixi 5/6/7 时代要靠
@@ -169,7 +169,8 @@ export function installDomAdapter(): void {
   DOMAdapter.set(miniGameAdapter as unknown as Parameters<typeof DOMAdapter.set>[0]);
 }
 
-// 顺序兜底：如果将来有人把 `installGlobals()` 从 env.ts 的模块顶层挪进入口函数体，
+// 顺序兜底：如果将来有人把 `installGlobals()` 从 `env/globals.ts` 的模块顶层
+// 挪进入口函数体，
 // 这里会立刻炸出一句人话，而不是让人去追一连串 `document is not defined`。
 assertInstalled();
 

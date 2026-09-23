@@ -1,6 +1,6 @@
 {
   "meta": {
-    "generatedAt": "2026-09-23T02:59:37+00:00",
+    "generatedAt": "2026-09-23T04:47:20+00:00",
     "generator": "tools/build-assets.py",
     "baseTile": 16,
     "rasterTile": 64,
@@ -8,7 +8,7 @@
     "cell": 32,
     "drawScale": 0.5,
     "bigScale": 3,
-    "note": "实体 → 图集坐标的唯一事实来源。改映射请改 tools/build-assets.py 后重跑，不要直接编辑本文件。",
+    "note": "实体 → 图集坐标的唯一事实来源。改映射请改 tools/assetlib/data.py 后重跑，不要直接编辑本文件。",
     "terrainVariants": {
       "0": 6,
       "1": 5,
@@ -301,7 +301,7 @@
   },
   "monsters": {
     "skeleton": {
-      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "src": "本仓库手绘（tools/assetlib/monsters.py: MON_SHAPES）",
       "note": "手绘·骷髅：裸骨 + 锈剑",
       "drawScale": 0.5,
       "atlas": "monsters",
@@ -323,7 +323,7 @@
       ]
     },
     "skeletonSoldier": {
-      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "src": "本仓库手绘（tools/assetlib/monsters.py: MON_SHAPES）",
       "note": "手绘·骷髅兵：铁盔铁甲 + 铁剑",
       "drawScale": 0.5,
       "atlas": "monsters",
@@ -345,7 +345,7 @@
       ]
     },
     "skeletonCaptain": {
-      "src": "本仓库手绘（tools/build-assets.py: PROC_BOSSES，64 网格 1:1 落屏）",
+      "src": "本仓库手绘（tools/assetlib/bosses.py: PROC_BOSSES，64 网格 1:1 落屏）",
       "note": "手绘·骷髅队长（64 网格 BOSS）：金盔金甲 + 圆盾 + 骨剑",
       "drawScale": 1.0,
       "atlas": "monsters",
@@ -367,7 +367,7 @@
       ]
     },
     "ghostWarrior": {
-      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "src": "本仓库手绘（tools/assetlib/monsters.py: MON_SHAPES）",
       "note": "手绘·幽魂武士：兜帽飘尾 + 幽光剑，青白",
       "drawScale": 0.5,
       "atlas": "monsters",
@@ -389,7 +389,7 @@
       ]
     },
     "phantom": {
-      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "src": "本仓库手绘（tools/assetlib/monsters.py: MON_SHAPES）",
       "note": "手绘·幻影：同幽魂换紫 + 半透明",
       "drawScale": 0.5,
       "atlas": "monsters",
@@ -411,7 +411,7 @@
       ]
     },
     "vampire": {
-      "src": "本仓库手绘（tools/build-assets.py: PROC_BOSSES，64 网格 1:1 落屏）",
+      "src": "本仓库手绘（tools/assetlib/bosses.py: PROC_BOSSES，64 网格 1:1 落屏）",
       "note": "手绘·吸血鬼伯爵（64 网格 BOSS）：高领斗篷 + 尖牙 + 红眼",
       "drawScale": 1.0,
       "atlas": "monsters",
@@ -479,7 +479,7 @@
       ]
     },
     "bat": {
-      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "src": "本仓库手绘（tools/assetlib/monsters.py: MON_SHAPES）",
       "note": "手绘：德拉基式圆球身 + 呆毛，棕",
       "drawScale": 0.5,
       "atlas": "monsters",
@@ -501,7 +501,7 @@
       ]
     },
     "bigBat": {
-      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "src": "本仓库手绘（tools/assetlib/monsters.py: MON_SHAPES）",
       "note": "手绘：长翅，深褐",
       "drawScale": 0.5,
       "atlas": "monsters",
@@ -523,7 +523,7 @@
       ]
     },
     "vampireBat": {
-      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "src": "本仓库手绘（tools/assetlib/monsters.py: MON_SHAPES）",
       "note": "手绘：长翅 + 獠牙，血红",
       "drawScale": 0.5,
       "atlas": "monsters",
@@ -545,7 +545,7 @@
       ]
     },
     "greenSlime": {
-      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "src": "本仓库手绘（tools/assetlib/monsters.py: MON_SHAPES）",
       "note": "手绘：绿圆顶果冻",
       "drawScale": 0.5,
       "atlas": "monsters",
@@ -567,7 +567,7 @@
       ]
     },
     "redSlime": {
-      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "src": "本仓库手绘（tools/assetlib/monsters.py: MON_SHAPES）",
       "note": "手绘：红圆顶果冻",
       "drawScale": 0.5,
       "atlas": "monsters",
@@ -589,7 +589,7 @@
       ]
     },
     "bigSlime": {
-      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "src": "本仓库手绘（tools/assetlib/monsters.py: MON_SHAPES）",
       "note": "手绘：更高的圆顶（用体量而不是换色表达「大」）",
       "drawScale": 0.5,
       "atlas": "monsters",
@@ -611,7 +611,7 @@
       ]
     },
     "slimeKing": {
-      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "src": "本仓库手绘（tools/assetlib/monsters.py: MON_SHAPES）",
       "note": "手绘：金 + 三尖冠",
       "drawScale": 0.5,
       "atlas": "monsters",
@@ -633,7 +633,7 @@
       ]
     },
     "juniorMage": {
-      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "src": "本仓库手绘（tools/assetlib/monsters.py: MON_SHAPES）",
       "note": "手绘·法师学徒：蓝袍短帽 + 木杖，白须",
       "drawScale": 0.5,
       "atlas": "monsters",
@@ -655,7 +655,7 @@
       ]
     },
     "seniorMage": {
-      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "src": "本仓库手绘（tools/assetlib/monsters.py: MON_SHAPES）",
       "note": "手绘·法师：紫袍高帽 + 紫宝珠，白须",
       "drawScale": 0.5,
       "atlas": "monsters",
@@ -677,7 +677,7 @@
       ]
     },
     "juniorWizard": {
-      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "src": "本仓库手绘（tools/assetlib/monsters.py: MON_SHAPES）",
       "note": "手绘·女法师学徒：蓝袍短帽 + 长发",
       "drawScale": 0.5,
       "atlas": "monsters",
@@ -699,7 +699,7 @@
       ]
     },
     "seniorWizard": {
-      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "src": "本仓库手绘（tools/assetlib/monsters.py: MON_SHAPES）",
       "note": "手绘·女法师：紫袍高帽 + 长发",
       "drawScale": 0.5,
       "atlas": "monsters",
@@ -721,7 +721,7 @@
       ]
     },
     "archmage": {
-      "src": "本仓库手绘（tools/build-assets.py: PROC_BOSSES，64 网格 1:1 落屏）",
+      "src": "本仓库手绘（tools/assetlib/bosses.py: PROC_BOSSES，64 网格 1:1 落屏）",
       "note": "手绘·大法师（64 网格 BOSS）：金袍高帽 + 金宝珠 + 长白须",
       "drawScale": 1.0,
       "atlas": "monsters",
@@ -743,7 +743,7 @@
       ]
     },
     "magicGuard": {
-      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "src": "本仓库手绘（tools/assetlib/monsters.py: MON_SHAPES）",
       "note": "手绘·魔卫：青袍兜帽（无檐）+ 绿宝珠杖",
       "drawScale": 0.5,
       "atlas": "monsters",
@@ -765,7 +765,7 @@
       ]
     },
     "orc": {
-      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "src": "本仓库手绘（tools/assetlib/monsters.py: MON_SHAPES）",
       "note": "手绘·兽人：绿皮獠牙 + 木棒",
       "drawScale": 0.5,
       "atlas": "monsters",
@@ -787,7 +787,7 @@
       ]
     },
     "orcWarrior": {
-      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "src": "本仓库手绘（tools/assetlib/monsters.py: MON_SHAPES）",
       "note": "手绘·兽人武士：深绿 + 铁肩甲 + 战斧",
       "drawScale": 0.5,
       "atlas": "monsters",
@@ -809,7 +809,7 @@
       ]
     },
     "goblin": {
-      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "src": "本仓库手绘（tools/assetlib/monsters.py: MON_SHAPES）",
       "note": "手绘·哥布林：矮身大耳 + 短匕",
       "drawScale": 0.5,
       "atlas": "monsters",
@@ -831,7 +831,7 @@
       ]
     },
     "juniorGuard": {
-      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "src": "本仓库手绘（tools/assetlib/monsters.py: MON_SHAPES）",
       "note": "手绘·守卫：青铜甲 + 长枪圆盾（无盔羽）",
       "drawScale": 0.5,
       "atlas": "monsters",
@@ -853,7 +853,7 @@
       ]
     },
     "midGuard": {
-      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "src": "本仓库手绘（tools/assetlib/monsters.py: MON_SHAPES）",
       "note": "手绘·守卫：白银甲 + 短盔羽",
       "drawScale": 0.5,
       "atlas": "monsters",
@@ -875,7 +875,7 @@
       ]
     },
     "seniorGuard": {
-      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "src": "本仓库手绘（tools/assetlib/monsters.py: MON_SHAPES）",
       "note": "手绘·守卫：黄金甲 + 高盔羽 + 金饰金盾钉",
       "drawScale": 0.5,
       "atlas": "monsters",
@@ -897,7 +897,7 @@
       ]
     },
     "swordsman": {
-      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "src": "本仓库手绘（tools/assetlib/monsters.py: MON_SHAPES）",
       "note": "手绘·剑士：露脸红发带 + 细剑（轻装）",
       "drawScale": 0.5,
       "atlas": "monsters",
@@ -919,7 +919,7 @@
       ]
     },
     "warrior": {
-      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "src": "本仓库手绘（tools/assetlib/monsters.py: MON_SHAPES）",
       "note": "手绘·战士：铁全盔 + 鸢盾",
       "drawScale": 0.5,
       "atlas": "monsters",
@@ -941,7 +941,7 @@
       ]
     },
     "knight": {
-      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "src": "本仓库手绘（tools/assetlib/monsters.py: MON_SHAPES）",
       "note": "手绘·骑士：蓝钢甲 + 红盔羽 + 鸢盾",
       "drawScale": 0.5,
       "atlas": "monsters",
@@ -963,7 +963,7 @@
       ]
     },
     "knightCaptain": {
-      "src": "本仓库手绘（tools/build-assets.py: PROC_BOSSES，64 网格 1:1 落屏）",
+      "src": "本仓库手绘（tools/assetlib/bosses.py: PROC_BOSSES，64 网格 1:1 落屏）",
       "note": "手绘·骑士长（64 网格 BOSS）：白银甲金饰 + 红披风金羽",
       "drawScale": 1.0,
       "atlas": "monsters",
@@ -985,7 +985,7 @@
       ]
     },
     "darkKnight": {
-      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "src": "本仓库手绘（tools/assetlib/monsters.py: MON_SHAPES）",
       "note": "手绘·暗黑骑士：黑甲红目缝 + 黑披风",
       "drawScale": 0.5,
       "atlas": "monsters",
@@ -1007,7 +1007,7 @@
       ]
     },
     "stoneGolem": {
-      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
+      "src": "本仓库手绘（tools/assetlib/monsters.py: MON_SHAPES）",
       "note": "手绘：方块躯干 + 砖缝 + 发光眼（旧为 ogre 食人魔）",
       "drawScale": 0.5,
       "atlas": "monsters",
@@ -1029,7 +1029,7 @@
       ]
     },
     "dragon": {
-      "src": "本仓库手绘（tools/build-assets.py: PROC_BOSSES，64 网格 1:1 落屏）",
+      "src": "本仓库手绘（tools/assetlib/bosses.py: PROC_BOSSES，64 网格 1:1 落屏）",
       "note": "手绘·魔龙（64 网格 BOSS）：巨角 + 长吻 + 展翼 + 卷尾",
       "drawScale": 1.0,
       "atlas": "monsters",
@@ -1051,7 +1051,7 @@
       ]
     },
     "kraken": {
-      "src": "本仓库手绘（tools/build-assets.py: PROC_BOSSES，64 网格 1:1 落屏）",
+      "src": "本仓库手绘（tools/assetlib/bosses.py: PROC_BOSSES，64 网格 1:1 落屏）",
       "note": "手绘·巨型乌贼（64 网格 BOSS）：圆头 + 侧鳍 + 六条腕",
       "drawScale": 1.0,
       "atlas": "monsters",
@@ -1073,7 +1073,7 @@
       ]
     },
     "demonKing": {
-      "src": "本仓库手绘（tools/build-assets.py: PROC_BOSSES，64 网格 1:1 落屏）",
+      "src": "本仓库手绘（tools/assetlib/bosses.py: PROC_BOSSES，64 网格 1:1 落屏）",
       "note": "手绘·魔王（64 网格 BOSS）：巨角 + 膜翼 + 发光眼",
       "drawScale": 1.0,
       "atlas": "monsters",
@@ -1095,7 +1095,7 @@
       ]
     },
     "demonKingTrue": {
-      "src": "本仓库手绘（tools/build-assets.py: PROC_BOSSES，64 网格 1:1 落屏）",
+      "src": "本仓库手绘（tools/assetlib/bosses.py: PROC_BOSSES，64 网格 1:1 落屏）",
       "note": "手绘·魔王真身（64 网格 BOSS）：高举巨翼 + 三段长角 + 金冠",
       "drawScale": 1.0,
       "atlas": "monsters",
@@ -1623,7 +1623,7 @@
           }
         ]
       },
-      "src": "本仓库手绘（tools/build-assets.py: _hero_* 系列）—— 16×26 程序化像素画，铠甲 / 剑 / 盾三件装备分区绘制，left 由 right 镜像",
+      "src": "本仓库手绘（tools/assetlib/hero.py: _hero_* 系列）—— 16×26 程序化像素画，铠甲 / 剑 / 盾三件装备分区绘制，left 由 right 镜像",
       "dirOrder": [
         "down",
         "right",
@@ -1669,7 +1669,7 @@
             }
           ]
         },
-        "src": "本仓库手绘（tools/build-assets.py: NPC_ART）— 16×26 程序化像素画，每个职能一套剪影"
+        "src": "本仓库手绘（tools/assetlib/npc.py: NPC_ART）— 16×26 程序化像素画，每个职能一套剪影"
       },
       "merchant": {
         "atlas": "actors",
@@ -1708,7 +1708,7 @@
             }
           ]
         },
-        "src": "本仓库手绘（tools/build-assets.py: NPC_ART）— 16×26 程序化像素画，每个职能一套剪影"
+        "src": "本仓库手绘（tools/assetlib/npc.py: NPC_ART）— 16×26 程序化像素画，每个职能一套剪影"
       },
       "shop": {
         "atlas": "actors",
@@ -1747,7 +1747,7 @@
             }
           ]
         },
-        "src": "本仓库手绘（tools/build-assets.py: NPC_ART）— 16×26 程序化像素画，每个职能一套剪影"
+        "src": "本仓库手绘（tools/assetlib/npc.py: NPC_ART）— 16×26 程序化像素画，每个职能一套剪影"
       },
       "thief": {
         "atlas": "actors",
@@ -1786,7 +1786,7 @@
             }
           ]
         },
-        "src": "本仓库手绘（tools/build-assets.py: NPC_ART）— 16×26 程序化像素画，每个职能一套剪影"
+        "src": "本仓库手绘（tools/assetlib/npc.py: NPC_ART）— 16×26 程序化像素画，每个职能一套剪影"
       },
       "fairy": {
         "atlas": "actors",
@@ -1825,7 +1825,7 @@
             }
           ]
         },
-        "src": "本仓库手绘（tools/build-assets.py: NPC_ART）— 16×26 程序化像素画，每个职能一套剪影"
+        "src": "本仓库手绘（tools/assetlib/npc.py: NPC_ART）— 16×26 程序化像素画，每个职能一套剪影"
       },
       "princess": {
         "atlas": "actors",
@@ -1864,7 +1864,7 @@
             }
           ]
         },
-        "src": "本仓库手绘（tools/build-assets.py: NPC_ART）— 16×26 程序化像素画，每个职能一套剪影"
+        "src": "本仓库手绘（tools/assetlib/npc.py: NPC_ART）— 16×26 程序化像素画，每个职能一套剪影"
       }
     }
   },

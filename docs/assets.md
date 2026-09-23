@@ -90,11 +90,29 @@ OGA 只用来取那一个 171 KB 的 ArMM1998 包。
 ## 5. 加工流水线
 
 ```
-tools/build-assets.py            切图 / 调色板变换 / 归一化 / 打包 / 断言
+tools/build-assets.py            入口（薄）—— 只做 sys.path + 调 assetlib.main:main
         │
-        ├──▶ assets/atlas/*.png        运行时图集
-        ├──▶ assets/MANIFEST.json      坐标映射表
-        └──▶ assets/preview/atlas-*.png 目视核对
+        └──▶ tools/assetlib/     各层职责（import 箭头只允许从上往下）
+              ├── pil.py         Pillow 的唯一入口，把 ImportError 变成一句人话
+              ├── config.py      ROOT / 尺寸常量（ROOT 用 parents[2]，拆分时唯一改过语义的行）
+              ├── palette.py     全局调色板常量（INK / SKIN / BRONZE_A…）
+              ├── pixel.py       像素级算子：ramp / add_outline / recolor_hue…
+              ├── metrics.py     量精灵的尺子：solid_rows / 细节密度 / 主色相
+              ├── shapes.py      几何绘制原语：_ell / _bez / _wing_fan…
+              ├── raster.py      缩放与装配：scale2x / supersample / bottom_center
+              ├── sources.py     第三方包坐标（0x72 / ArMM1998 / Kenney）
+              ├── data.py        MONSTERS / ITEM_SRC / KEY_ACCENT（真值表）
+              ├── terrain.py     地板/墙/楼梯 + 三张真值表里的 TERRAIN
+              ├── items.py       道具图标
+              ├── hero.py        勇者（H_* 常量表 + 造型 + 断言）
+              ├── npc.py         六个 NPC（造型 / 职能色 / 比例断言）
+              ├── monsters.py    35 只怪物（13 种形状 + 规模断言）
+              ├── bosses.py      BOSS（64 网格体系 + 剪影/密度断言）
+              └── main.py        唯一有副作用的模块：装配图集、写 MANIFEST
+                    │
+                    ├──▶ assets/atlas/*.png        运行时图集
+                    ├──▶ assets/MANIFEST.json      坐标映射表
+                    └──▶ assets/preview/atlas-*.png 目视核对
 
 tools/preview-board.py           读 MANIFEST，拼一张模拟棋盘
         └──▶ assets/preview/mock-board.png
@@ -116,8 +134,24 @@ python3 tools/preview-board.py    # 目视核对用的对照图
 > 需要 Python 3.8+ 与 Pillow（`python3 -m pip install pillow`）。
 > 用虚拟环境时把解释器路径传给 `npm run assets`：`PYTHON=<venv>/bin/python npm run assets`。
 
-> `tools/build-assets.py` 里 `MONSTERS` / `ITEM_SRC` / `TERRAIN` 三张表是
-> **唯一的映射事实来源**。要换素材或调颜色，改表后重跑，不要改 `atlas/`。
+> `tools/assetlib/data.py`（`MONSTERS` / `ITEM_SRC`）与 `tools/assetlib/terrain.py`（`TERRAIN`）
+> 这三张表是**唯一的映射事实来源**。要换素材或调颜色，改表后重跑，不要改 `atlas/`。
+
+**改素材去哪改（按「你要改什么」找文件）：**
+
+| 想改的东西 | 打开 |
+| --- | --- |
+| 某只怪物叫什么 / 用哪张底图 / 什么色相 | `assetlib/data.py` 的 `MONSTERS`（Boss 另有 `BOSS_IDS` / `OVERSIZE_BOSSES`） |
+| 某件道具的图标形状 | `assetlib/items.py` |
+| 地板 / 墙壁 / 上下楼的样子 | `assetlib/terrain.py` |
+| 勇者 / 某只怪 / 某个 NPC 的造型 | 对应 `hero.py` / `monsters.py` / `bosses.py` / `npc.py`，**动的是文件里的常量行号表**，不是绘制函数里的裸数字 |
+| 全局配色（皮肤、金属三阶、描边墨色） | `assetlib/palette.py` |
+| 输出尺寸 / 超采样次数 / 图集格子 | `assetlib/config.py` |
+
+**断言跟着它的对象走。** 每条素材的尺寸/比例/密度断言与它的绘制函数放在同一个文件里
+（`hero.py` 的 `verify_hero_art`、`npc.py` 的 `verify_npc_scale`、`monsters.py` 的
+`verify_monster_fit`、`bosses.py` 的 `verify_boss_art`、`terrain.py` 的 `verify_terrain`）——
+改造型时会看到同一文件里的判据，不会出现「改了画法、忘了还有个断言在别处」。
 
 ---
 
@@ -197,7 +231,7 @@ orc / orcWarrior ·  bat / bigBat / vampireBat ·  knight / knightCaptain / dark
 >
 > **为什么先不修**：修好后勇者会长出影子，而 NPC 还没有影子，
 > 两只并排会不协调；要一起补就得先定 NPC 的影子画法。
-> 所以先把结论钉在 `build-assets.py` 的 `SOLID_ALPHA` 注释里，等补影子那轮一起做。
+> 所以先把结论钉在 `tools/assetlib/metrics.py` 的 `SOLID_ALPHA` 注释里，等补影子那轮一起做。
 >
 > **它有一个必须记住的副作用**：量精灵比例时**不能用「非透明包围盒」** ——
 > 那两行 alpha=7 的残影会被算进去，勇者会被量成 22~23 而不是 20。
@@ -229,7 +263,7 @@ orc / orcWarrior ·  bat / bigBat / vampireBat ·  knight / knightCaptain / dark
 
 ## 7. 构建脚本里的自动断言
 
-配色和一致性不能靠「看着还行」。`build-assets.py` 内置了若干组断言，
+配色和一致性不能靠「看着还行」。`tools/assetlib/` 内置了若干组断言，
 失败会出现在输出的「需注意」列表里。
 下面按「人类读得懂的顺序」编号，括号里给出**脚本里的落点**（脚本内部的
 注释编号与本节可能不完全一致，以函数名为准）：
@@ -417,7 +451,7 @@ orc / orcWarrior ·  bat / bigBat / vampireBat ·  knight / knightCaptain / dark
 NPC 长得一模一样」，地图上根本分不出谁是卖东西的、谁是给情报的。
 
 素材库里也没有第二套可用的多角色 NPC 集，于是改为在
-`tools/build-assets.py` 里用 `_put()` 一个原语手绘五行像素块。六个职能各一组
+`tools/assetlib/npc.py` 里用 `pixel._put()` 一个原语手绘五行像素块。六个职能各一组
 造型参数（`NPC_ART`），靠**剪影 + 帽子 + 手持物**区分：
 
 | 职能 | 剪影记号 | 手持物 |
@@ -468,7 +502,8 @@ NPC 长得一模一样」，地图上根本分不出谁是卖东西的、谁是�
 
 配色与 `src/render/theme.ts` 的 `NPC_ROLE` 一一对应，同一职能在整座塔里颜色恒定；
 **呼吸不在素材里** —— 图集里每个 NPC 只有 1 帧静止图，上下浮动由渲染层做
-刚体位移（`src/render/board.ts` 的 `NPC_BOB_PX` / `NPC_BOB_MS`，周期 4.2s）。
+刚体位移（`src/render/board/bob.ts` 的 `NPC_BOB_PX` / `NPC_BOB_MS`，周期 2.1s）。
+（这一小块的周期被反复调过三次，演进记录写在 `bob.ts` 文件头。）
 素材里让上半身相对下半身位移必然要在接缝处补偿，而那三种补偿都会改动像素的
 形状（复制一行 = 腰上多一行、留空 = 上下分离、整图上移 = 脚离地），
 玩家读到的就是「被压了一下」。
@@ -556,7 +591,7 @@ NPC 长得一模一样」，地图上根本分不出谁是卖东西的、谁是�
 
 生成的 12 项：炸弹、十字架、雪球、地震卷轴、镜翼、上飞翼、下飞翼、
 传送阵、怪物图鉴、笔记本、**红宝石、蓝宝石** —— 这些在六个免费包里
-**确实找不到对等物件**。由 `build-assets.py` 的 `gen_icon()` 绘制，
+**确实找不到对等物件**。由 `tools/assetlib/items.py` 的 `gen_icon()` 绘制，
 每张都过一道 `add_outline()`，保证和手绘素材一样带深色描边，
 混在一起不会露馅。
 
@@ -586,10 +621,10 @@ NPC 长得一模一样」，地图上根本分不出谁是卖东西的、谁是�
 | 文件 | 改动 |
 |---|---|
 | `src/render/atlas.ts`（新增） | 加载 4 张图集 + 按 `MANIFEST.json` 建 `Texture` 索引；每个 `source.scaleMode = 'nearest'`、`addressMode = 'clamp-to-edge'` |
-| `src/render/board.ts` | 121 个地形槽位改用 `Sprite`（墙按邻域选 `1` / `1:top`）+ 16px 地面平铺底层；怪物走 `idle` 循环精灵；勇者按朝向切 `walk` 帧、战斗时播 `attack` 帧；NPC 用 4 向精灵 |
-| `src/render/hud.ts` | 钥匙与道具栏图标改用 `items` 贴图 |
+| `src/render/board/` | 121 个地形槽位改用 `Sprite`（墙按邻域选 `1` / `1:top`）+ 16px 地面平铺底层；怪物走 `idle` 循环精灵；勇者按朝向切 `walk` 帧、战斗时播 `attack` 帧；NPC 用 4 向精灵（呼吸在 `bob.ts`） |
+| `src/render/hud/` | 钥匙与道具栏图标改用 `items` 贴图（`item-bar.ts`） |
 | `src/render/trade.ts` | 商人 / 商店条目图标改用 `items` 贴图，买不起时置灰（去掉 tint） |
-| `src/app.ts` | `create()` 里 `await loadAtlas()`（Board 构造时要读 `atlas.ready`）；战斗触发时 `playHeroAttack()` |
+| `src/app/` | `create()` 里 `await loadAtlas()`（Board 构造时要读 `atlas.ready`）；战斗触发时 `playHeroAttack()` |
 
 **两种缩放策略，不是一个**
 
@@ -615,7 +650,7 @@ NPC 长得一模一样」，地图上根本分不出谁是卖东西的、谁是�
 （墙贴图 `#433836`，亮部 `#775c55`）—— 冷暖两套色系撞在一起，一眼就看出「周边是后期贴上去的」。
 
 调色对齐是治不住的（两套色系的中间值是脏的），所以改成**平铺同一张贴图**：
-`board.ts` 的 `buildParapet()` 直接取 `atlas.terrain('1')` 的 `source.uid`
+`src/render/board/index.ts` 的 `buildParapet()` 直接取 `atlas.terrain('1')` 的 `source.uid`
 —— 与地图内墙**同一个来源**，结构上就不可能不一致。
 
 | 手法 | 为什么 |
@@ -638,7 +673,7 @@ NPC 长得一模一样」，地图上根本分不出谁是卖东西的、谁是�
 | `inner` | `#1f1815` | 贴着棋盘那一圈的内阴影：让地图**嵌**进塔壁里，而不是浮在墙上 |
 | `edge` | `#120d0b` | 塔壁外缘描边（与夜色交界） |
 
-**回归保护（`verify-visual.cjs` 的 A9）**：断言 `__wallSources()` 里
+**回归保护（`tools/verify/checks/a09-wall-source.cjs`）**：断言 `__wallSources()` 里
 `parapet === inner`（比 `source.uid`，不是比颜色）。比 uid 的好处是
 「以后换贴图 / 又加一层自绘颜色叠加」也会立刻红 —— 颜色可以蒙对，uid 蒙不过去。
 另有像素核对：截图里塔壁与地图内墙的色相差实测 **15°**、`R > B`（暖色）。
@@ -827,7 +862,7 @@ ASCII 廓形 + 逐行宽度序列**，对着**宽度序列**判断，而不是�
 好处是颜色、光照、缩放都不影响判断 —— **只有形状在说话**，
 而这恰好是这一轮唯一要改的东西。
 
-### 13.7 生产端断言（`build-assets.py`）
+### 13.7 生产端断言（`tools/assetlib/` 各模块）
 
 | 断言 | 抓什么 |
 |---|---|
@@ -840,7 +875,7 @@ ASCII 廓形 + 逐行宽度序列**，对着**宽度序列**判断，而不是�
 | `verify_boss_art` ①–⑧ | **BOSS 走 64 网格**，另八条：画布必须 64 / 底行有像素 / idle 帧数 1 / **剪影两两差异 ≥ 400 像素** / **细节密度 ≥ 3.0**（每 8×8 块的中位独立颜色数） / `BOSS_IDS` 与 `data/monsters.json` 的 `boss` 字段一致 / **内部细节 ≥ 1.8**（腐蚀掉轮廓后按 4×4 取均价） / **正面朝向的 BOSS 头部左右对称 ≤ 12%** —— 见 §13.11 / §13.13 |
 | `MONSTERS` ↔ `PROC_MONSTERS` 双向对账 | 声明 `gen` 的与实际画出来的不一致（两边都是漏网的入口） |
 
-### 13.8 运行时断言（`verify-visual.cjs` 的 A12）
+### 13.8 运行时断言（`tools/verify/checks/a12-monster-art.cjs`）
 
 生产端对了，不代表**落屏**是对的 —— 渲染层是「有图集用图集，没有就退回
 `icons.ts` 的程序化图形」，一旦退回，这一轮就等于白做，而画面看上去「还好」。
@@ -981,6 +1016,7 @@ ASCII 廓形 + 逐行宽度序列**，对着**宽度序列**判断，而不是�
 | 内部 4×4 均价（腐蚀 2px） | 1.61 ~ 2.13 | **1.97 ~ 2.28** | 1.8（改前 6/8 只报红） |
 
 > **判据升级的验收方式是「拿旧素材喂新判据」**：把 `git show HEAD:tools/build-assets.py`
+> （拆分前是单文件；拆后同一批函数住在 `HEAD:tools/assetlib/bosses.py`）
 > 载进同一个进程，用它的 `boss_art_frames()` 生成帧、喂给新代码的
 > `verify_boss_art()` —— 实测报红 8 条（4 只内部细节 + vampire 密度 +
 > dragon/demonKingTrue 头部不对称），而新素材 0 条。阈值定在「改前必红」

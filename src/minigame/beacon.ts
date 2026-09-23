@@ -36,7 +36,9 @@
  *
  * ## ⚠️ 本文件不允许出现任何 `import`
  *
- * 和 `env.ts` 同一个理由，而且要求更高：它必须**排在 env.ts 前面**求值，
+ * 和 `env/` 同源的道理（求值顺序即正确性），但它比 `env/` 更严格：
+ * `env/` 只是不许 import **子树之外**的东西，而它连子树内部的兄弟都没有
+ * —— 它必须**排在 `env/` 前面**求值，
  * 否则「连垫片都没装上就死了」这种情况将没有任何痕迹 —— 而那恰恰是最可能发生的一种。
  * 入口 `main.ts` 把它列为第一个 import，本模块无依赖，因此保证最先跑。
  */
@@ -52,7 +54,7 @@ const ON: boolean = __MOTA_WX_BEACON__;
 const BUILD: string = __MOTA_BUILD_ID__;
 
 /**
- * 裸标识符视图 —— **由 `env.ts` 在产物自己的作用域里量好、挂到 `globalThis` 上**。
+ * 裸标识符视图 —— **由 `env/bare.ts` 在产物自己的作用域里量好、挂到 `globalThis` 上**。
  *
  * ## 为什么探针自己不再去量（这一版删掉了用 `new Function` 的旧探针）
  *
@@ -67,7 +69,7 @@ const BUILD: string = __MOTA_BUILD_ID__;
  *    产物自己的作用域链。所以那个探针量的是「宿主给不给」，
  *    不是「pixi 拿到什么」。
  *
- * 正确的位置在 `env.ts` 的 `reportBareReachability()`：它在模块作用域里**直接读**
+ * 正确的位置在 `env/bare.ts` 的 `reportBareReachability()`：它在模块作用域里**直接读**
  * 裸标识符（不写 `typeof X` —— 那样未声明也返回 `'undefined'`，会把最严重的
  * `ReferenceError` 掩盖掉），三态分成 `类型名` / `'undefined'` / `'ReferenceError'`。
  * 这里只负责取走并上报。
@@ -92,7 +94,7 @@ const since = () => Date.now() - started;
 /**
  * 往宿主全局上加一个新键，再读回来 —— 直接回答「这个宿主的全局允许扩展吗」。
  *
- * 这个问题不是学术性的：`env.ts` 里**全部**垫片都是「往 `globalThis` 上装」，
+ * 这个问题不是学术性的：`env/` 里**全部**垫片都是「往 `globalThis` 上装」，
  * 而微信开发者工具的沙箱是白名单式的（探针实测快照 `hasDocument:false,
  * hasPerformance:false`，只给 wx / GameGlobal / requestAnimationFrame）。
  * 白名单沙箱有两种实现，后果完全不同：
@@ -220,7 +222,7 @@ function alsoStore(rec: Any): void {
 export function beaconStage(stage: string, data?: Any): void {
   if (!ON) return;
   // `shim` 是「垫片装完、pixi 已求值」的第一个埋点（由 `pixi-adapter` 发出），
-  // 所以裸标识符视图挂在这一阶段 —— 更早的 `module` 那一步还没跑过 `env.ts`。
+  // 所以裸标识符视图挂在这一阶段 —— 更早的 `module` 那一步还没跑过 `env/`。
   const extra = stage === 'shim' ? { bare: bareReachability(), ...(data ?? {}) } : data;
   report({ stage, t: since(), data: extra ?? null });
 }
@@ -314,7 +316,7 @@ export function beaconInstall(): void {
   // ── 带原生 DOM 的上下文：走浏览器那套事件 ─────────────────────────
   //
   // 这里只在 `globalThis` 上找 `addEventListener`，**不做任何垫片** —— 本模块排在
-  // `env.ts` 之前求值，那一刻垫片还没装，所以只能用宿主真正提供的东西。
+  // `env/` 之前求值，那一刻垫片还没装，所以只能用宿主真正提供的东西。
   // 也故意**不**调 `preventDefault()`：IDE 自己的报错面板该显示还得显示，
   // 我们只是把同一份事实额外存一份到盘上。
   try {
@@ -354,7 +356,7 @@ export function beaconInstall(): void {
  *
  * ## 为什么要「先自己渲染一次」
  *
- * Pixi 的 context 是 `preserveDrawingBuffer: false`（见 `env.ts` 里
+ * Pixi 的 context 是 `preserveDrawingBuffer: false`（见 `env/canvas.ts` 里
  * `getContextAttributes` 的补丁）。这种上下文里，绘制缓冲在**呈现之后**就不保证还有内容，
  * 所以不能在 rAF 回调外面随手 `readPixels` —— 拿回来大概率是全黑，
  * 然后被误判成「画面没出来」。在同一个 rAF 回调里先 `render()` 再 `readPixels`，
@@ -503,12 +505,12 @@ if (ON) {
     // 先报构建号：后面所有结论都要挂在「这是哪一份产物」上
     // （没有它就没法区分「修了没用」和「跑的还是旧包」）。
     build: BUILD,
-    // 宿主全局能不能装新键 —— 直接决定 `env.ts` 那套垫片在这个宿主上有没有用。
+    // 宿主全局能不能装新键 —— 直接决定 `env/` 那套垫片在这个宿主上有没有用。
     writeSticks: writeSticks(),
     // 裸标识符视图（**作用域链**）挂在 `shim` 阶段，不在这里 ——
-    // 这一步还没跑过 `env.ts`，量不到「垫片有没有真的接上」。
+    // 这一步还没跑过 `env/`，量不到「垫片有没有真的接上」。
     // 与下面 `env` 那一栏（**属性视图**，走 `globalThis.X`）对照着看：
-    // 两者不一致就说明这个宿主的全局对象与作用域链分叉了。见 `env.ts` 的 `reportBareReachability`。
+    // 两者不一致就说明这个宿主的全局对象与作用域链分叉了。见 `env/bare.ts` 的 `reportBareReachability`。
     // 这些事实决定了「垫片该怎么补」，先记下来
     //
     // ⚠️ 一律用 `typeof x`（对**未声明的标识符**也安全），不要写 `!!x` ——
@@ -517,7 +519,7 @@ if (ON) {
     hasWx: typeof wx !== 'undefined',
     wxKeys: typeof wx === 'object' && wx ? Object.keys(wx).length : 0,
     hasGameGlobal: !!g.GameGlobal,
-    // 小游戏是「无 DOM 也无 WorkerGlobalScope」的第三种环境（见 env.ts 的注释），
+    // 小游戏是「无 DOM 也无 WorkerGlobalScope」的第三种环境（见 env/canvas.ts 的注释），
     // 把实际情况发回来，省得再靠推断
     hasWindow: typeof g.window !== 'undefined',
     hasDocument: typeof g.document !== 'undefined',

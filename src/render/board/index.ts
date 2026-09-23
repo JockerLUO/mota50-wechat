@@ -17,12 +17,24 @@
  * 有图集就走精灵（`atlas.ready` 为 true），没有就整层退回 `icons.ts` 的程序化
  * 矢量图形。两条路径**共用同一套布局常量与同一个等级指示灯**，所以即使回退，
  * 玩法信息也不会少。
+ *
+ * ── 这个目录里为什么四块东西是分开的 ──────────────────────────────
+ *
+ * 原先这里是**一个 1135 行的 `board.ts`**。切出去的三块都有一个共同特征：
+ * **它们不需要 `this`** —— 纯函数或纯类型，可以脱离棋盘单独读、单独验。
+ *
+ *   types.ts   Facing / EntityView / BoardHooks —— 「棋盘对外承诺了什么」
+ *   bob.ts     待机呼吸（一件被反复微调过三次的规则，值得单独一页）
+ *   attack.ts  挥剑的帧推进与时间轴特效（同样全是 t 的确定函数）
+ *
+ * 留下的这一页是**真的在画东西**的部分：塔壁、地砖、实体精灵、勇者层。
+ * 判断标准同 `app/`：**搬出去之后它还需不需要 `this`**。
  */
 
 import { Container, Graphics, Rectangle, Sprite, Texture, TilingSprite } from 'pixi.js';
-import type { GameData } from '../data';
-import { tileAt, type Dir, type GameState } from '../game/state';
-import { atlas, fitSize, isWallChar, terrainKeyFor, variantIndex } from './atlas';
+import type { GameData } from '../../data';
+import { tileAt, type GameState } from '../../game/state';
+import { atlas, fitSize, isWallChar, terrainKeyFor, variantIndex } from '../atlas';
 import {
   drawHero,
   drawItemGlyph,
@@ -31,171 +43,26 @@ import {
   drawTerrain,
   itemCategoryOf,
   itemColorOf
-} from './icons';
-import { STONE, T, UI, monsterPalette, npcRole } from './theme';
-import { LAYOUT } from './hud';
+} from '../icons';
+import { STONE, T, UI, monsterPalette, npcRole } from '../theme';
+import { LAYOUT } from '../hud';
+import { ATTACK_MS, attackFrameIdx, drawAttackFx } from './attack';
+import { MONSTER_BOB_MS, NPC_BOB_MS, bobPhase, bobPx } from './bob';
+import type { BoardHooks, EntityView, Facing } from './types';
+
+/** 每步走路前进一帧：一步一格 = 一个完整步态循环 */
+const WALK_FRAMES = 4;
 
 /**
  * NPC 落屏造型 —— 分两层，缺一不可：
  *
- * 1. **精灵本身按职能各不相同**（图集里的 npc.<id>，由 tools/build-assets.py 的
- *    NPC_ART 手绘）。之前 6 个 NPC 是同一张图换色，剪影完全一样，
+ * 1. **精灵本身按职能各不相同**（图集里的 npc.<id>，由 `tools/assetlib/npc.py` 的
+ *    `NPC_ART` 手绘）。之前 6 个 NPC 是同一张图换色，剪影完全一样，
  *    在地图上一眼看不出「这个人是卖东西的还是给情报的」。
  * 2. **脚下名牌用职能色**（theme.ts 的 NPC_ROLE，与对话框的职能章同源）。
  *    名字只取前两个字，但颜色与职能章一致 —— 玩家在对话框里认出「金色=交易」之后，
  *    回到地图上还能靠颜色继续认人。
  */
-
-/** 勇者挥剑动画总时长（ms） */
-const ATTACK_MS = 300;
-/** 挥剑序列的帧数（图集 actors.hero.attack 每向 4 帧）—— 见 `attackFrameIdx` */
-const ATTACK_FRAMES = 4;
-/** 每步走路前进一帧：一步一格 = 一个完整步态循环 */
-const WALK_FRAMES = 4;
-
-// ── 待机「呼吸」：渲染层的刚体位移，素材层零参与 ─────────────────────
-//
-// 图集里每只怪 / 每个 NPC 的 idle 只有**一帧静止图**（见 tools/build-assets.py 的
-// `mon_art_frames` / `npc_art_frames`），呼吸完全由这里实现：整只精灵在基准位置与
-// 「上抬 N 像素」之间往复，各实体相位错开，满屏不会同步。
-//
-// ⚠️ 为什么不再放回素材里：素材里让「上半身相对下半身」位移，接缝处就必须补偿 ——
-//    · 复制一行填缝 → 腰上多出一行（读出来是「被压了一下」）
-//    · 留空不填     → 躯干与下摆之间透背景（「上下分离」）
-//    · 整图上移     → 底部锚定下脚离地（「在飘」）
-// 三条路都在**改像素的形状**。玩家两轮的原话是「抖动时出现压缩，像是图层层级错了」，
-// 指的就是前两种。刚体位移只挪整张精灵的位置，任何像素的相对关系都不变 ——
-// 「压缩」在原理上不可能发生。
-//
-// 位移必须是**整数**像素：像素风里非整数坐标（比如用缓动做成平滑曲线）会让纹理的
-// 像素行忽隐忽现，那才是真正的「抖」。
-//
-// ── 节奏（2026-09-23 第三次调：频率翻倍）────────────────────────────
-//
-// 演进记一笔，因为三轮的判断方向是相反的，不写下来下一个人会以为是乱调：
-//   ① 1.2s / 2.4s —— 能看见，但吵。1.2s 一个来回＝每 540ms 就有东西跳一下，
-//      一层楼十几二十只怪相位又错开 → 画面上永远有某处在动，像满屏节拍器。
-//   ② 2.6s / 4.2s —— 安静了，但也「看不见了」：1px 幅度的方波本来就轻，
-//      翻倍拉长之后一只怪 2.6s 才动一下，玩家在棋盘上扫一眼根本注意不到。
-//   ③ 1.3s / 2.1s —— 玩家要求「呼吸频率增加一倍」，即在 ② 的基础上周期减半。
-//      回到接近 ① 的密度，但 **1px 幅度 + 50% 占空比 + 每条 1px 的拾取**没变，
-//      所以读起来是「有节奏的呼吸」而不是 ① 那种「一直有东西在弹」——
-//      ① 之所以吵，一半原因是当时脚下还悬着 10px 的评级点位置，
-//      抬 1px 只是在空白里动，看不出是在呼吸。
-//
-// ⚠️ **改周期必须同步 `tools/verify-visual.cjs` 的 `BOB_WINDOW_MS`**：
-// A20 的采样窗口要盖住一个完整周期，否则它可能只采到「抬起」一档而误报
-// 「两档都出现」那条判据 —— 那会是一条看起来像实现坏了的假红。
-const MONSTER_BOB_PX = 1;
-const MONSTER_BOB_MS = 1300;
-const NPC_BOB_PX = 1;
-const NPC_BOB_MS = 2100;   // 站着的人比怪物慢 —— 不该动得像喘气（比值与 ② 保持一致）
-/** 抬起档占一个周期的比例。50% = 两端等长，最像呼吸（见上面的说明） */
-const BOB_LIFT_DUTY = 0.5;
-
-/**
- * 勇者朝向名，与 MANIFEST 的 dirOrder 一致。
- *
- * 直接等于引擎的 `Dir`（`'up' | 'down' | 'left' | 'right'`）而不是另立一套同形字面量：
- * `playHeroAttack(dir)` 要接玩家按键的方向，两套类型虽然结构相同，
- * 但分开写就多了一个「改了这边忘了那边」的位置。
- */
-export type Facing = Dir;
-
-/** 朝向 → 单位向量。四处都在用（前冲方向、刀光轴、目标格定位），只写一次 */
-const FACING_VEC: Record<Facing, [number, number]> = {
-  down: [0, 1],
-  right: [1, 0],
-  up: [0, -1],
-  left: [-1, 0]
-};
-
-/** 刀光轴方向（弧度，屏幕坐标 y 向下） */
-const FACING_ANGLE: Record<Facing, number> = {
-  right: 0,
-  down: Math.PI / 2,
-  left: Math.PI,
-  up: -Math.PI / 2
-};
-
-/** 挥剑时朝向前冲的峰值位移（px，按 32px 格子计） */
-const ATTACK_LUNGE = 4;
-/** 刀光半径（px，按 32px 格子计） */
-const ATTACK_TRAIL_R = 15;
-/** 刀光扫过的总角度 */
-const ATTACK_SWEEP = (162 * Math.PI) / 180;
-
-const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
-/** 缓出：动画的通用曲线，头快尾慢 —— 挥砍的加速感就来自这里 */
-const easeOut = (v: number): number => 1 - Math.pow(1 - clamp01(v), 3);
-
-/**
- * 待机呼吸：这一帧该把精灵抬起几个像素（0 或该实体的 BOB_PX）。
- *
- * 取**方波**而不是正弦/缓动曲线，是刻意的：像素风里非整数坐标会让纹理的像素行
- * 忽隐忽现（nearest 采样下读出来就是「抖」）—— 那正是这一轮要消灭的东西，
- * 不能拿另一种抖动去换。整数位移 + 1px 幅度，观感是「轻轻喘了口气」。
- *
- * 抬起占 `BOB_LIFT_DUTY`（50%），两端等长 —— 理由见常量那一段。
- * `phase` 让每只怪 / 每个 NPC 各起各落，否则满屏一起点头会很出戏。
- */
-function bobPx(clock: number, v: { monsterId?: string; phase?: number }): number {
-  const amp = v.monsterId ? MONSTER_BOB_PX : NPC_BOB_PX;
-  const period = v.monsterId ? MONSTER_BOB_MS : NPC_BOB_MS;
-  const t = (((clock + (v.phase ?? 0)) % period) + period) % period;
-  return t < period * BOB_LIFT_DUTY ? amp : 0;
-}
-
-/**
- * 实体 key → 呼吸相位（0..1 个周期）。
- *
- * 为什么不用「实体在数组里的下标 × 一个质数」：`entityViews` 会因为走到别的楼层
- * 而整体重建，同一个下标在不同楼层对应的是**不同的怪**；上下楼走一趟回来，
- * 同一格怪的呼吸相位就换了一个 —— 玩家看到的是「刚还在喘的怪，一下楼就换了节拍」。
- *
- * 用 key 的稳定散列就没有这个问题：同一格 + 同一只怪，相位永远一样。
- * 乘 0.618（黄金比）是为了让**相邻格子**的相位尽可能拉开 ——
- * 直接 `hash % period` 时相邻 key（只差一个数字）会得到相邻相位，
- * 结果是一排怪从左上到右下依次点头，像波浪一样整齐，比同步更出戏。
- */
-function bobPhase(key: string, period: number): number {
-  let h = 2166136261;
-  for (let i = 0; i < key.length; i++) {
-    h ^= key.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return ((h >>> 0) % 1000) * 0.001 * 0.618 * period;
-}
-
-interface EntityView {
-  key: string;
-  node: Container | null;
-  x: number;
-  y: number;
-  /** 有值表示这格是怪物，参与 idle 动画 */
-  monsterId?: string;
-  /** 有值表示这格是 NPC，参与呼吸动画 */
-  npcId?: string;
-  /** 有值表示这格是道具（`__sprites()` 用它报出「这一格是什么」） */
-  itemId?: string;
-  sprite?: Sprite;
-  /** 每只怪物错开一点相位，否则满屏怪物同步呼吸，像一个人在动 */
-  phase?: number;
-  /**
-   * 呼吸位移的基准 y（落屏像素）。精灵的实际 y = `restY - 0|1`。
-   * 只在渲染层做刚体位移 —— 见文件头 `MONSTER_BOB_PX` 的说明。
-   */
-  restY?: number;
-}
-
-export interface BoardHooks {
-  /** 悬停到某格；null 表示移出 */
-  onHover?: (x: number, y: number) => void;
-  onClick?: (x: number, y: number) => void;
-  // 这里原本还有一个 `gradeFor`，只服务于怪物脚下的评级指示灯。
-  // 那颗指示点 2026-09-23 被玩家要求移除（见 makeEntityView 里 standY 的说明），
-  // hook 随之删掉 —— 留一个没人读的回调，下次读代码的人会以为脚下还有点。
-}
 
 export class Board extends Container {
   readonly cellPx: number;
@@ -705,7 +572,7 @@ export class Board extends Container {
       // 待机呼吸的「抬起 1px」也才有「脚离地」的读法（原来脚下本来就悬空 10px，
       // 抬 1px 只是在一段空白里动，看不出呼吸）。
       //
-      // 评级信息没有丢：它在 HUD 的战斗面板里（hud.ts 用同一份 GRADE_STYLE）。
+      // 评级信息没有丢：它在 HUD 的战斗面板里（hud/ 用同一份 GRADE_STYLE）。
       const standY = S;
 
       const tex = atlas.ready ? atlas.monster(id, 'idle', 0) : null;
@@ -737,7 +604,8 @@ export class Board extends Container {
         // BOSS 的记号是**脚下的一圈椭圆光环**，不是腰上的圆环。
         //
         // 原来是以格中心为圆心的 `circle(…, S * 0.44)`。BOSS 从 48px 长到
-        // 64px（见 build-assets.py 的 BOSS_DRAW_SCALE）之后，格中心落在它**腰**上，
+        // 64px（`tools/assetlib/config.py` 的 `BIG_SCALE`，经 MANIFEST 的 `drawScale`
+        // 传下来）之后，格中心落在它**腰**上，
         // 落屏后读成「腰里套了个金箍」，而不是「这是个打不过的大块头」。
         // 光环属于**地面**：压住格底、横向铺开、纵向压扁（俯视透视）。
         // 宽高都按格子算，不随精灵高度漂 —— 换素材不会让它跑位。
@@ -898,7 +766,7 @@ export class Board extends Container {
    */
   private refreshHeroTexture(): void {
     if (!this.heroSprite) return;
-    const fi = this.attackFrameIdx();
+    const fi = attackFrameIdx(this.heroAttackMs);
     // 记下来供 `__hero()` 报告「现在贴的是哪套帧」—— A14 靠它正面确认挥剑帧真的用上了
     this.heroAttackFrame = fi;
     const tex =
@@ -914,110 +782,15 @@ export class Board extends Container {
     this.heroSprite.y = this.cellPx;
   }
 
-  /**
-   * 当前挥剑进度对应的帧号（0..ATTACK_FRAMES-1）；不在挥剑时返回 **-1**。
-   *
-   * 用 `-1` 而不是 0 表示「不在挥剑」，是因为 0 是合法的帧号 ——
-   * 拿 0 兼作哨兵，`refreshHeroTexture` 就分不清「刚起手」和「已收招」，
-   * 收招那一帧会留在挥剑造型上。
-   */
-  private attackFrameIdx(): number {
-    if (this.heroAttackMs <= 0) return -1;
-    const p = 1 - this.heroAttackMs / ATTACK_MS;   // 0 → 1
-    return Math.min(ATTACK_FRAMES - 1, Math.max(0, Math.floor(p * ATTACK_FRAMES)));
-  }
-
-  /**
-   * 挥剑特效 —— 精灵不动，攻击感由勇者层上的这三样表达：
-   *
-   *   · **前冲**：整个人沿朝向平移（峰值 `ATTACK_LUNGE` px），收招回位。
-   *     平移而不是缩放 —— 缩放就是「变小」，那正是要修掉的东西。
-   *   · **刀光**：以朝向为轴、扫过 `ATTACK_SWEEP` 的弧，三层同心描边做拖影；
-   *     弧心落在**目标格**（朝向前方那一格）而不是勇者自己身上。
-   *   · **命中火星**：挥到位那一刻（t≈0.5）在目标格炸开四道短线，快速淡出。
-   *
-   * 时间轴由 `heroAttackMs` 单变量驱动，全部是 t 的确定函数 —— 没有随机数，
-   * 所以同一时刻截图必然一致（自动化取证依赖这一点）。
-   */
+  /** 挥剑特效（实现在 `attack.ts`）—— 这里只把棋盘当前的状态喂进去 */
   private drawAttackFx(): void {
-    const g = this.attackFx;
-    g.clear();
-
-    if (this.heroAttackMs <= 0) {
-      // 不在攻击中：把前冲层归零。基准位归 `placeHero()` / 走路插值管，这里不碰
-      this.heroLunge.x = 0;
-      this.heroLunge.y = 0;
-      return;
-    }
-
-    const k = this.cellPx / 32; // 特效尺寸按 32px 格子给，格子大小变了跟着走
-    const t = 1 - this.heroAttackMs / ATTACK_MS;
-    const [vx, vy] = FACING_VEC[this.heroDir];
-    const axis = FACING_ANGLE[this.heroDir];
-
-    // ① 前冲：0 → −1.5（蓄力后拉）→ +4（刺出）→ 0（收招）
-    const lunge = this.attackLungeAt(t) * k;
-    this.heroLunge.x = vx * lunge;
-    this.heroLunge.y = vy * lunge;
-
-    // 目标格中心（勇者朝向前方那一格）；比格子中心再上抬 4px —— 怪物是底部锚定的，
-    // 身体长在格子的中上部，弧心落在格中心会显得「打在脚上」。
-    // 抬得太多（试过 6）弧底会溢出到下一格，压到那格的地形上，看着像画错了地方。
-    const tx = this.heroPos.x * this.cellPx + this.cellPx / 2 + vx * this.cellPx;
-    const ty = this.heroPos.y * this.cellPx + this.cellPx / 2 - 4 * k + vy * this.cellPx;
-
-    // ② 刀光：0.18 → 0.52 扫开，0.52 → 0.82 淡出
-    const sweepP = clamp01((t - 0.18) / 0.34);
-    if (sweepP > 0) {
-      const fade = clamp01(1 - (t - 0.52) / 0.3);
-      const half = (ATTACK_SWEEP * easeOut(sweepP)) / 2;
-      const R = ATTACK_TRAIL_R * k;
-      const a0 = axis - half;
-      const a1 = axis + half;
-      // 实心扇形环（外弧 + 内弧反向围成），不是描边线 ——
-      // 描边画出来是一条细「U」，在暖砂石地砖上既细又和地面同色系；
-      // 实心扇形有面积，才压得住底。
-      g.arc(tx, ty, R, a0, a1);
-      g.arc(tx, ty, R - 5 * k, a1, a0, true);
-      g.closePath();
-      g.fill({ color: T.gold, alpha: 0.55 * fade });
-      // 刃口：扇形外缘再补一条近白的细线，攻击的「锋」落在这一条上
-      g.arc(tx, ty, R - 1.5 * k, a0, a1);
-      g.stroke({ width: 1.6 * k, color: 0xfffbe8, alpha: 0.95 * fade });
-      // 刃尖：扫到哪就亮到哪。没有这个点，弧光只像一圈「U」，看不出挥的方向
-      g.circle(tx + Math.cos(a1) * R, ty + Math.sin(a1) * R, 2.6 * k).fill({
-        color: 0xffffff,
-        alpha: 0.9 * fade
-      });
-    }
-
-    // ③ 命中火星：0.48 → 0.86，四道短线按挥砍平面铺开，长度先涨后收
-    const sparkP = (t - 0.48) / 0.38;
-    if (sparkP > 0 && sparkP < 1) {
-      const grow = Math.sin(Math.PI * sparkP); // 0 → 1 → 0
-      const fade = 1 - sparkP;
-      const rays = [
-        { a: -0.7, len: 9 },
-        { a: 0.7, len: 9 },
-        { a: -2.44, len: 5.5 },
-        { a: 2.44, len: 5.5 }
-      ];
-      for (const r of rays) {
-        const ang = axis + r.a;
-        const len = r.len * k * grow;
-        g.moveTo(tx + Math.cos(ang) * 2 * k, ty + Math.sin(ang) * 2 * k);
-        g.lineTo(tx + Math.cos(ang) * (2 * k + len), ty + Math.sin(ang) * (2 * k + len));
-        g.stroke({ width: 1.6 * k, color: 0xffe9a8, alpha: fade });
-      }
-      g.circle(tx, ty, 2.2 * k * grow).fill({ color: 0xffffff, alpha: 0.85 * fade });
-    }
-  }
-
-  /** 前冲位移的时间曲线（单位：设计像素，t ∈ [0,1]） */
-  private attackLungeAt(t: number): number {
-    if (t < 0.22) return -1.5 * (t / 0.22); // 蓄力：微微后拉
-    if (t < 0.52) return -1.5 + (ATTACK_LUNGE + 1.5) * easeOut((t - 0.22) / 0.3); // 刺出
-    return ATTACK_LUNGE * (1 - easeOut((t - 0.52) / 0.48)); // 收招归位
+    drawAttackFx(this.attackFx, {
+      cellPx: this.cellPx,
+      dir: this.heroDir,
+      pos: this.heroPos,
+      ms: this.heroAttackMs,
+      lunge: this.heroLunge
+    });
   }
 
   /** 浏览别的楼层时把勇者藏起来 —— 他并不在那里 */
@@ -1041,7 +814,7 @@ export class Board extends Container {
     // `sprite.texture`（哪怕指向同一个 Texture）纯属浪费。
     // 收招那一帧也必须走到这里：计时归零后 `attackFrameIdx()` 变 -1，
     // 贴图换回走路帧，否则勇者会定格在举剑造型上。
-    if (this.attackFrameIdx() !== this.heroAttackFrame) this.refreshHeroTexture();
+    if (attackFrameIdx(this.heroAttackMs) !== this.heroAttackFrame) this.refreshHeroTexture();
     this.drawAttackFx();
 
     if (this.heroAnim.active) {
@@ -1059,6 +832,7 @@ export class Board extends Container {
     // 这里以前是「按相位换 4 帧贴图」，那 4 帧是素材层做出来的「上半身上移 1 行
     // + 腰上补一行」，换帧时读出来就是压缩感。现在素材只有 1 帧，
     // 呼吸 = 在基准 y 与「上抬 1px」之间往复 —— 像素形状全程恒定。
+    // 完整理由与三次调参的演进见 `bob.ts`。
     for (const v of this.entityViews) {
       const sp = v.sprite;
       if (!sp || v.restY === undefined) continue;

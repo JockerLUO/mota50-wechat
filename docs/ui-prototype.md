@@ -32,18 +32,67 @@ src/
   data.ts                 数据加载与类型（唯一的数据入口）
   game/
     state.ts              GameState 定义 + 网格查询helper
-    engine.ts             规则引擎：step / useItem / previewBattle / travelTo / buyStat
+    engine/               规则引擎：step / useItem / previewBattle / travelTo / buyStat
+      types.ts              对外结果类型（StepResult / TravelResult / NpcTalk…）
+      naming.ts             名称与文案查询
+      vitals.ts             属性增长 / 等级 / 经验
+      travel.ts             楼层传送与可达性
+      effects.ts            光环、持续效果
+      items.ts              道具使用
+      merchant.ts           商人交互
+      shop.ts               商店购买（引用 core/shop.mjs，不重复公式）
+      step.ts               走一步：战斗 / 拾取 / 开门 / 上下楼
+      index.ts              门面：re-export，外部一律 `from '../game/engine'`
   render/
     theme.ts              配色令牌（单一来源）
-    icons.ts              程序化矢量图形：地形 / 怪物 / 道具 / 勇者
-    board.ts              11×11 棋盘（地形层/实体层/勇者层/浮层）
-    hud.ts                状态栏 / 详情卡 / 道具栏 / 消息条 / 楼层面板 / 工具栏（常驻信息）
+    icons.ts              程序化矢量图形：地形 / 怪物 / 道具 / 勇者（无图集时的兜底）
+    board/                11×11 棋盘（地形层/实体层/勇者层/浮层）
+      types.ts              内部类型（EntityView / MonsterView…）
+      bob.ts                待机「呼吸」：刚体位移，素材层零参与
+      attack.ts             挥剑动画的状态机
+      index.ts              门面：装配与逐格绘制
+    hud/                  状态栏 / 详情卡 / 道具栏 / 楼层面板 / 工具栏（常驻信息）
+      layout.ts             版式常量（唯一来源，A8/A11 的期望值也从这里对撞）
+      text.ts               label / clip / panel —— 所有文字与底板的唯一出口
+      status-bar.ts         顶部状态栏
+      detail-panel.ts       详情卡
+      item-bar.ts           道具栏（按需占位）
+      toolbar.ts            工具栏
+      floor-panel.ts        楼层面板
+      index.ts              门面
     trade.ts              商人交易面板 / 商店三选一面板（模态浮层）
-  app.ts                  输入分发、自动寻路、主循环
+  minigame/
+    env/                  小游戏环境垫片（必须在 pixi 之前求值）
+      state.ts              envState + Any/wxApi
+      assign.ts             属性只读时的安全赋值
+      system.ts             wx.getSystemInfoSync 的唯一入口
+      events.ts             事件总线与事件目标钩子
+      mouse-event.ts        MiniMouseEvent
+      navigator.ts          Intl / navigator 垫片
+      canvas.ts             getContext / 离屏画布 / 展示画布
+      document.ts           DOM 元素桩
+      globals.ts            全局名安装
+      touch.ts              触摸 → 鼠标事件桥
+      display.ts            展示画布预留
+      bare.ts               裸标识符可达性自检（必须裸读）
+      index.ts              门面 + 副作用（安装顺序即依赖顺序）
+  app/
+    pathing.ts            自动寻路（BFS + 撞怪/撞门的最优解）
+    death-overlay.ts      死亡遮罩
+    probe.ts              给验证脚本用的调试探针（__board 等）
+    game.ts               主循环 / 输入分发 / 场景装配
+    index.ts              门面
 ```
 
-**调用方向是单向的**：`app.ts` → `game/` → `core/`，`render/` 只被 `app.ts` 调用，
+> **门面（`index.ts`）是「拆分不产生涟漪」的关键**：拆成目录后，`from '../game/engine'`
+> 这类**不带文件后缀**的 import 会自动解析到目录下的 `index.ts`，导出面与拆分前一字不差。
+> 所以外部调用点、`package.json` 的脚本、文档里的路径全都不用改 —— 只有目录**内部**
+> 才需要写具体的文件名。
+
+**调用方向是单向的**：`app/` → `game/` → `core/`，`render/` 只被 `app/` 调用，
 且 `render/` 里没有任何规则判断（它只问 `engine` 要结论，比如 `previewBattle().grade`）。
+每个目录内部同样是单向的（`index.ts` 在最上层，被依赖的常量/类型在最下层），
+是 DAG 不是环。
 
 `core/combat.mjs` 与 `core/shop.mjs` 是**纯 JS**，Node 校验器和浏览器共用同一份实现 ——
 所以战斗公式在「校验台」「校验器」「游戏界面」三处不可能不一致。
@@ -203,7 +252,7 @@ mota.game.__grant('floorTeleporter')   // 直接发道具，跳过钥匙经济
 | 交易面板「打开了」却一片空白，而且点不动 | `ModalShell` 构造时把自己设成 `visible = false`，之后再没人打开过它。**Pixi 的命中测试第一步就按 `!visible` 剪掉整棵子树** —— 面板看着"开着"，其实既画不出也点不到 | 可见性统一由外层面板控制，外壳不碰 `visible` |
 | 面板第一次打开正常，第二次起全空 | 外壳的 `clearBody()` 顺手 `destroy` 了面板自己持有的 `rowLayer`，之后所有行都加在一个已脱离场景树的容器上 | 外壳**只脱离、不销毁**（内容所有权归子类）；`open()` 里显式把 `rowLayer` 接回 `body` |
 | HUD 在没有商店的层提示「商店第 N 次…」 | 详情卡按"当前层所属档位"算价，但全塔只有 4/12/32/46 层真的摆了商店。第 6 层只有商人，提示却让玩家去找商店 | 新增 `hasNpcOnFloor()`，只在真有商店的层显示；措辞改为「本层商店」。状态栏的「商店收益 ×N」同步改为「收益档位 ×N」 |
-| 渲染层里藏着一份内联的商店价格公式 | `hud.ts` 直接写了 `10 * n * (n - 1) + 20`，与 `core/shop.mjs` 重复 | 改为直接引用 `core/shop.mjs` 的 `shopCost / shopGain` |
+| 渲染层里藏着一份内联的商店价格公式 | 详情卡直接写了 `10 * n * (n - 1) + 20`，与 `core/shop.mjs` 重复 | 改为直接引用 `core/shop.mjs` 的 `shopCost / shopGain`（见 `src/render/hud/detail-panel.ts`） |
 
 ---
 
@@ -382,7 +431,7 @@ npm run verify:all   # 四套回归：sandbox 9/9、visual 14/14、minigame、do
 面板**不重算价格、也不自己判断能不能买**：
 
 ```ts
-// engine.ts                      // trade.ts
+// game/engine/merchant.ts | shop.ts     // trade.ts
 merchantOffers(state, data, floor) → MerchantOffer[]   // blocked: string | null
 shopOptions(state, data)           → ShopView          // affordable / cost / gain
 ```
@@ -512,7 +561,7 @@ npm run verify:visual     # 9/9，其中 A7 是版式一致性
 | 数据 | `data/npcs.json` | 每个 NPC 三段：`talkByFloor`（本层专说）、`greet`（首次见面）、`repeat[]`（之后轮流） |
 | 规则 | `src/game/dialogue.ts` | `npcLine(state, data, id, floor)` 按优先级拼池，用 `state.talked[id]` 取模选句 |
 | 状态 | `src/game/state.ts` | `talked: Record<string, number>` —— 只记次数，不入档位/背包 |
-| 引擎 | `src/game/engine.ts` | 撞 NPC 返回 `StepResult.npc`（`NpcTalk`），**不再由引擎直接开面板** |
+| 引擎 | `src/game/engine/` | 撞 NPC 返回 `StepResult.npc`（`NpcTalk`），**不再由引擎直接开面板** |
 | 面板 | `src/render/dialogue-panel.ts` | 底部弹出卡片：名字 + 职能章 + 台词 + 功能引导 + 「交易」/「结束对话」 |
 
 关键取舍：**先说话，再交易**。上一版撞到商人直接弹交易面板，玩家还没读完台词，
@@ -524,7 +573,7 @@ npm run verify:visual     # 9/9，其中 A7 是版式一致性
 
 ### 15.2 职能造型：六个剪影，六个「你是干什么的」
 
-`tools/build-assets.py` 的 `NPC_ART` 里，六个职能各有一组造型参数，
+`tools/assetlib/npc.py` 的 `NPC_ART` 里，六个职能各有一组造型参数，
 用 `_put()` 一个原语画 16×26 像素画（硬边像素块，不是矢量缩放）：
 
 | 职能 | 剪影记号 | 手持物 |
@@ -547,7 +596,7 @@ thief 灰 / fairy 青 / princess 粉），**同一职能在整座塔里颜色恒
 回归保护：`verify_npc_art()` 在构建期断言「六个剪影互不相同」「脚踩到最底行」
 （底部锚定的精灵一旦浮空，人看起来是在飘）「idle 帧数恰好为 1」。
 **呼吸不在素材里** —— 每个 NPC 只有 1 帧静止图，上下浮动由渲染层做刚体位移
-（`board.ts` 的 `NPC_BOB_PX` = 1px、`NPC_BOB_MS` = 4200ms）。
+（`src/render/board/bob.ts` 的 `NPC_BOB_PX` = 1px、`NPC_BOB_MS` = 2100ms）。
 
 > ⚠️ 数据缺口：`thief` / `fairy` 这两个职能**在参考源的地图里从未被放置**
 > （role 层里只有 32/33/36/39）。造型、职能色、台词都已就绪，但游戏里见不到 ——
@@ -608,7 +657,7 @@ thief 灰 / fairy 青 / princess 粉），**同一职能在整座塔里颜色恒
 先算色差：旧外檐是冷灰蓝 `#8b98ac`，而地图内墙是暖褐 `#433836` / 亮部 `#775c55` ——
 **冷暖两套色系**，怎么调都是「后期贴上去的」。
 
-所以 `board.ts` 的 `buildParapet()` 改成**直接平铺地图内墙那张贴图**
+所以 `src/render/board/index.ts` 的 `buildParapet()` 改成**直接平铺地图内墙那张贴图**
 （`atlas.terrain('1')` 的 `source.uid` 与地图内墙一致），结构上就不可能不一致：
 
 - 平铺是矩形铺满，塔壁要圆角 → 用 `Container.mask`（Graphics 圆角矩形）裁切；
@@ -665,7 +714,7 @@ root.scale = min(w/W, h/H)           // 等比缩放居中
 
 ```ts
 /** 棋盘**含塔壁**的视觉矩形。版面计算与断言都必须用它，而不是 LAYOUT.board */
-export function boardBox() { … }        // hud.ts
+export function boardBox() { … }        // hud/layout.ts
 ```
 
 **A8 断言**逐个数对照令牌：间隙 28 / 棋盘前后 40、棋盘 `span = 352`（**未缩**）、
@@ -692,7 +741,7 @@ export function boardBox() { … }        // hud.ts
 
 ### 16.6 加高的画布连带打破了「硬编码视口」的工具
 
-设计稿从 780 改到 940 之后，`tools/shot-web.cjs` 与 `tools/verify-visual.cjs` 里
+设计稿从 780 改到 940 之后，`tools/shot-web.cjs` 与 `tools/verify/` 里
 硬编码的 `viewport: {height: 780}` 会**静默按旧高度裁** —— 画面下半截被切掉而脚本不报错。
 改成从渲染层暴露的只读快照读设计尺寸：
 
@@ -711,7 +760,7 @@ await page.setViewportSize({ width: design.W, height: design.H });
 
 ### 16.7 本轮新增的三条断言
 
-`tools/verify-visual.cjs` 从 9 项增到 **12 项**：
+`tools/verify/` 从当时的 9 项增到 **12 项**（现已 22 项，见 §19.7）：
 
 | 断言 | 判据 |
 |---|---|
@@ -728,9 +777,9 @@ await page.setViewportSize({ width: design.W, height: design.H });
 
 | 位置 | 旧值 | 新值 |
 |---|---|---|
-| `app.ts` 头注释 | 「设计尺寸 420×780」 | 420×940 |
-| `hud.ts` 版式注释 | 「420×892」 | 420×940 |
-| `hud.ts` 版式注释 | 「面与面之间 24」 | 28（棋盘前后 40） |
+| `app/game.ts` 头注释 | 「设计尺寸 420×780」 | 420×940 |
+| `hud/layout.ts` 版式注释 | 「420×892」 | 420×940 |
+| `hud/layout.ts` 版式注释 | 「面与面之间 24」 | 28（棋盘前后 40） |
 | `backdrop.ts` 头注释 | 「面板之间那 24px 的缝」 | 28px |
 
 这类注释比代码更危险：**代码错了会崩，注释错了会让下一个人按错的数去改**。
@@ -825,11 +874,11 @@ NPC 看着比勇者大。这里有个容易量错的地方：**不能比帧尺�
 
 ### 17.4 本轮新增的两条断言
 
-`tools/verify-visual.cjs` 从 12 项增到 **14 项**：
+`tools/verify/` 从当时的 12 项增到 **14 项**（现已 22 项，见 §19.7）：
 
 | 断言 | 判据 | 抓到过什么 |
 |---|---|---|
-| **A11** 道具栏 | 空背包 `h=0` 且**不参与排版**（`itemsHidden` 且不在 `placed` 里）；1 件 = 75px；10 件 = 114px 且底距 28px | 期望值在 Node 侧**独立重算**（与 `hud.ts` 的 `itemBoxHeight` 对撞），不是 import 渲染层的函数 |
+| **A11** 道具栏 | 空背包 `h=0` 且**不参与排版**（`itemsHidden` 且不在 `placed` 里）；1 件 = 75px；10 件 = 114px 且底距 28px | 期望值在 Node 侧**独立重算**（与 `hud/item-bar.ts` 的 `itemBoxHeight` 对撞），不是 import 渲染层的函数 |
 | **A12** 手绘怪物 | 棋盘上**没有**怪物 `uid === null`（走了程序化兜底）；全部怪物同一个 `source`；落屏帧 ∈ 该怪的 `idle` 四帧且 64×64（raster tile）；6 个取证层里该出现的手绘怪物一只不少（清单**动态**读 MANIFEST，当前 35 只） | 第一次红就是**期望值写错**（按 `idle[0]` 对，而渲染层按相位换帧）—— 见 assets.md §13.8 |
 
 A8（间隙）也跟着动了一处：**最后一个模块的尾隙是自由空间**，不是「两块之间的缝」，
@@ -1023,7 +1072,7 @@ idle 帧数恰好为 1）。
 | ④ | 上下楼梯素材一样 | 素材**结构**问题 | A16（量横剖面走向） |
 
 四条的共同点还是那句老话：**都不能靠眼睛判断，都得各欠一条会红的断言。**
-`verify-visual` 从 14 项增到 **18 项**（新增 A13–A16）。
+`tools/verify/` 从 14 项增到 **18 项**（新增 A13–A16）。
 
 ### 19.1 楼层浏览：不是"返回没生效"，是**根本没有出口**
 
@@ -1172,7 +1221,7 @@ const BODY_PX   = CARD.w - UI.pad * 2;
 const LINE_UNITS = unitsPerLine(BODY_PX, UI.fs.body);   // = 30
 ```
 
-`unitsPerLine(px, fontSize) = floor(px / fontSize)` 放进 `hud.ts`，
+`unitsPerLine(px, fontSize) = floor(px / fontSize)` 放进 `hud/text.ts`，
 和 `clip` / `wrap` 共用同一套单位。**为什么不只是把 32 改成 30**：
 字号、内边距、卡片宽任意一个改动都会让手写的数再次失效，而"算出来"不会。
 `trade.ts` 里同样硬编码的 `34`（备注行 `clip(note, 34)`、建议行 `wrap(advice, 34)`）
@@ -1233,7 +1282,7 @@ A15 从渲染树反推可用宽度（`正文 Text 的 x − 卡片 x = UI.pad`�
 > 这次假红反而有价值：它逼我把"回退"的来源找出来 —— 是踏面左端那 1px 的额外高光，
 > 去掉它，`单调变亮` 这条结构特征才干净。
 
-A16 在 `verify-visual` 里**直接读发布出去的那张图集**：把 `dist/assets/terrain-*.png`
+A16（`tools/verify/checks/a16-stairs.cjs`）**直接读发布出去的那张图集**：把 `dist/assets/terrain-*.png`
 交给浏览器 `createImageBitmap` 解码，按 MANIFEST 的帧矩形切出两格再量横剖面。
 查的是真正落屏的像素，而不是构建脚本里的意图。另有一条 MANIFEST 文案断言
 （`src` 里不许再出现「翻转」）挡住"改了构建脚本忘了重跑 assets"。
@@ -1304,7 +1353,7 @@ A16 在 `verify-visual` 里**直接读发布出去的那张图集**：把 `dist/
 > 第九轮已升到 **`SS = 4`（64 网格）**，并且把手绘地形改成**直接画在 64 网格**
 > （超采样只留给第三方位图）—— 见 §21。
 
-`tools/build-assets.py` 新增 `SS = 2` 与两个出图原语：
+`tools/assetlib/raster.py` 新增 `SS = 2` 与两个出图原语：
 
 - **`scale2x()`** —— AdvMAME Scale2x。每个源像素展开成 2×2，块内取值由
   4 邻域决定（`D==B` 取 D、`B==F` 取 F……）。斜向阶梯被抹成真正的斜边，
@@ -1342,11 +1391,11 @@ A16 在 `verify-visual` 里**直接读发布出去的那张图集**：把 `dist/
 
 ### 20.4 文字光栅化：写死 2 → 跟随屏幕
 
-`hud.ts` 的 `label()` 把 `resolution` **写死成 2**。手机是 `dpr = 3`：
+`hud/text.ts` 的 `label()` 把 `resolution` **写死成 2**。手机是 `dpr = 3`：
 文字按 2× 光栅化，上屏还要再拉 1.5 倍 —— 中文笔画细，这一道拉伸就是
 「面板文字发虚」的全部来源，而且它影响的是**每一块面板**。
 
-现在由 `app.ts` 在 init 之后调 `setTextResolution(renderer.resolution)` 写进来，
+现在由 `src/app/game.ts` 在 init 之后调 `setTextResolution(renderer.resolution)` 写进来，
 夹在 [2,3]。
 
 ### 20.5 断言：两件事都要钉住，缺一条就是假的
@@ -1575,7 +1624,7 @@ A16 在 `verify-visual` 里**直接读发布出去的那张图集**：把 `dist/
 
 ### 22.4 断言：A19 墙必须是手绘错缝砌法
 
-新加一条运行时判据（`verify-visual.cjs` A19，直接量发布出去的图集帧）：
+新加一条运行时判据（`tools/verify/checks/a19-wall-masonry.cjs`，直接量发布出去的图集帧）：
 
 | # | 判据 | 抓的是什么 |
 |---|---|---|
@@ -1633,7 +1682,7 @@ A16 在 `verify-visual` 里**直接读发布出去的那张图集**：把 `dist/
    `b/3/0/2`，一个 **6×4** 的 Graphics，全局坐标 `(111,204)` ——
    正好在第 (2,0) 格的下缘中央。
 
-回源码一眼就找到了：`board.ts` 的 `gradeDot`，「怪物脚下的战斗评级指示灯」，
+回源码一眼就找到了：`src/render/board/index.ts` 的 `gradeDot`，「怪物脚下的战斗评级指示灯」，
 颜色 `shade(怪物主色, -0.62)` —— **所以它才「随怪物变色」**。
 它挂在**每只怪自己的 Container** 上（不是实体层直接的孩子），
 这正是第 1 步按层隐藏会看错的原因。
@@ -1654,7 +1703,7 @@ A16 在 `verify-visual` 里**直接读发布出去的那张图集**：把 `dist/
 这既填满了格子，也让待机呼吸的「抬起 1px」有了「脚离地」的读法
 （原来脚下本来就悬空 10px，抬 1px 只是在一段空白里动，看不出呼吸）。
 
-评级信息没有丢：它在 HUD 的战斗面板里（`hud.ts:621` 用同一份 `GRADE_STYLE`）。
+评级信息没有丢：它在 HUD 的战斗面板里（`src/render/hud/detail-panel.ts` 用同一份 `GRADE_STYLE`，令牌本身在 `render/theme.ts`）。
 `BoardHooks.gradeFor` 这个只服务于脚下点的回调也随之删掉
 （留一个没人读的 hook，下一个人会以为脚下还有点）。
 
@@ -1688,7 +1737,7 @@ A16 在 `verify-visual` 里**直接读发布出去的那张图集**：把 `dist/
 下楼再上来，同一格怪的呼吸相位就变了，玩家看到的是「刚还在喘的怪，一下楼就换了节拍」。
 散列 × 黄金比还顺带避免了「一排怪从左上到右下依次点头」那种比同步更出戏的观感。
 
-> ⚠️ **改周期必须同步 `verify-visual.cjs` 的 `BOB_WINDOW_MS`**：
+> ⚠️ **改周期必须同步 `tools/verify/checks/a20-idle-bob.cjs` 的 `BOB_WINDOW_MS`**：
 > A20 的采样窗口要盖住一个完整周期，否则可能只采到「抬起」一档，
 > 误报「呼吸没生效」。窗口随周期一起减半：**5600ms → 2800ms**
 > （NPC 周期 2100 的 1.33 倍，留出相位余量）。
@@ -1788,7 +1837,7 @@ NPC 4200→**2100ms**，`BOB_WINDOW_MS` 5600→**2800ms** 同步。
 玩家原话：「增加 boss 的精细程度增加更多细节，把『龙』转成正面面对玩家」。
 
 **渲染层零改动** —— 这一轮全在素材侧。8 只 BOSS 仍是 64px 1:1 落屏、脚下的
-金色椭圆光环照旧（§23.6），所以 `verify-visual` 的 22 条判据一条都没动。
+金色椭圆光环照旧（§23.6），所以 `tools/verify/` 的 22 条判据一条都没动。
 
 素材侧的两件事（细节清单、判据升级、龙的新记号表都写在 `assets.md` §13.13）：
 

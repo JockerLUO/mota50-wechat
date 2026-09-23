@@ -1,7 +1,7 @@
 /**
  * 交易类浮层 —— 商人（分楼层商品）与商店（三选一买属性）。
  *
- * 与 hud.ts 的分工：hud 画常驻信息，这里画**模态浮层**。
+ * 与 `render/hud/` 的分工：hud 画常驻信息，这里画**模态浮层**。
  *
  * 这两块面板有一条硬纪律：**只画引擎算好的报价，不自己重算价格、也不自己判断能不能买。**
  * 「可成交与否」由 `engine.merchantOffers()` / `engine.shopOptions()` 决定后带进来
@@ -41,7 +41,7 @@ const HEAD_H = 84;
  *
  * 这两处以前都写 34：备注是 body 字号(11.5) → 34 单位 = 391px，
  * 而可用宽只有 352px，会捅出卡片；建议行是 label 字号(10.5) → 357px，也超。
- * 见 hud.ts `unitsPerLine`。
+ * 见 `hud/text.ts` 的 `unitsPerLine`。
  */
 const NOTE_UNITS = unitsPerLine(INNER_W, UI.fs.body);
 const ADVICE_UNITS = unitsPerLine(INNER_W, UI.fs.label);
@@ -57,7 +57,7 @@ function fmtPerPoint(v: number): string {
 }
 
 /**
- * 折行用的是 hud.ts 那一份 —— 这里曾经自己抄了一遍同样的算法，
+ * 折行用的是 `hud/text.ts` 那一份 —— 这里曾经自己抄了一遍同样的算法，
  * 两边一旦分头改（比如某一处补了标点处理），同一个面板里的两段文字
  * 就会用两套宽度口径，看着像排版坏了。
  */

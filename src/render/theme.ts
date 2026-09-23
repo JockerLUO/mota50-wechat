@@ -106,7 +106,7 @@ export const UI = {
   titleYHead: 14,
   /**
    * 渲染树标记。面板容器打 `panel:<id>`、它的标题 Text 打 `panelTitle` ——
-   * 自动化（tools/verify-visual.cjs 的 A7）据此在**真的渲染树**上量出
+   * 自动化（tools/verify/checks/a07-panel-layout.cjs 的 A7）据此在**真的渲染树**上量出
    * 「每块面板的标题落在哪里」，而不是读源码里写了什么。
    * 两个字符串只有这一处定义：打标记和读标记用同一份，改名字不会只改一边。
    */
@@ -408,7 +408,7 @@ export function realm(): RealmView {
 // 冷灰蓝 #8b98ac —— 冷暖两套色系，撞在一起就是「周边是后期贴上去的」。
 //
 // 下面这组值取自那张墙贴图（亮部 #775c55 往暖里推一档），
-// 由 tools/verify-visual.cjs 的 A9 在**截图上**核对「外檐像素与地图墙同色族」。
+// 由 tools/verify/checks/a09-wall-source.cjs 的 A9 在**截图上**核对「外檐像素与地图墙同色族」。
 export const STONE = {
   /** 墙面主体 */
   face: 0x7a5c4e,

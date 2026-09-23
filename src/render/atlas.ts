@@ -4,7 +4,8 @@
  * 三条约定：
  *
  * 1. **MANIFEST 是唯一事实来源。** 本文件不写死任何坐标，全部从 MANIFEST 读。
- *    要换素材或调颜色，改 `tools/build-assets.py` 重跑，不要动这里。
+ *    要换素材或调颜色，改 `tools/assetlib/data.py`（映射表）/ `terrain.py`
+ *    （地形）/ `config.py`（尺寸）后重跑，不要动这里。
  *
  * 2. **`scaleMode` 必须是 `nearest`。** 素材是像素画，放大时不能插值。
  *    （网格在构建期已超采样到 rasterTile，运行时按 drawScale 落屏，见 MANIFEST.meta）
