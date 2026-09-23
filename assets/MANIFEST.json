@@ -1,6 +1,6 @@
 {
   "meta": {
-    "generatedAt": "2026-09-23T01:32:52+00:00",
+    "generatedAt": "2026-09-23T02:25:20+00:00",
     "generator": "tools/build-assets.py",
     "baseTile": 16,
     "rasterTile": 64,
@@ -345,9 +345,9 @@
       ]
     },
     "skeletonCaptain": {
-      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
-      "note": "手绘·骷髅队长：金盔金甲 + 圆盾",
-      "drawScale": 0.5,
+      "src": "本仓库手绘（tools/build-assets.py: PROC_BOSSES，64 网格 1:1 落屏）",
+      "note": "手绘·骷髅队长（64 网格 BOSS）：金盔金甲 + 圆盾 + 骨剑",
+      "drawScale": 1.0,
       "atlas": "monsters",
       "frame": {
         "w": 64,
@@ -411,9 +411,9 @@
       ]
     },
     "vampire": {
-      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
-      "note": "手绘：高领斗篷 + 獠牙 + 红眼（旧为 zombie 换紫，毫无吸血鬼特征）",
-      "drawScale": 0.5,
+      "src": "本仓库手绘（tools/build-assets.py: PROC_BOSSES，64 网格 1:1 落屏）",
+      "note": "手绘·吸血鬼伯爵（64 网格 BOSS）：高领斗篷 + 尖牙 + 红眼",
+      "drawScale": 1.0,
       "atlas": "monsters",
       "frame": {
         "w": 64,
@@ -721,9 +721,9 @@
       ]
     },
     "archmage": {
-      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
-      "note": "手绘·大法师：金袍最高帽 + 金宝珠 + 长白须",
-      "drawScale": 0.5,
+      "src": "本仓库手绘（tools/build-assets.py: PROC_BOSSES，64 网格 1:1 落屏）",
+      "note": "手绘·大法师（64 网格 BOSS）：金袍高帽 + 金宝珠 + 长白须",
+      "drawScale": 1.0,
       "atlas": "monsters",
       "frame": {
         "w": 64,
@@ -963,9 +963,9 @@
       ]
     },
     "knightCaptain": {
-      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
-      "note": "手绘·骑士长：白银甲金饰 + 红披风金羽",
-      "drawScale": 0.5,
+      "src": "本仓库手绘（tools/build-assets.py: PROC_BOSSES，64 网格 1:1 落屏）",
+      "note": "手绘·骑士长（64 网格 BOSS）：白银甲金饰 + 红披风金羽",
+      "drawScale": 1.0,
       "atlas": "monsters",
       "frame": {
         "w": 64,
@@ -1029,9 +1029,9 @@
       ]
     },
     "dragon": {
-      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
-      "note": "手绘：角 + 长吻 + 展翼 + 卷尾（旧为 chort 小鬼）",
-      "drawScale": 0.75,
+      "src": "本仓库手绘（tools/build-assets.py: PROC_BOSSES，64 网格 1:1 落屏）",
+      "note": "手绘·魔龙（64 网格 BOSS）：巨角 + 长吻 + 展翼 + 卷尾",
+      "drawScale": 1.0,
       "atlas": "monsters",
       "frame": {
         "w": 64,
@@ -1051,9 +1051,9 @@
       ]
     },
     "kraken": {
-      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
-      "note": "手绘：圆头 + 侧鳍 + 六条打卷的腕（旧为 swampy 绿衣人）",
-      "drawScale": 0.75,
+      "src": "本仓库手绘（tools/build-assets.py: PROC_BOSSES，64 网格 1:1 落屏）",
+      "note": "手绘·巨型乌贼（64 网格 BOSS）：圆头 + 侧鳍 + 六条腕",
+      "drawScale": 1.0,
       "atlas": "monsters",
       "frame": {
         "w": 64,
@@ -1073,9 +1073,9 @@
       ]
     },
     "demonKing": {
-      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
-      "note": "手绘：巨角 + 膜翼 + 发光眼，紫",
-      "drawScale": 0.75,
+      "src": "本仓库手绘（tools/build-assets.py: PROC_BOSSES，64 网格 1:1 落屏）",
+      "note": "手绘·魔王（64 网格 BOSS）：巨角 + 膜翼 + 发光眼",
+      "drawScale": 1.0,
       "atlas": "monsters",
       "frame": {
         "w": 64,
@@ -1095,9 +1095,9 @@
       ]
     },
     "demonKingTrue": {
-      "src": "本仓库手绘（tools/build-assets.py: MON_SHAPES）",
-      "note": "手绘：同形状换猩红 + 金冠（真身）",
-      "drawScale": 0.75,
+      "src": "本仓库手绘（tools/build-assets.py: PROC_BOSSES，64 网格 1:1 落屏）",
+      "note": "手绘·魔王真身（64 网格 BOSS）：高举巨翼 + 三段长角 + 金冠",
+      "drawScale": 1.0,
       "atlas": "monsters",
       "frame": {
         "w": 64,

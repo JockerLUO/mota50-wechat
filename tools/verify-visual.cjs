@@ -35,6 +35,7 @@
  *   A15 对话折行：台词折行不超卡片内宽、不以收尾标点开头（中文行首禁则）
  *   A16 上下楼梯：两张瓦片既不逐像素相同、也不互为上下翻转，且形体走向各就各位
  *   A17 像素密度：图集帧升到出图网格（原始素材 ×supersample）、drawScale 同比缩小，落屏尺寸不变
+ *             （怪物落屏允许三档：一格 32 / 大家伙 48 / BOSS 的两格 64）
  *   A18 文字光栅化分辨率跟随设备像素比（dsf=3 时必须是 3，写死 2 会挂）
  *   A19 墙是手绘错缝砌法（调色板 ≥5 色、相邻砌层竖缝错开半块），不是第三方位图的超采样
  *   A20 待机呼吸是渲染层的刚体位移：贴图/帧高全程不变，只在原位上抬 1px
@@ -56,14 +57,14 @@ const VERBOSE = process.argv.includes('--verbose');
  * A20 的采样窗口（ms）。
  *
  * 必须**盖住一个完整呼吸周期**，否则会拍到「一直在原位」的实体，假红成
- * 「呼吸没生效」。渲染层的周期见 board.ts：怪物 2600ms、NPC 4200ms ——
- * 取 5600 是为了给 NPC 留出余量（它的相位可能刚好从「刚落回」开始，
- * 窗口只比周期大一点点时余量会被相位吃掉）。
+ * 「呼吸没生效」。渲染层的周期见 board.ts：怪物 1300ms、NPC 2100ms ——
+ * 取 2800 是为了给 NPC 留出余量（它的相位可能刚好从「刚落回」开始，
+ * 窗口只比周期大一点点时余量会被相位吃掉；这里是 2100 的 1.33 倍）。
  *
  * ⚠️ board.ts 里那两个周期**一改就要回来同步这个值**。漏同步的后果是一条
  * 很难看的假红：A20 报「某个实体一次都没动」，而实现其实完全正常。
  */
-const BOB_WINDOW_MS = 5600;
+const BOB_WINDOW_MS = 2800;
 
 // ── 期望值：在 Node 侧独立重实现一遍渲染规则 ────────────────────────
 // ⚠️ 这里的映射必须与 src/render/atlas.ts 的 CHAR_TO_KEY 一致。
@@ -1200,17 +1201,26 @@ function check(name, ok, detail) {
           `应当是 ${rasterTile} 网格 × ${wantScale}`
       );
     }
-    // 怪物：帧一律 = rasterTile 网格；落屏要么一格、要么「大家伙」1.5 格。
-    // 大家伙以前靠「不超采样 + 整数倍」表达体型，现在改成同一网格 + 小数倍，
-    // 所以判据从「维持 16 网格」改成「落屏仍是 1.5 格」。
+    // 怪物：帧一律 = rasterTile 网格；落屏要么一格、要么「大家伙」1.5 格、
+    // 要么 BOSS 的两格。三段尺寸各有出处，不是拍脑袋放行：
+    //   · 一格(32)    —— 普通怪，必须装进格子（格子边界决定「走进哪格打谁」）；
+    //   · 1.5 格(48)  —— 旧的「大家伙」档（现已无怪使用，留着兼容手工试验）；
+    //   · 两格(64)    —— BOSS：画在 64 网格、1:1 落屏（`BOSS_DRAW_SCALE = 1.0`）。
+    //     ⚠️ BOSS 从 48px 长到 64px 时，这条判据是**唯一报红的**（它硬编码了
+    //     「大家伙 = 1.5 格」）。放行 64 不会放过杂兵：谁允许画大由 A6 单独把关
+    //     （「画得比一格大的必须都是玩法 BOSS」），两条判据是互补的。
     const monBad = [];
     for (const [id, node] of Object.entries(MANIFEST.monsters)) {
       if (!node) continue;
       const onScreen = node.frame.w * node.drawScale;
       if (node.frame.w !== rasterTile) {
         monBad.push(`${id} 帧 ${node.frame.w} 不是 ${rasterTile} 网格`);
-      } else if (!near(onScreen, cell) && !near(onScreen, cell * 1.5)) {
-        monBad.push(`${id} 落屏 ${onScreen} 既不是一格(${cell}) 也不是大家伙(${cell * 1.5})`);
+      } else if (
+        !near(onScreen, cell) && !near(onScreen, cell * 1.5) && !near(onScreen, cell * 2)
+      ) {
+        monBad.push(
+          `${id} 落屏 ${onScreen} 既不是一格(${cell})、大家伙(${cell * 1.5})，也不是 BOSS 的两格(${cell * 2})`
+        );
       }
     }
     if (monBad.length) densBad.push(`怪物网格/落屏不对：${monBad.slice(0, 3).join(' ')}`);
