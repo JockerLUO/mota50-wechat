@@ -29,7 +29,13 @@ vite.config.ts            base './'，host 固定 localhost
 src/
   main.ts                 引导 + 失败兜底
   style.css               只负责「铺满窗口」，不含任何 UI 样式
-  data.ts                 数据加载与类型（唯一的数据入口）
+  data/                   数据加载与类型（唯一的数据入口，见 §3）
+    types.ts              纯类型，没有一行可执行代码
+    source.ts             JsonSource 契约（只有一个 read(key)）
+    source-web.ts         网页端取数：构建期内联（import.meta.glob）
+    source-minigame.ts    小游戏端取数：运行期读代码包（readFileSync）
+    runtime-files.mjs     运行时数据清单 —— 跨语言共享的单一来源
+    index.ts              加载 + 索引 + 便捷查询（外部一律 import '../data'）
   game/
     state.ts              GameState 定义 + 网格查询helper
     engine/               规则引擎：step / useItem / previewBattle / travelTo / buyStat
@@ -101,16 +107,27 @@ src/
 
 ## 3. 数据零拷贝
 
-`src/data.ts` 用两条路径直接读仓库根的原始数据，**不做任何拷贝或转写**：
+`src/data/` 里的加载逻辑用两条路径直接读仓库根的原始数据，**不做任何拷贝或转写**：
 
 ```ts
-import tilesJson from '../data/tiles.json';                       // 静态导入
-const floorModules = import.meta.glob('../data/floors/*.json', {   // 全量预载
+import tilesJson from '../../data/tiles.json';                        // 静态导入
+const floorModules = import.meta.glob('../../data/floors/floor-*.json', {  // 按需预载
   eager: true, import: 'default'
 });
 ```
 
 这样从根上排除了「内联副本与数据源漂移」—— 这正是前几轮反复出现的 bug 类型。
+
+⚠️ **「不拷贝」这条规矩只对网页端成立。** 小游戏端没法在构建期读文件，
+只能把 `data/*.json` **拷进代码包**、运行期用 `wx.getFileSystemManager().readFileSync` 读
+（官方「文件系统」：代码包文件读=有、写=无，路径从包根写起、不支持 `./` 前缀）。
+于是「拷贝副本会不会比源旧」这个老问题在小游戏侧**又回来了一次** ——
+它现在由 `verify:minigame` 的「包内 data 与 `data/` 源码逐字节一致」那条判据守着
+（与图集那条同一套路，见 `docs/wechat-minigame.md` §7、§9.12）。
+
+两端的差异**只体现在取数实现上**：`src/data/index.ts` 一律只写 `from '@data-source'`，
+两个 vite 配置各自把这个 alias 指到 `source-web.ts` / `source-minigame.ts`，
+**游戏代码里没有一处 `if (isMinigame)`**。
 
 > ⚠️ **上线前要改**：当前 51 层 JSON 全部进主包（主包 439 KB / gzip 135 KB）。
 > 微信小游戏主包 4 MB 够用，但应按需加载或放分包，见 `docs/data-spec.md` 的体积预算。

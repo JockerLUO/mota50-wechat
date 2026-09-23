@@ -1,10 +1,11 @@
 /**
  * 微信小游戏构建配置。
  *
- * 与网页端（`vite.config.ts`）的三处关键差异：
+ * 与网页端（`vite.config.ts`）的四处关键差异：
  *
- * 1. **产物形态**：小游戏入口是一个「脚本」而不是页面，所以走 `lib` 模式的 `iife`，
- *    产出单个 `game.js`。没有 index.html。
+ * 1. **产物形态**：小游戏入口是一个「脚本」而不是页面，产出 `game.js`。
+ *    但**不是一个单文件** —— 见下面「为什么产物是两个文件」那一节。
+ *    没有 index.html。
  *
  * 2. **资源路径不经过 Vite 的资源管线**：网页端 `import png from '...png'` 会变成带
  *    hash 的 URL，而相对 URL 的解析在 Vite 里依赖 `document.baseURI`
@@ -12,16 +13,67 @@
  *    图集的 import **直接换成包内相对路径字面量**：`'assets/terrain.png'`。
  *    文件名不带 hash 也就意味着「包里的文件名 = 构建期写死的名字」，
  *    由 `tools/copy-minigame-assets.mjs` 负责把它们原样拷进包内，两边对得上。
+ *    数据同理：`data/*.json` 由那个脚本拷进包，运行期用
+ *    `wx.getFileSystemManager().readFileSync` 读（见 `src/data/source.ts`）。
  *
- * 3. **不压缩**：小游戏主包上限 4MB，本项目图集加起来才几十 KB、单文件产物几百 KB。
+ * 3. **不压缩**：小游戏主包上限 4MB，本项目图集加起来才几十 KB、单个 js 也就几百 KB。
  *    保留可读性，在微信开发者工具里能直接看堆栈。
  *
- * 注意本文件**不引入任何 node 内置模块**（项目没装 @types/node）。
+ * 4. **数据源与网页端不同**：`@data-source` 这个 alias 在这里指向
+ *    `source-minigame.ts`（运行期读代码包），网页端指向 `source-web.ts`
+ *    （构建期内联）。见 `src/data/index.ts` 文件头。
+ *
+ * ## 为什么产物是 `game.js` + `boot.js` 两个文件
+ *
+ * 单文件 2MB 在 IDE 里没法看 —— 这不是美观问题：「业务代码到底在跑哪一版」
+ * 这种问题每次都要靠堆栈行号反推。拆开之后 `game.js` 只有几百 KB，
+ * 且**不含 pixi**，可以直接读。
+ *
+ * 但拆分边界不能随便选。小游戏是 CommonJS 模块环境，而 CJS 的求值顺序是
+ * **「依赖先于自身」** —— 入口天然是最后一个求值的。这与本项目的两条硬约束
+ * 直接冲突：
+ *
+ *   - `beacon` 必须**最先**（它要抓的正是「连垫片都没装上就死了」）
+ *   - `env/` 的全局垫片必须**早于 pixi 的模块体**（pixi 模块顶层就读裸标识符
+ *     `Intl` / `navigator`，见 PRELUDE 那一大段说明）
+ *
+ * 所以**不能**按「我们的代码 vs 第三方库」拆 —— 那样 pixi 所在的 chunk 必然先求值，
+ * 两条约束全破。正确的边界是**按「必须最先求值的那一层」拆**：
+ *
+ *   boot.js = PRELUDE（intro） + beacon + env/ 子树 + pixi
+ *   game.js = 其余全部（我们的业务代码）
+ *
+ * 这三者**在同一个 chunk 内**，模块顺序仍由 Rollup 按依赖图排（与拆分前
+ * 单文件 IIFE 时**完全同一个机制**）；`main.ts` 里 `import './beacon'` 排第一、
+ * `import './env'` 排第二，于是它们在 pixi 之前 —— 这条保证与拆分前**强度相同**，
+ * 不是「靠猜」。
+ *
+ * 另外每个 chunk 顶部都带一份 PRELUDE（`output.intro` 是对每个 chunk 生效的）。
+ * 这是有意的冗余：PRELUDE 里那些 `globalThis.X || (globalThis.X = …)` 都是幂等的，
+ * 重复执行拿到的是同一个对象；而它多垫的那一层正好覆盖「pixi 模块体要用的
+ * 裸标识符」——即便哪天 Rollup 的模块排序变了，也还有这道保险。
+ *
+ * ⚠️ 构建后**必须实测** boot.js 里 `installGlobals()` 的调用位置早于 pixi 的
+ *    模块体（判据见 `tools/verify-minigame.cjs` 的包结构一节）。
+ *
+ * 注意本文件**不引入任何 node 内置模块**（项目没装 @types/node），
+ * 所以下面用的是 `new URL(..., import.meta.url).pathname` 而不是 `node:path`。
  * 「往包目录里拷文件」这件事拆到了 `tools/copy-minigame-assets.mjs`，
  * 由 npm script 在构建后调用 —— 职责也更清楚：Vite 管打包，脚本管拷包。
  */
 
 import { defineConfig, type Plugin } from 'vite';
+
+/**
+ * 小游戏端的数据源实现（运行期读代码包内文件）。
+ *
+ * 与网页端二选一，规则见 `src/data/index.ts` 文件头。
+ * ⚠️ 改这个值时别忘了 `package.json` 的 `build:minigame` 还要跑一遍
+ * `tools/copy-minigame-assets.mjs` —— 是它把 `data/` 拷进包里的。
+ */
+const DATA_SOURCE_MINIGAME = decodeURIComponent(
+  new URL('./src/data/source-minigame.ts', import.meta.url).pathname
+);
 
 /**
  * 构建号 —— 打进产物、由取证探针报回来。
@@ -235,6 +287,12 @@ export default defineConfig(({ mode }) => ({
   base: '',
   plugins: [atlasPlainUrl()],
 
+  resolve: {
+    alias: {
+      '@data-source': DATA_SOURCE_MINIGAME
+    }
+  },
+
   /**
    * 启动取证探针的开关（见 `src/minigame/beacon.ts`）。
    *
@@ -258,7 +316,7 @@ export default defineConfig(({ mode }) => ({
      * appid」，而且不报错，只是下次打开工程多一个说不清的提示。
      *
      * 代价是残留文件，所以「哪些文件该在包里」这件事改由
-     * `tools/copy-minigame-assets.mjs` 显式负责（它会清掉不再需要的图集）。
+     * `tools/copy-minigame-assets.mjs` 显式负责（它会清掉不再需要的图集与数据文件）。
      * 这其实比 vite 的盲目清空更安全：小游戏主包有 4MB 上限，
      * 「包里只有什么」本来就该是一条明确断言，而不是「反正清空了」。
      */
@@ -289,29 +347,104 @@ export default defineConfig(({ mode }) => ({
      * ⚠️ 改这个值时**必须同步**改 `tools/verify-minigame.cjs` 里的
      * `SYNTAX_FLOOR` —— 那条判据会用 esbuild 以该目标复算 token 计数，
      * 计数一旦对不上就说明产物里混进了高于地板的语法。两处对齐，IDE 报错才会
-     * 提前变成「本地构建期就红」。
+     * 提前变成「本地构建期就红」。这条判据现在**对每个 chunk 都跑**（game.js + boot.js），
+     * 因为云端检查器看到的是两个文件。
      */
     target: 'es2015',
     minify: false,
     chunkSizeWarningLimit: 4000,
-    lib: {
-      entry: 'src/minigame/main.ts',
-      name: 'motaGame',
-      formats: ['iife'],
-      fileName: () => 'game.js'
-    },
+    /**
+     * 关掉 module preload 的 polyfill 注入。
+     *
+     * 小游戏里没有 `<link rel="modulepreload">` 这回事，这个 polyfill 没有意义。
+     *
+     * ⚠️ **它拦不住 `__vitePreload` 包装本身**（实测确认）：产物里仍然有
+     * `__vitePreload(loader, void 0, <import.meta.url 的展开式>)`。
+     * 而那句展开式在无 DOM 宿主里会抛 —— 真正的修法在 `src/minigame/env/document.ts`
+     * 的 `doc.baseURI`（给相对 URL 一个绝对基准），这里只是把没用的 polyfill 摘掉。
+     *
+     * 展开式的形态（`cjs` 格式下由 Rollup 生成，两个分支小游戏都用不了）：
+     *
+     *   typeof document === "undefined"
+     *     ? require("url").pathToFileURL(__filename).href          // 左支：小游戏没有 url 模块
+     *     : _documentCurrentScript && … || new URL("boot.js", document.baseURI).href
+     *                                                              // 右支：baseURI 必须有效
+     *
+     * 左支取不到（我们的 `document` 是词法绑定，`typeof` 永不为 `undefined`），
+     * 所以只要 baseURI 有效就不会抛。
+     */
+    modulePreload: false,
     rollupOptions: {
+      /**
+       * 入口用 `input` 而不是 `build.lib` 的 `formats: ['iife']`。
+       *
+       * 原因只有一个：**iife 格式只支持单 chunk**，而我们要拆成两个文件。
+       * 换成 `cjs` 之后产物是小游戏原生的 CommonJS 模块
+       *（官方「基础能力 / 模块化」：每个 js 文件是独立作用域，用 `require` 互引），
+       * 于是 `game.js` 开头会是 `var boot = require('./boot.js')`。
+       *
+       * ⚠️ `require` 的写法有讲究：路径**必须带 `.js` 后缀**。
+       * 官方文档的示例（`require('./src/util/drawLogo')`）不带后缀，
+       * 但那依赖基础库「猜后缀」的行为；把小游戏包丢给别的构建工具或做静态分析时，
+       * 带后缀是唯一无歧义的写法，而带后缀也一定能命中（文件确实叫 `boot.js`）。
+       * 宿主侧（`tools/minigame-harness/`）刻意**不复刻猜后缀逻辑** ——
+       * 让本地就能把「路径写错」抓出来。
+       */
+      input: 'src/minigame/main.ts',
       output: {
-        inlineDynamicImports: true,
+        format: 'cjs',
+        /** 入口固定叫 game.js（小游戏约定的入口名，不能变） */
+        entryFileNames: 'game.js',
+        /**
+         * 其余 chunk 用 `[name].js`，`name` 由下面的 `manualChunks` 给。
+         * 刻意**不加 hash**：小游戏包内文件名要能被 require 静态指到，
+         * 而带 hash 的名字会让「包里有个 boot.js」这件事每次构建都变。
+         */
+        chunkFileNames: '[name].js',
         assetFileNames: 'assets/[name][extname]',
+        /**
+         * 拆包边界 —— 只有一条：**引导层 + 第三方库** 进 `boot`，其余留在入口。
+         *
+         * ## 为什么必须是「引导层 + pixi」而不是「pixi」单独一个包
+         *
+         * 见文件头那一节。一句话：CJS 的 chunk 执行顺序是「被依赖的先执行」，
+         * 而入口依赖 boot，所以 boot 一定先跑。若把 `env/` 留在入口、
+         * 只把 pixi 拆出去，pixi 就会**早于垫片**求值 —— 那是把这个项目
+         * 花了好几轮才修好的 `Intl is not defined` / `navigator is undefined` /
+         * `document.createElement undefined` 三个坑一次性踩回去。
+         *
+         * 三者同 chunk 后，它们的相对顺序仍由 Rollup 按依赖图排，
+         * 与拆分前单文件时是**同一个机制**（`main.ts` 里 beacon 第一、env 第二）。
+         *
+         * ## 为什么用函数形式而不是对象形式
+         *
+         * 对象形式要写出「pixi 的全部入口 id」，而 `pixi.js/unsafe-eval`、
+         * `pixi.js`、以及 pixi 内部的子路径是三个不同的 id。函数形式按**路径**判断，
+         * 一次覆盖 `node_modules/pixi.js/` 下的全部模块，加一个 pixi 子路径时
+         * 不需要改这里。
+         */
+        manualChunks(id: string) {
+          const p = id.replace(/\\/g, '/');
+          // 取证探针：它要抓的第一件事就是「连垫片都没装上就死了」，所以必须最先求值。
+          if (p.includes('/src/minigame/beacon.ts')) return 'boot';
+          // 全局垫片（document / navigator / 事件总线 / 上屏画布预订）
+          if (p.includes('/src/minigame/env/')) return 'boot';
+          // pixi 及其子路径（含 pixi.js/unsafe-eval）
+          if (p.includes('/node_modules/pixi.js/')) return 'boot';
+          return undefined;
+        },
         /**
          * 词法垫片（完整理由见文件头 `PRELUDE`）。
          *
          * 用 `intro` 而不是 `banner` 是**有意的**：`banner` 落在整个包装函数
          * **外面**（也就是 `"use strict"` 之前），那会让整份产物退化成非严格模式 ——
-         * 而严格模式本身是我们的判据之一（`env.ts` 里「只读属性赋值必抛」的探测
-         * 就靠它，`nativeDom` 的判断建立在它之上）。`intro` 落在包装函数**内部、
-         * `"use strict"` 之后**，既在产物最外层的作用域里，又不动严格模式。
+         * 而严格模式本身是我们的判据之一（`env/assign.ts` 里「只读属性赋值必抛」的探测
+         * 就靠它，`nativeDom` 的判断建立在它之上）。`intro` 落在 `"use strict"` 之后，
+         * 既在产物自己的作用域里、又不动严格模式。
+         *
+         * ⚠️ `intro` 对**每个 chunk** 都生效，所以 boot.js 和 game.js 顶部各有一份。
+         * 重复执行是安全的（里面的 `globalThis.X || (globalThis.X = …)` 幂等），
+         * 而且 game.js 那份正好让业务代码的裸标识符也能解析到 env 装好的那些对象。
          */
         intro: PRELUDE
       }

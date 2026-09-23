@@ -100,6 +100,34 @@ import './pixi-adapter'; // ② 侧效应：装 DOMAdapter（它是第一个 imp
 > 不在 `env/` 里，因为它需要网络 / 存储 API（要发回本机的 HTTP 端点），
 > 放进 `env/` 会违反上面那条规则。
 
+### 数据层：`src/data/` 与 `@data-source`（同一份逻辑，两套取数机制）
+
+适配层还有一件事：**数据从哪来**。两端差异很大 —— 网页端在构建期把 json 内联进 bundle，
+小游戏端要在运行期从代码包里读文件。这件事靠一个 alias 隔开，**游戏代码里没有一处 `if`**：
+
+```
+src/data/
+  types.ts            纯类型（一行业务代码都没有，改字段时只看这一个文件）
+  source.ts           JsonSource 契约（只有一个 read(key)，刻意不给 listDir/exists）
+  source-web.ts       ← web 端：7 个显式 import + 一条收窄的 import.meta.glob（构建期内联）
+  source-minigame.ts  ← 小游戏端：wx.getFileSystemManager().readFileSync（运行期读代码包）
+  runtime-files.mjs   运行时需要哪些 data/ 文件 —— **跨语言共享的单一来源**
+  index.ts            加载 + 索引 + 便捷查询（外部一律 import '../data'）
+```
+
+```ts
+// 两个 vite 配置各自把 @data-source 指到自己的实现；tsconfig 的 paths 指 web 版做类型检查
+import { jsonSource } from '@data-source';       // ← 游戏代码里只写这一行
+```
+
+`runtime-files.mjs` 之所以写成 `.mjs` 而不是 `.ts`：它有两个消费者，TS 侧与 Node ESM 拷贝脚本，
+`.mjs` 是**唯一让两边都能直接 import 的形式**。写成 `.ts` 的话拷贝脚本就得去正则解析源码，
+源码格式一变就静默失效（后果是「包内缺文件 → 真机白屏」）。
+两边还各有一条**有穷尽断言**兜底：清单里列了但没人读 → 报错；代码要读但清单没列 → 报错。
+
+> 拆包边界、`readFileSync` 的路径规则、以及「网页端内联 / 小游戏端读文件」的取舍理由，
+> 都在 §7 里，那里是产物形态的主场。
+
 ---
 
 ## 3. 六个实测撞出来的坑
@@ -361,10 +389,10 @@ touchstart 时**先**补一个 `mousemove`：网页上指针本来就会先移�
 ## 6. 验证：两种宿主，两套判据
 
 ```bash
-npm run verify:minigame   # 无 DOM 宿主（Web Worker），25 项常驻判据
-                          #   （取证构建 build:minigame:beacon 下另加 6 项 = 31）
+npm run verify:minigame   # 无 DOM 宿主（Web Worker），32 项常驻判据
+                          #   （取证构建 build:minigame:beacon 下另加 6 项 = 38）
 npm run verify:dom        # 有原生 DOM 宿主（IDE 模拟器同类），19 项判据
-npm run verify:all        # 以上两者 + verify:sandbox + verify:visual，共 75 条
+npm run verify:all        # 以上两者 + verify:sandbox + verify:visual，共 87 条
 ```
 
 **小游戏产物要跑在两类差异极大的宿主上，两类路径都必须测。**
@@ -412,12 +440,22 @@ TypeError: Cannot destructure property 'userAgent' of
 ✅ 渲染器是 webgl（不是静默降级的 canvas）  ✅ 分辨率 = 设备像素比 3
 ✅ 帧缓冲里有实际画面（非背景色像素 > 30%） ✅ 画面不是纯色块（颜色种类 > 20）
 ✅ 图集走包内相对路径（无前导斜杠、无 hash） ✅ 图集真的加载成功（非静默回退程序化图形）
+✅ 包内图集与 assets/atlas 逐字节一致（不是上一版美术）        ← §9.12
 ✅ 离屏画布确实拿到了（createCanvas ≥ 2 次）   ✅ 场景图里有精灵
 ✅ 宿主本来就没有 DOM（不用伪造）            ✅ project.config.json 声明 compileType=game
-✅ appid 没被写成小程序游客号              ✅ 产物语法不高于 es2015（云端检查器的地板）
+✅ appid 没被写成小程序游客号
+✅ game.js / boot.js 语法都不高于 es2015（云端检查器的地板）  ← 逐文件查，§7
 ✅ 宿主本来有 Intl 且已真删（证明「无异常」不是假绿）  ✅ Intl 缺失时由垫片补上
 ✅ 宿主已禁 unsafe-eval（new Function 抛 EvalError）  ✅ 启动后禁令仍有效 / Function 未被替换
-✅ 禁的是 eval 而非 Function 本身（真实构造器仍完好）  ← 见 §9.8
+✅ 禁的是 eval 而非 Function 本身（真实构造器仍完好）  ← §9.8
+──── 拆包与数据（2026-09-23 新增，见 §7）────
+✅ 包内 js 恰好是 game.js + boot.js 两个模块
+✅ 入口 game.js 明显小于 boot.js（pixi 不在入口里）
+✅ 包内 data/ 与源码清单逐一对应（不多不少）
+✅ 包内 data/*.json 与 data/ 源码逐字节一致（不是上一版数据）
+✅ 数据是启动期真读代码包读出来的（58 次 readFileSync、路径都不带 ./ 前缀）
+✅ 数据没有在构建期内联进 game.js（**反向断言，带探针**）
+──── 端到端 ────
 ✅ 上屏画布 = wx.createCanvas() 的第一块    ✅ 触摸点击精确落到预期格子（含远距离格）
 ✅ 越界点击被正确忽略                      ✅ 触摸事件能驱动游戏
 ✅ 移动方向与点击方向一致
@@ -429,8 +467,16 @@ TypeError: Cannot destructure property 'userAgent' of
 宿主里删掉它、又**要求它真的没了**（置成 undefined 会让报错消失、判据变成假绿），
 才能保住上面那条「无报错」的含金量。
 
-（当前实测全部通过：非背景色像素 74.7%、6662 种颜色、150 个精灵节点、
-5/5 次点击逐格命中，atlas.ready=true。）
+拆包那 6 条的由来同样值得记一笔：拆包最典型的失败**不是崩溃，而是「看起来成了、其实没生效」**——
+数据拷进了包却仍在构建期内联（改 json 不影响运行结果），或者改成了运行期读但读的是另一份拷贝
+（改 json 还是不影响运行结果）。两种都不报错、截图照样对。
+所以判据要**同时**看「读了没有」（正面，数 `readFileSync` 次数）与「有没有内联」（反面，
+在入口里搜数据原文），而且反面那条**必须带探针**——本轮真踩过：一开始拿 `demonKingTrue`
+当探针，它在 `game.js` 里确实存在，但来源是 `assets/MANIFEST.json`（图集清单，被 `atlas.ts`
+静态 import 烘进入口）。**图集在入口里是正常的，游戏数据在入口里才是问题。**
+
+（当前实测全部通过：非背景色像素 93.9%、5197 种颜色、151 个精灵节点、
+5/5 次点击逐格命中，atlas.ready=true、readFileSync 58 次、探针词在入口里搜不到。）
 
 ### 有原生 DOM 宿主的判据
 
@@ -548,16 +594,119 @@ module →（env + pixi）→ shim →（host / probe / app 模块）→ hostMod
 
 ```
 dist-minigame/
-  game.js               2.00 MB（gzip 424 KB）单文件 IIFE
+  game.js               入口（229 KB）—— 全部业务代码，**能直接读**
+  boot.js               启动层 + 第三方库（1 589 KB）：词法垫片 + env 适配 + pixi.js
+  data/*.json           运行时数据 58 个（177 KB）：7 张顶层表 + 51 层地图（每层一个文件）
   game.json             小游戏配置
   project.config.json   开发者工具配置
-  assets/*.png          4 张图集（39.2 KB），包内相对路径
+  assets/*.png          4 张图集（79.3 KB），包内相对路径
 ```
+
+> 拆成「入口 + 库 + 数据文件」的直接动机是**可读性**：拆之前是 2.10 MB 的单文件 IIFE，
+> 想确认「第 20 层放了哪些怪」要先在两万行 pixi 里翻。现在 `data/floors/floor-19.json`
+> 打开就是那一层，`game.js` 只剩业务代码。
+>
+> ⚠️ 这一节的顺序很讲究，别跳着读：**边界怎么切**（下一小节）决定了**后面那些坑长什么样**。
+
+### 拆包边界由**求值顺序**决定，不能按「我们的代码 / 第三方库」切
+
+小游戏是 **CommonJS 模块环境**（官方「基础能力 / 模块化」）：每个 `.js` 有独立作用域，
+用 `module.exports` / `require` 互引，全局对象是 `GameGlobal`。所以拆成多个文件技术上可行。
+
+**但 CJS 的求值顺序同样是「依赖先于自身」** —— 这意味着**入口天然是最后求值的那个**。
+而本项目有两条「必须最先」的硬约束（§2、§3 全都在讲这两条）：
+
+1. **词法垫片**必须早于 pixi 的模块体（否则 `Intl is not defined`，见 §9.3）；
+2. **`env/` 适配层**必须早于 pixi 的模块体（否则 `navigator` / 画布预订都晚了）。
+
+把这两条和 CJS 的求值顺序放在一起，结论只有一个：
+
+```
+boot.js = 词法垫片 + src/minigame/env/** + node_modules/pixi.js   ← 必须最先求值的那一层
+game.js = 其余一切（beacon 除外，它由 intro 保证，见下）
+```
+
+**反例（值得写下来，因为它是第一直觉）**：按「我们的代码 vs 第三方库」切，
+把 `env/` 留在入口、只把 pixi 拆进库文件 —— 那样入口变成最后求值，
+**垫片和 env 全都晚于 pixi**，等于把 §3 那六个坑一次性踩回去。
+
+切完之后，「同在 `boot.js` 里的垫片 / env / pixi 三者的相对顺序」仍然由 Rollup
+按依赖图排 —— **与拆分前的单文件是同一个机制**，所以保证强度不变。这一点有实测旁证：
+拆包前后，垫片与 pixi 模块体的行号是**同构**的（拆前 742 / 26444，拆后 `boot.js` 770 / 26574）。
+
+另外，`output.intro`（词法垫片就是它）对**每个** chunk 都生效，
+所以两个文件顶部各有一份 PRELUDE。重复执行是安全的
+（垫片一律写成 `globalThis.X || (globalThis.X = …)` 的幂等形态），
+而 `game.js` 那一份正好让业务代码里的裸标识符也解析到 env 装好的对象。
+
+### 数据改走 `readFileSync`：一份逻辑，两套取数机制
+
+官方「基础能力 / 存储 / 文件系统」的权限表里，**代码包文件是「读=有、写=无」**，
+所以运行期完全可以把 json 当文件读：
+
+```js
+wx.getFileSystemManager().readFileSync('data/floors/floor-00.json', 'utf8')
+```
+
+两条容易被忽略的硬要求：
+
+- **路径从项目根目录写起，不支持 `./` `../` 前缀**：`a/b/c` 合法，`./a/b/c` 不合法。
+  所以 key 一律不带前缀，`tools/minigame-harness/worker.js` 的桩里对此**当场报红**
+  （刻意不做任何「自动补前缀」的容错 —— 那种容错会让真机上必炸的写法在本地永远报绿）。
+- **不用 `require('./data/x.json')`**：官方模块化文档只写了 `require` 加载 **js 模块**，
+  json 走 require 属于「社区在用、文档没背书」。而且 51 个楼层要能被静态分析出来。
+
+「网页端构建期内联 / 小游戏端运行期读」这两套机制靠 **`@data-source` alias** 分开：
+`src/data/index.ts` 永远只写 `from '@data-source'`，两个 vite 配置各自把它指向
+`source-web.ts`（`import.meta.glob` 构建期内联）或 `source-minigame.ts`（运行期 `readFileSync`）。
+**游戏代码里没有一处 `if (isMinigame)`。**
+
+清单是单一来源：`src/data/runtime-files.mjs`（写成 `.mjs` 让 TS 侧与 Node ESM 脚本都能直接
+import），游戏代码与拷贝脚本共用，因此不可能出现「网页端能跑、小游戏端读不到」。
+
+### ⚠️ 拆包之后才出现的坑：`__vitePreload` 的第三实参（**只有无 DOM 宿主抓得到**）
+
+拆成 CJS 多文件后，`autoDetectRenderer` 里会抛一条看不出所以然的：
+
+```
+TypeError: Failed to construct 'URL': Invalid URL
+```
+
+根因在 `boot.js` 里由 Vite 生成的动态导入辅助：
+
+```js
+typeof document === 'undefined'
+  ? require('url').pathToFileURL(__filename).href              // ← Node 分支（cjs 格式下 rollup 生成的）
+  : _documentCurrentScript && … || new URL('boot.js', document.baseURI).href
+```
+
+`__vitePreload(loader, deps, importerUrl)` 的**第三实参**就是这个 `new URL(...)`。
+它在这一份产物里**根本不会被用到**（`deps` 是 `void 0`，消费 `importerUrl` 的分支在
+`if (false) { … }` 里被消除了）—— **但实参照样要求值**。而 `env/document.ts` 的 `document`
+替身当时没有 `baseURI` → `new URL('boot.js', undefined)` 抛。
+
+**修法是给替身补一个绝对基准**（`doc.baseURI = 'wxgame://code-package/'`）。
+必须是绝对的：`new URL(x, '')` 与 `new URL(x, '/')` 都会抛。
+
+三件事值得记住：
+
+1. **`modulePreload: false` 拦不住它**（实测确认）：开关关掉的是 preload 提示，
+   而 `__vitePreload` 这个包装本身照样生成，`require('url')` 也照样在。
+2. **这个坑只有无 DOM 宿主抓得到**：有 DOM 时 `document.baseURI` 有真值，一切正常；
+   单文件 IIFE 时代 `inlineDynamicImports: true` 把动态导入全内联了，Vite 压根不生成
+   `__vitePreload`。
+3. 它是「构建工具为**浏览器 / Node** 生成的胶水代码，在**第三种环境**里炸」的典型样本 ——
+   与 §3 那六个坑同一族，只是这一族的触发条件多了「产物形态」这一维。
 
 `vite.minigame.config.ts` 要点：
 
-- `lib` 模式 + `iife` + `inlineDynamicImports: true` → 必须单文件，
-  小游戏的 `importScripts` 式装载没有模块解析能力。
+- `rollupOptions.input` + `output.format: 'cjs'`（不再是 `lib` + `iife`）：
+  小游戏的模块环境是 CJS，产物因此是多文件、`require` 互引。
+- `manualChunks` 按上面那条边界切出 `boot`；`entryFileNames: 'game.js'`、
+  `chunkFileNames: '[name].js'` **刻意不加 hash** —— 小游戏包内的文件名要能被 `require` 静态指到。
+- 入口里的 `require('./boot.js')` **带 `.js` 后缀是刻意的**：官方示例不带后缀，
+  但那依赖基础库去猜后缀；本地宿主刻意不复刻这个猜测，好让「路径写错」当场暴露。
+- `build.target: 'es2015'`（语法地板，见下一小节）、`minify: false`（产物要能读）。
 - `base: ''` → 配合 `getBaseUrl: () => ''`，保证 `assets/*.png` 是包内相对路径。
 - `atlasPlainUrl()` 插件把 `assets/atlas/*.png` 的 import 改写成字符串字面量，
   避免 Vite 产出带 hash 的 URL（小游戏里就是文件名）。
@@ -592,10 +741,17 @@ SyntaxError: Unexpected token .          ← 指向 `wx?.request?.(` 里的 `?`
 **IDE 里跑的是 babel 的输出、不是你验证过的那份产物**。语法地板放在构建期更可控：
 一份产物、一处断言、`npm run verify:minigame` 里就会红。
 
-⚠️ 三处必须对齐：`build.target`（打包时降级）、`tools/verify-minigame.cjs` 的
-`SYNTAX_FLOOR`（断言产物）、`setting.es6: false`（不让 IDE 再降一遍）。
+⚠️ 四件事必须对齐：`build.target`（打包时降级）、`tools/verify-minigame.cjs` 的
+`SYNTAX_FLOOR`（断言产物）、`setting.es6: false`（不让 IDE 再降一遍）、
+以及**断言要覆盖包内每一个 js 文件**。
 改了 `build.target` 就要同步改 `SYNTAX_FLOOR`：判据是拿 `SYNTAX_FLOOR`
 去复算产物的，地板定高了会漏判，定低了会假报。
+
+> **为什么必须逐文件查**：云端检查器看的是包内**全部**文件，而拆包之后
+> `boot.js`（1 589 KB，pixi 全在里面）才是语法最杂的那一个，入口反而是最干净的那份。
+> 只查 `game.js` 的话，「pixi 带进来一段高版本语法」本地永远发现不了 ——
+> 症状与上面记录的完全同构，只是报错文件名变成 `invalid file: boot.js`，
+> 而且晚一步（要等上传/预览才炸）。
 
 ### `game.json`
 
@@ -937,7 +1093,7 @@ pixi 默认适配器写的是 `getNavigator: () => navigator`（裸标识符）�
 
 `verify:minigame`（Worker）与 `verify:dom`（Chromium）**结构性地抓不到**上面两条：
 浏览器必然有 `Intl`、全局想加就加、而且总是把脚本包一层。所以补一套跑在
-**干净 V8（`node:vm`）** 里的判据，共 9 条：
+**干净 V8（`node:vm`）** 里的判据，共 14 条：
 
 | 判据 | 拦的是什么 |
 |---|---|
@@ -946,9 +1102,18 @@ pixi 默认适配器写的是 `getNavigator: () => navigator`（裸标识符）�
 | 白名单沙箱（缺 `Intl`/`navigator`，且**两条路径分叉**）：不因这两个全局倒下 | 只有词法垫片能救的那条路径 |
 | **对照**：同一沙箱里「属性路径装好值、裸读仍死」必须复现 | 证明上一类判据不是想象出来的场景（它每一次都有真实报错对应） |
 | **裸标识符视图**：产物内部量出的 7 个垫片全部可用 | 「垫了却没接上」与「还有别的全局是死的」 |
-| **反证 ×2**：分别摘掉 `Intl` / `navigator` 的垫片，同一宿主必须炸出对应的 `X is not defined` | 证明上一条不是空转（宿主模型有牙齿） |
+| **反证 ×2**：分别摘掉 `Intl` / `navigator` 的垫片，同一宿主必须炸出对应的 `X is not defined` | 证明上一条不是空转（宿主模型有牙齿）。⚠️ 现在摘的是 **`boot.js`** 里那一行 |
 | 宿主原有的 `Intl` 未被顶掉 | 词法绑定是否真的落在包装内（否则就是全局污染） |
-| 垫片位置：在包装内、早于第一处 `Intl` 读取 | 位置被改坏的绊线 |
+| 垫片位置：在包装内、早于第一处 `Intl` 读取 | 位置被改坏的绊线。**每个 chunk 各查一遍**，入口那一条要容忍「本文件里没有读取点」 |
+| **拆包 ×4**：包内恰好 `game.js` + `boot.js` ／ pixi 在 `boot` 里、入口里没有 ／ `boot.js` 内部**垫片先于 pixi 模块体** ／ 入口用 `require("./boot.js")` 连到 boot | 拆包边界被切错（把 `env/` 留在入口 = 踩回 §3 的坑）、路径写错、以及「以为拆了其实没拆」 |
+
+> 这一套的**装载方式也必须与被测环境同构**：拆包之后产物不再是一个脚本，
+> 所以 `verify-sandbox.cjs` 自己实现了 `require`（包进
+> `function (module, exports, require, __filename, __dirname)` 再调用），
+> 与浏览器侧的 `tools/minigame-harness/cjs-loader.js`、真机基础库三处语义一致。
+>
+> ⚠️ 为什么不直接 `run` 两段源码：那样 **`game.js` 顶部那份 PRELUDE 会替 `boot.js` 的垫片兜底**，
+> 于是「摘掉 boot 的垫片必须炸」这条反证就失效了（它测不出东西却还是绿的）。
 
 白名单沙箱是 `with(proxy)` + 影子 `globalThis` 造的：**写进去能读回来，但裸标识符不走它**
 （这正是那个分叉的形式，也是实测定的 —— IDE 里 `navigator` 的 UA 能被读回来，
@@ -1419,16 +1584,17 @@ dsf=3 的页面**再验一遍，期望值必须是 3。
 ## 10. 复现命令
 
 ```bash
-npm run build:minigame    # 构建产物（含 tsc --noEmit）
-npm run verify:sandbox    # 干净 V8（node:vm）宿主实测，9 条判据（含裸标识符视图 ×7）
+npm run build:minigame    # 构建产物（含 tsc --noEmit）；产物 = game.js + boot.js + data/*.json
+npm run verify:sandbox    # 干净 V8（node:vm）宿主实测，14 条判据（含裸标识符视图 ×7、拆包边界 ×4）
 npm run verify:visual     # 渲染层回归，22 条判据（A1–A20，含版面/位面/道具栏/手绘怪物、
                           #   脚下无标记 / 浏览出口 / 攻击动画 / 对话折行 / 上下楼梯 /
                           #   像素密度 / 文字分辨率 / 手绘墙 / 待机呼吸）
-npm run verify:minigame   # 无 DOM 环境实测，25 条常驻判据（含禁 unsafe-eval ×3、图集逐字节一致、触摸端到端）
-                          #   取证构建（build:minigame:beacon）下另加 6 条 = 31
+npm run verify:minigame   # 无 DOM 环境实测，32 条常驻判据（含禁 unsafe-eval ×3、图集逐字节一致、
+                          #   包结构 ×6、语法地板 ×2、触摸端到端）
+                          #   取证构建（build:minigame:beacon）下另加 6 条 = 38
 npm run verify:dom        # 有原生 DOM 宿主实测，19 条判据（含触摸端到端 ×4、图集 ×1）
                           #   注：驱动 UI 的点击必须模拟真实节奏，见 §9.13
-npm run verify:all        # 以上四套，共 75 条判据（9 + 22 + 25 + 19）
+npm run verify:all        # 以上四套，共 87 条判据（14 + 22 + 32 + 19）
 ```
 
 另有两个不在四套之列的取证工具 —— 它们读的都是**工具自己落盘的状态**，

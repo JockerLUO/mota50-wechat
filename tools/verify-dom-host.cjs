@@ -34,6 +34,7 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const { chromium, findChromium } = require('./lib/chromium.cjs');
+const { inlineAsJs, collectJsSources, collectDataFiles } = require('./lib/package-tables.cjs');
 
 const ROOT = path.resolve(__dirname, '..');
 const DIST = path.join(ROOT, 'dist-minigame');
@@ -60,7 +61,7 @@ function resolveFile(urlPath) {
   if (clean === '/' || clean === '/index.html') return path.join(HARNESS, 'index-dom.html');
   const candidates = [
     path.join(HARNESS, clean),
-    path.join(DIST, clean), // /game.js、/assets/*.png、/game.json
+    path.join(DIST, clean), // /game.js、/boot.js、/data/*.json、/assets/*.png、/game.json
     path.join(DIST, 'assets', clean.replace(/^\/assets\//, ''))
   ];
   for (const p of candidates) {
@@ -72,7 +73,28 @@ function resolveFile(urlPath) {
   return null;
 }
 
+/**
+ * 包内文件表：源码 + 数据。
+ *
+ * 产物是 CJS 多文件（`game.js` require `./boot.js`），而数据是用
+ * `wx.getFileSystemManager().readFileSync()` 同步读的 —— 两者都不能靠异步 fetch。
+ * 所以由服务器当场把包内文件内联成两张表，页面用 `<script src>` 同步拿到。
+ *
+ * 两张表都是**枚举产物目录**得到的（见 `tools/lib/package-tables.cjs`），
+ * 所以它们就是「包里有什么」的事实描述，不需要人维护。
+ */
+const PACKAGE_TABLES = {
+  '/__sources.js': () => inlineAsJs('__motaSources', collectJsSources(DIST)),
+  '/__data.js': () => inlineAsJs('__motaData', collectDataFiles(DIST))
+};
+
 const server = http.createServer((req, res) => {
+  const url = (req.url || '/').split('?')[0];
+  if (PACKAGE_TABLES[url]) {
+    res.writeHead(200, { 'content-type': MIME['.js'] });
+    res.end(PACKAGE_TABLES[url]());
+    return;
+  }
   const file = resolveFile(req.url || '/');
   if (!file) {
     res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });

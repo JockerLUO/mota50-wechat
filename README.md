@@ -111,15 +111,22 @@ SyntaxError: Unexpected token .
 
 ```
 src/
-  app.ts                 应用装配：HUD + 棋盘 + 面板的组装与事件路由
-  data.ts                数据装载（data/*.json 的类型化入口）
-  game/engine.ts         规则引擎：移动、战斗、开门、拾取、楼层切换
-  game/state.ts          纯数据状态 + reducer（存档即 JSON.stringify）
-  render/atlas.ts        图集与映射表读取、地形键归一、变体选择
-  render/board.ts        11×11 棋盘绘制、实体视图（精灵 + 名牌）
-  render/hud.ts          布局常量（LAYOUT）与状态栏
-  render/icons.ts        图集缺失时的程序化矢量降级图形
-  render/trade.ts        商店 / 商人面板
+  main.ts                引导 + 失败兜底
+  app/                   应用装配：HUD + 棋盘 + 面板的组装与事件路由
+  data/                  数据装载（data/*.json 的类型化入口）
+                         ⚠️ 两套取数实现靠 @data-source alias 分开：
+                         source-web.ts 构建期内联 / source-minigame.ts 运行期读代码包
+  game/
+    engine/              规则引擎：移动、战斗、开门、拾取、楼层切换
+    state.ts             纯数据状态 + reducer（存档即 JSON.stringify）
+    dialogue.ts          NPC 对话
+  render/
+    atlas.ts             图集与映射表读取、地形键归一、变体选择
+    board/               11×11 棋盘绘制、实体视图（精灵 + 名牌）
+    hud/                 布局常量（LAYOUT）、状态栏与各面板
+    backdrop.ts          场景背景层（上部星空 / 下部绝地）
+    icons.ts             图集缺失时的程序化矢量降级图形
+    trade.ts             商店 / 商人面板
   minigame/              微信小游戏宿主：环境探测、wx 画布、Pixi 适配垫片
 core/                    可独立运行的规则模块（战斗、商店），不依赖 PixiJS
 data/                    游戏数据（派生自参考源码，见「授权」）
@@ -131,6 +138,8 @@ assets/
 tools/                   资产构建、数据导入、校验与截图取证脚本
 docs/                    设计文档（见下表）
 reference/mota50/        GPL-3.0 参考源码归档 + 溯源说明（不参与构建）
+dist/                    网页端产物（不入库）
+dist-minigame/           小游戏产物（不入库）：game.js 入口 + boot.js 库 + data/ + assets/
 ```
 
 ---

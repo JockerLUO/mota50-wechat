@@ -150,6 +150,43 @@
       return document.createElement('img');
     },
 
+    // ── 代码包内的文件系统（同步读）─────────────────────────────────
+    //
+    // 与 Worker 宿主（`worker.js`）**同一套语义与同一条理由**，完整说明见那里。
+    // 这里只说三件这一侧特有的：
+    //
+    //   - 表从 `globalThis.__motaData` 取（由 `/__data.js` 注入，服务器枚举
+    //     `dist-minigame/data/` 生成）。key 就是**游戏代码传进来的那个字符串**，
+    //     所以桩不做任何路径变换。
+    //   - 路径不合规时只**记一笔**（`__readFileBadPath`）而不当场抛：这一侧是
+    //     「有 DOM 的宿主」，某些宿主差异导致的报错会淹没在这里，交给驱动脚本统一判定
+    //     比在桩里抛更好定位。
+    //   - 不做任何容错补全 —— 理由同 worker.js：真机上会炸的写法不能在本地报绿。
+    getFileSystemManager: function () {
+      return {
+        readFileSync: function (filePath, encoding) {
+          note('readFileSync ' + filePath);
+          var table = globalThis.__motaData || {};
+          globalThis.__readFileCalls = (globalThis.__readFileCalls || 0) + 1;
+          if (
+            typeof filePath !== 'string' ||
+            filePath.indexOf('./') === 0 ||
+            filePath.indexOf('../') === 0 ||
+            filePath.charAt(0) === '/'
+          ) {
+            globalThis.__readFileBadPath = filePath;
+          }
+          if (encoding !== 'utf8' && encoding !== undefined) {
+            globalThis.__readFileBadEncoding = encoding;
+          }
+          if (!Object.prototype.hasOwnProperty.call(table, filePath)) {
+            throw new Error('readFileSync: no such file: ' + filePath);
+          }
+          return table[filePath];
+        }
+      };
+    },
+
     // ── 网络：只记账，不真发（避免污染 8899 取证服务）─────────────
     request: function (o) {
       note('request ' + (o && o.url ? o.url.replace(/^https?:\/\/[^/]+/, '') : '?'));

@@ -232,13 +232,37 @@ addEventListener('unhandledrejection', (e) => fail(`[unhandledrejection] ${e.rea
       return;
     }
 
+    // ── 3.5 装载器与预取表 ──────────────────────────────────────────
+    //
+    // 产物在 CJS 拆分之后不是一个脚本，而是「入口 + 它 require 的 chunk」。
+    // 直接 importScripts 会在全局作用域里跑（`var document` 变成真的全局 document，
+    // 破坏「宿主本来没有 DOM」这个前提），所以改用一个模块包装函数装载 ——
+    // 实现与理由见 `cjs-loader.js`。
+    //
+    // 两张表都由驱动脚本的静态服务器**当场生成**（枚举产物目录），原因相同：
+    // `require` 与 `readFileSync` 都是**同步**调用，而 Worker 里没有同步 fetch。
+    // 真机上这两件事同样是同步的（代码包就在本地），所以「启动前把表准备好」
+    // 与真机语义等价，不是权宜之计。
+    //
+    //   ① `/__sources.js` → js 模块源码（CJS 装载器用）
+    //   ② `/__data.js`    → data/*.json（`getFileSystemManager` 桩用）
+    step('importScripts(/__sources.js, /__data.js, /cjs-loader.js)');
+    importScripts('/__sources.js');
+    importScripts('/__data.js');
+    importScripts('/cjs-loader.js');
+    report.packageJs = Object.keys(g.__motaSources || {}).sort();
+    report.packageData = Object.keys(g.__motaData || {}).sort();
+
     // ── 4. 禁 unsafe-eval —— 按 CSP 的样子复现微信 IDE 子上下文
     //
     // 实现抽去了 `/no-unsafe-eval.js`，与「有 DOM 宿主」那条路径共用同一份，
     // 免得两边对「什么叫禁 eval」产生分歧（理由与依据都写在那份文件的头部注释里）。
     //
-    // ⚠️ 必须在本行（早于 `importScripts('/game.js')`）装上：Pixi 的
+    // ⚠️ 必须在本行（早于装载 `/game.js`）装上：Pixi 的
     //    `unsafeEvalSupported()` 结果会被**记忆化**，第一次探测发生在渲染器构造时。
+    //
+    // ⚠️ 它换的是 `globalThis.Function`，**不动 `eval`** —— 装载器用的正是
+    //    直接 eval（见 cjs-loader.js），两者刻意错开，免得装载器跟被测环境打架。
     step("importScripts(/no-unsafe-eval.js)");
     importScripts('/no-unsafe-eval.js');
     ban = g.__unsafeEvalBan;
@@ -339,6 +363,58 @@ addEventListener('unhandledrejection', (e) => fail(`[unhandledrejection] ${e.rea
         return canvas;
       },
       createImage: makeImage,
+      /**
+       * 代码包内的文件系统 —— 只实现游戏用到的那一个方法：**同步**读代码包文件。
+       *
+       * ## 为什么桩里要做「路径合规」检查而不是容错
+       *
+       * 官方文档「基础能力 / 存储 / 文件系统」对代码包文件写得很死：
+       * *代码包文件的访问方式是从项目根目录开始写文件路径，不支持相对路径的写法。
+       * 如：`/a/b/c`、`a/b/c` 都是合法的，`./a/b/c` `../a/b/c` 则不合法。*
+       *
+       * 所以这里**刻意不做任何补全或去前缀**：路径不合规就当场记成问题。
+       * 反过来写（自动补 `./`、自动去掉前缀）会让「真机上读不到」这种写法
+       * 在本地永远报绿 —— 那正是本项目反复踩过的那类假绿。
+       *
+       * ## 表从哪来
+       *
+       * `__motaData` 由驱动脚本的静态服务器枚举 `dist-minigame/data/` 生成，
+       * key **就是游戏代码传给 readFileSync 的那个字符串**（`data/floors/floor-01.json`），
+       * 桩因此不做任何路径变换。见 `tools/lib/package-tables.cjs`。
+       *
+       * 顺带：查表失败会抛「no such file」，而 `source-minigame.ts` 会把这句话
+       * 连同「检查清单 / 检查拷贝」的提示一起再抛一遍 —— 真机上那张报错就是这条。
+       */
+      getFileSystemManager: () => ({
+        readFileSync: (filePath, encoding) => {
+          const table = g.__motaData || {};
+          report.readFileCalls = (report.readFileCalls || 0) + 1;
+          report.readFilePaths = report.readFilePaths || [];
+          report.readFilePaths.push(String(filePath));
+
+          if (
+            typeof filePath !== 'string' ||
+            filePath.startsWith('./') ||
+            filePath.startsWith('../') ||
+            filePath.startsWith('/')
+          ) {
+            fail(
+              `readFileSync 的路径不合规：${String(filePath)}` +
+                `（代码包文件必须从包根写起、不带 ./ ../ 前缀，见官方「访问代码包文件」）`
+            );
+          }
+          if (!Object.prototype.hasOwnProperty.call(table, filePath)) {
+            throw new Error(`readFileSync: no such file: ${filePath}`);
+          }
+          const text = table[filePath];
+          // 只支持 utf8 —— 游戏侧只读 json 文本。要二进制（图片）时应当另开通道，
+          // 而不是让它悄悄走这条。
+          if (encoding !== 'utf8' && encoding !== undefined) {
+            fail(`readFileSync 用了不支持的编码：${String(encoding)}`);
+          }
+          return text;
+        }
+      }),
       onTouchStart: (cb) => touchStart.push(cb),
       onTouchMove: () => {},
       onTouchEnd: (cb) => touchEnd.push(cb),
@@ -384,9 +460,15 @@ addEventListener('unhandledrejection', (e) => fail(`[unhandledrejection] ${e.rea
       }
     };
 
-    // ── 6. 装载产物（importScripts 是宿主用来装载的，不是游戏依赖的 API）
-    step('importScripts(/game.js)');
-    importScripts('/game.js');
+    // ── 6. 装载产物 ─────────────────────────────────────────────────
+    //
+    // 「装载」这一步是宿主的事，不是游戏依赖的 API —— 真机上是基础库读代码包、
+    // 按 CommonJS 包装后执行；这里由 `cjs-loader.js` 做同一件事。
+    // `/game.js` 内部会 `require('./boot.js')`，所以实际装载的是两个文件，
+    // 顺序由产物的 require 关系决定（boot 在前，见 vite.minigame.config.ts 文件头）。
+    step('装载产物 /game.js（CJS，会 require ./boot.js）');
+    g.__motaLoadCjs('/game.js');
+    report.loadedModules = g.__motaCjsLoaded();
 
     // ── 7. 等启动 / 等弹窗
     const deadline = Date.now() + 25000;

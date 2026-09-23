@@ -43,14 +43,28 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const ROOT = path.resolve(__dirname, '..');
-const BUNDLE = path.join(ROOT, 'dist-minigame', 'game.js');
+const DIST = path.join(ROOT, 'dist-minigame');
+const ENTRY = 'game.js';
 
-if (!fs.existsSync(BUNDLE)) {
-  console.error(`找不到 ${BUNDLE}，请先运行 npm run build:minigame`);
+if (!fs.existsSync(path.join(DIST, ENTRY))) {
+  console.error(`找不到 ${path.join(DIST, ENTRY)}，请先运行 npm run build:minigame`);
   process.exit(2);
 }
 
-const code = fs.readFileSync(BUNDLE, 'utf8');
+/**
+ * 包内全部 js 的源码。key 形如 `/game.js`。
+ *
+ * 产物已经不是单文件了：`game.js` 是 CJS 入口，开头就 `require("./boot.js")`。
+ * 所以这里不是在「跑一段代码」，而是在**按 CommonJS 规则装载一个模块图** ——
+ * 见下面的 `loadEntry`。
+ *
+ * 文件名不写死（枚举目录）：换 chunk 划分时这个脚本不用改，
+ * 而「包里到底有哪几个 js」本身也由 `game.js` 的 require 关系决定。
+ */
+const SOURCES = {};
+for (const f of fs.readdirSync(DIST).filter((x) => x.endsWith('.js')).sort()) {
+  SOURCES[`/${f}`] = fs.readFileSync(path.join(DIST, f), 'utf8');
+}
 
 /** 我们自己那句「没有 wx」的报错 —— 模块图跑完、进到适配层时必然撞上它。 */
 const NO_WX = '未找到全局 wx';
@@ -139,10 +153,74 @@ function curatedHost() {
   };
 }
 
-/** 加载产物，返回 { error, name, message }。不抛异常，把结果交回调用方判定。 */
-function load(host) {
+/**
+ * 装载产物（CommonJS 模块图），返回 `{ error, name, message }`。不抛异常，把结果交回调用方判定。
+ *
+ * ## 为什么必须在这里自己实现 require
+ *
+ * 产物拆成了 `game.js` + `boot.js`，两个文件之间靠 `require('./boot.js')` 相连，
+ * 而**宿主决定怎么执行这条 require**。真机上是基础库做的；三个本地宿主各做各的：
+ * 两个浏览器宿主在 `tools/minigame-harness/cjs-loader.js` 里，这里在 node:vm 里。
+ *
+ * 三处的实现都是「把源码包进 `function (module, exports, require, …)` 再调用」——
+ * 这不是巧合，而是 CommonJS 的定义本身（也正是小游戏官方「模块化」文档里
+ * 「在 JavaScript 文件中声明的变量和函数只在该文件中有效」那句话的落地方式）。
+ *
+ * ## 为什么包装比「直接 run 两段源码」重要
+ *
+ * 直接 `vm.runInContext(boot)` 再 `run(game)` 会让两个文件的 `var` 落到**同一个作用域**：
+ * 于是 `game.js` 里那份 PRELUDE（`var Intl`）会替 `boot.js` 里的垫片兜底，
+ * 「摘掉 boot 的垫片必须炸」这条反证就再也测不出来了。包装之后每个文件作用域独立，
+ * 判据才真的在测那个文件。
+ *
+ * ## 白名单宿主（`with`）下的一个关键性质
+ *
+ * `curatedHost.run` 会把源码包进 `with (__scope) { … }`。这里传进去的是
+ * **一个函数表达式**，所以函数是在 `with` 作用域里**创建**的 ——
+ * 它的 `[[Scope]]` 因此包含那个白名单作用域，函数体内的裸标识符解析照样走白名单。
+ * 这一条是「白名单沙箱」模型能同时用在这条装载路径上的原因，
+ * 不是顺手写出来的。
+ *
+ * @param {ReturnType<typeof plainHost>} host
+ * @param {Record<string, string>} [overrides] 临时替换某些模块的源码（反证判据用）
+ */
+function loadEntry(host, overrides = {}) {
+  const sources = { ...SOURCES, ...overrides };
+  const cache = new Map();
+
+  const dirOf = (url) => {
+    const i = url.lastIndexOf('/');
+    return i < 0 ? '' : url.slice(0, i);
+  };
+  const resolve = (spec, from) => {
+    if (spec.charAt(0) !== '.') return spec;
+    const base = dirOf(from).split('/');
+    for (const part of spec.split('/')) {
+      if (part === '.' || part === '') continue;
+      if (part === '..') base.pop();
+      else base.push(part);
+    }
+    return base.join('/');
+  };
+
+  function loadModule(url) {
+    if (cache.has(url)) return cache.get(url).exports;
+    const src = sources[url];
+    if (typeof src !== 'string') {
+      throw new Error(`包内没有 ${url}（源码表里只有 ${Object.keys(sources).join(', ')}）`);
+    }
+    const mod = { exports: {} };
+    cache.set(url, mod);
+    const factory = host.run(
+      `(function (module, exports, require, __filename, __dirname) {\n${src}\n})`,
+      url
+    );
+    factory(mod, mod.exports, (spec) => loadModule(resolve(spec, url)), url, dirOf(url));
+    return mod.exports;
+  }
+
   try {
-    host.run(code, 'game.js');
+    loadModule(`/${ENTRY}`);
     return { error: null, name: null, message: '' };
   } catch (err) {
     return { error: err, name: err && err.name ? err.name : 'Error', message: String(err && err.message) };
@@ -167,7 +245,7 @@ function hostHasTeeth(host) {
 // 产物**自己**有问题，与宿主无关。（这条就是 `output.intro` 错位那次的绊线。）
 {
   const host = plainHost();
-  const { error, name, message } = load(host);
+  const { error, name, message } = loadEntry(host);
   const ok = !!error && message.includes(NO_WX);
   check(
     '普通宿主（无 wx / 无 DOM）：模块图完整求值到适配层',
@@ -181,7 +259,7 @@ function hostHasTeeth(host) {
 {
   const host = plainHost({ dropIntl: true });
   const present = host.evalIn('typeof Intl');
-  const { name, message } = load(host);
+  const { name, message } = loadEntry(host);
   const hitIntl = /Intl/.test(message) && /is not defined/.test(message);
   check(
     '普通宿主 + 缺 Intl：不因 Intl 倒下',
@@ -207,7 +285,7 @@ function hostHasTeeth(host) {
   const host = curatedHost();
   host.prepare();
   const teeth = hostHasTeeth(host);
-  const { name, message } = load(host);
+  const { name, message } = loadEntry(host);
   // 只要不是死在「我们垫过的那两个全局」上就算过；后面还可能因别的全局缺失而倒，
   // 那是**另一条待办**（见报告末尾的「已知边界」），不该混进这条判据里。
   const hit = ['Intl', 'navigator'].filter((k) => new RegExp(`\\b${k} is not defined`).test(message));
@@ -278,7 +356,7 @@ function hostHasTeeth(host) {
 {
   const host = curatedHost();
   host.prepare();
-  load(host);
+  loadEntry(host);
   const map = host.evalIn('__scope.globalThis.__motaEnvBare');
   // 这份名单与 `vite.minigame.config.ts` 的 `PRELUDE` **必须一一对应**：
   // 每一个都是「pixi 会裸读、且那条裸读真的会执行」的全局，各自对应一次真实的
@@ -325,43 +403,103 @@ function hostHasTeeth(host) {
 // 在**同一个宿主**里再跑一次：必须重新抛出 `Intl is not defined` / `navigator is not defined`。
 // 这一条同时证明了两件事：① 判据 3 确实在测垫片；② 这条路（缺全局且装不上的宿主）
 // 是真实可达的 —— 不是想象出来的场景，这两次报错都是这么来的。
+//
+// ⚠️ 摘的是 **boot.js** 里那一行，不是入口里那一行。
+// 拆包之后 PRELUDE 在每个 chunk 顶部各有一份（`output.intro` 的性质），
+// 而 pixi 住在 boot.js 里 —— 只有摘 boot.js 那份，pixi 才会真的失去垫片。
+// 这一条顺带把「每个模块作用域独立」这件事测实了：入口里那份**兜不住** boot.js，
+// 因为它们是两个函数作用域。
+const BOOT = '/boot.js';
 for (const [key, re] of [
   ['Intl', /^\s*var Intl = /],
   ['navigator', /^\s*var navigator = /]
 ]) {
-  const lines = code.split('\n');
-  const idx = lines.findIndex((l) => re.test(l));
+  const bootLines = (SOURCES[BOOT] || '').split('\n');
+  const idx = bootLines.findIndex((l) => re.test(l));
   if (idx < 0) {
-    check(`反证：产物里存在 ${key} 的词法垫片`, false, `找不到 \`var ${key} = ...\``);
+    check(`反证：boot.js 里存在 ${key} 的词法垫片`, false, `找不到 \`var ${key} = ...\``);
     continue;
   }
-  const stripped = lines.filter((_, i) => i !== idx).join('\n');
+  const stripped = bootLines.filter((_, i) => i !== idx).join('\n');
   const host = curatedHost();
   host.prepare();
-  let err = null;
-  try {
-    host.run(stripped, `game-no-${key}.js`);
-  } catch (e) {
-    err = e;
-  }
-  const message = err ? String(err.message) : '';
+  const { name, message } = loadEntry(host, { [BOOT]: stripped });
   const expect = new RegExp(`\\b${key} is not defined`);
   check(
-    `反证：摘掉 ${key} 垫片后，同一宿主必须炸出 ${key} is not defined`,
+    `反证：摘掉 boot.js 的 ${key} 垫片后，同一宿主必须炸出 ${key} is not defined`,
     expect.test(message),
-    err ? `${err.name}: ${message.slice(0, 90)}` : `摘掉 ${key} 垫片后居然没抛错 —— 判据 3 是空转的`
+    message ? `${name}: ${message.slice(0, 90)}` : `摘掉 ${key} 垫片后居然没抛错 —— 判据 3 是空转的`
   );
 }
 
-// ── 判据 7：词法垫片不能把宿主的 Intl 顶掉 ──────────────────────────
+// ── 判据 7：拆包边界（本轮「入口 + 库」拆分的结构性判据）──────────────
 //
-// `var Intl = ...` 必须落在 IIFE 包装**内部**（那样才是词法绑定）。一旦落到文件
-// 顶层，它就变成全局属性，会把宿主真正的 Intl **换掉** —— 那是拿「修好黑屏」
-// 换「污染宿主」，在浏览器宿主上尤其不可接受。
+// 产物从单文件 IIFE 改成了 `game.js` + `boot.js` 两个 CJS 模块。
+// 这次拆分有两条**必须成立**的性质，而它们都不是「看一眼就知道」的：
+//
+//   ① pixi 住在 boot.js 里 —— 否则「入口只有几百 KB、能直接读」这个目的没达到；
+//   ② **boot.js 内部，垫片必须早于 pixi 的模块体** —— 这条是本项目花了好几轮
+//      才修好的三个黑屏（Intl / navigator / document）的命门。
+//      CJS 的求值顺序是「依赖先于自身」，一旦拆分边界切错（比如把 env 留在入口、
+//      只把 pixi 拆出去），pixi 就会早于垫片求值，直接把这几个坑踩回去。
+//
+// 判据 ① 用「pixi 的内部函数名」判：`canUseNewCanvasBlendModes` 是 pixi 模块级的
+// 缓存探测函数（`minify: false`，名字不会被改）。它在 boot.js 里、不在入口里。
+//
+// 判据 ② 用**行号**判：同一个文件里 `installGlobals()` 的调用必须早于
+// `canUseNewCanvasBlendModes` 的定义。`installGlobals` 是 env 子树的安装入口，
+// 它的调用行就是「垫片装好了」那一刻。
+{
+  const boot = SOURCES[BOOT] || '';
+  const entry = SOURCES[`/${ENTRY}`] || '';
+  const PIXI_MARK = 'canUseNewCanvasBlendModes';
+
+  check(
+    `拆包：包内是 ${ENTRY} + ${BOOT.replace('/', '')} 两个模块`,
+    !!boot && !!entry,
+    Object.keys(SOURCES).map((k) => k.replace('/', '')).join('、')
+  );
+  check(
+    '拆包：pixi 在 boot.js 里，入口里没有（入口才是「能直接读」的那份）',
+    boot.includes(PIXI_MARK) && !entry.includes(PIXI_MARK),
+    entry.includes(PIXI_MARK) ? '入口里也有 pixi —— 拆分没生效' : `入口 ${(entry.length / 1024).toFixed(0)}KB / boot ${(boot.length / 1024).toFixed(0)}KB`
+  );
+
+  const lines = boot.split('\n');
+  const shimCall = lines.findIndex((l) => /^\s*installGlobals\(\);/.test(l));
+  const pixiBody = lines.findIndex((l) => l.includes(`function ${PIXI_MARK}(`));
+  check(
+    '拆包：boot.js 内部垫片先于 pixi 模块体（拆分边界没切错）',
+    shimCall >= 0 && pixiBody > shimCall,
+    shimCall < 0
+      ? '找不到 installGlobals() 的调用 —— 垫片没装？'
+      : `垫片第 ${shimCall + 1} 行，pixi 模块体第 ${pixiBody + 1} 行`
+  );
+
+  const reqLine = lines.findIndex((l) => /require\(["']\.\/boot\.js["']\)/.test(l));
+  const entryReq = entry.split('\n').findIndex((l) => /require\(["']\.\/boot\.js["']\)/.test(l));
+  check(
+    '拆包：入口用 require("./boot.js") 连到 boot，路径带 .js 后缀',
+    entryReq >= 0,
+    entryReq >= 0 ? `入口第 ${entryReq + 1} 行` : `入口里找不到 require("./boot.js")（${reqLine}）`
+  );
+}
+
+// ── 判据 8：词法垫片不能把宿主的 Intl 顶掉 ──────────────────────────
+//
+// `var Intl = ...` 必须是**词法绑定**而不是全局赋值 —— 一旦落到全局上，
+// 它就会把宿主真正的 Intl **换掉**，那是拿「修好黑屏」换「污染宿主」，
+// 在浏览器宿主上尤其不可接受。
+//
+// ⚠️ 这是一条**行为判据**，所以它在拆包之后**继续有效**：
+// 产物从 IIFE 变成 CJS 之后，文件顶层就是模块作用域，原先那条
+// 「看缩进判断有没有掉出包装」的结构判据不再成立（见判据 9 的说明），
+// 而「宿主那个 Intl 对象还是不是原来那个」不受产物形态影响。
+// 换句话说：这条判据替代了旧结构判据里**真正有意义的那一半**。
 {
   const host = plainHost();
   const before = host.evalIn('[Intl, typeof Intl.Segmenter]');
-  load(host);
+  loadEntry(host);
   const after = host.evalIn('Intl');
   const same = after === before[0];
   check(
@@ -371,30 +509,47 @@ for (const [key, re] of [
   );
 }
 
-// ── 判据 8：垫片位置 —— 在包装内、且早于第一处 Intl 读取 ────────────
+// ── 判据 9：垫片位置 —— 在每个 chunk 的顶部，且早于第一处 Intl 读取 ────
 //
-// 这是**结构绊线**，不是原理判据（真正说话的是 3/4/5）。它拦的是「位置被构建配置
-// 改坏」这类事故：intro 一旦掉出包装函数或挪到模块代码之后，上面几条的结论就不再
-// 成立，而这个脚本会把话先说明白。
-{
-  const lines = code.split('\n');
+// 这是**结构绊线**，不是原理判据（真正说话的是 3/4/5/6/8）。它拦的是「位置被构建配置
+// 改坏」这类事故，而这个脚本会把话先说明白。
+//
+// ⚠️ 拆包之后这条判据的**表述变了，含义没变**。
+// 原先写的是「在 IIFE 包装内」，靠**缩进**判断（顶格 ⇒ 掉到包装外 ⇒ 变成全局赋值）。
+// 现在产物是 CJS，文件顶层**本身就是模块作用域**，缩进不再携带这个信息。于是拆成两半：
+//   - 「垫片是词法绑定、不是全局赋值」 → 交给判据 8 的**行为判据**（更可靠）；
+//   - 「垫片在该文件开头、没挪到模块代码之后」 → 留在本条，用行号判。
+//
+// 两个 chunk 各查一遍 —— PRELUDE 走的是 `output.intro`，对每个 chunk 都生效。
+for (const [file, src] of Object.entries(SOURCES)) {
+  const lines = src.split('\n');
   const introIdx = lines.findIndex((l) => /^\s*var Intl = /.test(l));
+  // `Intl == null` 是 esbuild 把 `typeof Intl?.Segmenter` 降级之后的形态，出在 pixi 里。
+  // ⚠️ 入口 chunk（game.js）**没有 pixi，因此没有这个读取点** —— `findIndex` 返回 -1。
+  // 第一版把 -1 当成「读取点在垫片之前」判红，是**期望值写错了**（这条判据的适用范围
+  // 只到「本文件里有读取点」这一层）。所以 -1 视作「本文件无读取点」，只查顶部位置。
   const firstRead = lines.findIndex((l) => l.includes('Intl == null'));
-  const introLine = introIdx >= 0 ? lines[introIdx] : '';
-  const indented = /^\s/.test(introLine);
+  const readOk = firstRead < 0 || firstRead > introIdx;
+  // 「在前 150 行内」是个宽裕的上界：intro 紧跟 `"use strict"` 与 Rollup 的辅助函数，
+  // 实测两个 chunk 分别落在 43 / 56 行。留余量是因为辅助函数个数会随语法降级需求变。
   check(
-    '垫片位置：在 IIFE 包装内，且早于第一处 Intl 读取',
-    introIdx >= 0 && indented && firstRead > introIdx,
+    `垫片位置：${file.replace('/', '')} 顶部就有${firstRead >= 0 ? '、且早于第一处 Intl 读取' : ''}`,
+    introIdx >= 0 && introIdx < 150 && readOk,
     introIdx < 0
       ? '找不到垫片'
-      : `垫片第 ${introIdx + 1} 行（${indented ? '有缩进=在包装内' : '顶格=在包装外！'}），` +
-        `第一处读取第 ${firstRead + 1} 行`
+      : `垫片第 ${introIdx + 1} 行` +
+        (firstRead >= 0 ? `，第一处读取第 ${firstRead + 1} 行` : '（本文件里没有 pixi，故无读取点）') +
+        (introIdx >= 150 ? '（挪到模块代码之后了！）' : '')
   );
 }
 
 // ── 报告 ────────────────────────────────────────────────────────────
-console.log(`\n产物：${path.relative(ROOT, BUNDLE)}（${code.split('\n').length} 行）`);
-const build = (code.match(/const BUILD = "([^"]+)"/) || [])[1];
+const files = Object.keys(SOURCES);
+console.log(
+  `\n产物：${path.relative(ROOT, DIST)}/（${files.length} 个 js）` +
+    files.map((f) => `\n        ${f.replace('/', '')}  ${SOURCES[f].split('\n').length} 行`).join('')
+);
+const build = (Object.values(SOURCES).join('\n').match(/const BUILD = "([^"]+)"/) || [])[1];
 console.log(`构建号：${build || '（这是非取证构建）'}\n`);
 
 let failed = 0;

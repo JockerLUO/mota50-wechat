@@ -150,6 +150,34 @@ function createElement(tag: string): Any {
 }
 
 const doc = {
+  /**
+   * 相对 URL 的解析基准。
+   *
+   * ⚠️ 这个字段**不是装饰**，是 pixi 在**构造期**真的会读的东西：
+   *
+   *   - `autoDetectRenderer` 里有 `new URL("boot.js", document.baseURI)` ——
+   *     它是 Vite 给动态导入生成的 `__vitePreload(loader, deps, importerUrl)`
+   *     的**第三个实参**。那个参数在这份产物里**根本不会被用到**
+   *     （`deps` 是 `void 0`，helper 里消费它的分支被 `if (false)` 消除掉了），
+   *     但**实参照样要求值** —— base 是 `undefined` 就抛
+   *     `TypeError: Failed to construct 'URL': Invalid URL`，而它发生在
+   *     渲染器构造期，后果是整局起不来。
+   *   - pixi 的 loader 里还有一处 `new URL(url, document.baseURI)`（跨域判定）。
+   *
+   * 所以它必须是个**绝对** URL：`new URL(x, '')` / `new URL(x, '/')` 都会抛。
+   *
+   * 具体取值只影响「相对路径会被解析成什么」，而本项目的资源加载**不走这条 URL
+   * 路径** —— 图集由 `wx.createImage()` 直接吃相对路径（`assets/terrain.png`），
+   * 守这一点的是 verify:minigame 的「图集走包内相对路径」判据。
+   * 用一个一眼看得出「不是真实网络地址」的 scheme，是为了避免将来有人拿它去 fetch。
+   *
+   * ⚠️ 这个坑是**产物拆成 CJS 多文件之后才出现的**，而且**只有无 DOM 宿主抓得到**：
+   *   - iife 单文件时代动态导入被 `inlineDynamicImports` 全部内联，
+   *     Vite 不生成 `__vitePreload`，这段实参压根不存在；
+   *   - 有 DOM 的宿主里 `document.baseURI` 有真值，右支走得通，看起来一切正常。
+   * 记在这里是因为它太容易在「换个打包格式」的时候再犯一次。
+   */
+  baseURI: 'wxgame://code-package/',
   addEventListener: (type: string, fn: (ev: Any) => void) => documentBus.addEventListener(type, fn),
   removeEventListener: (type: string, fn: (ev: Any) => void) => documentBus.removeEventListener(type, fn),
   dispatchEvent: (ev: Any) => documentBus.dispatchEvent(ev),

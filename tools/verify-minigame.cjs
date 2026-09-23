@@ -22,7 +22,11 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
+// 清单要从 `src/data/runtime-files.mjs` 现读（它是 ESM，只能动态 import）——
+// 这份清单是**单一来源**，游戏代码与拷贝脚本都按它办事，判据也必须按它，不能另抄一份。
+const { pathToFileURL } = require('node:url');
 const { chromium, findChromium } = require('./lib/chromium.cjs');
+const { inlineAsJs, collectJsSources, collectDataFiles } = require('./lib/package-tables.cjs');
 
 const ROOT = path.resolve(__dirname, '..');
 const DIST = path.join(ROOT, 'dist-minigame');
@@ -69,6 +73,29 @@ const server = http.createServer((req, res) => {
 
   if (url === '/favicon.ico') {
     res.writeHead(204).end();
+    return;
+  }
+
+  // ── 包内文件表：源码 + 数据，供宿主**同步**取用 ────────────────────
+  //
+  // 产物是 CJS 多文件（`game.js` require `./boot.js`），而 `require` 是同步调用；
+  // 数据又是用 `wx.getFileSystemManager().readFileSync()` 同步读的。
+  // Worker 里没有同步 fetch —— 所以由服务器当场把包内文件内联成两张表，
+  // 宿主 `importScripts` 一次就拿全。
+  //
+  // 两张表都是**枚举产物目录**得到的，所以它们就是「包里有什么」的事实描述，
+  // 换 chunk 划分、增删数据文件时这里不用改任何代码。
+  // 完整理由见 tools/lib/package-tables.cjs 文件头。
+  //
+  // 与图集一样，这里不写死文件名。
+  if (url === '/__sources.js') {
+    res.writeHead(200, { 'content-type': MIME['.js'] });
+    res.end(inlineAsJs('__motaSources', collectJsSources(DIST)));
+    return;
+  }
+  if (url === '/__data.js') {
+    res.writeHead(200, { 'content-type': MIME['.js'] });
+    res.end(inlineAsJs('__motaData', collectDataFiles(DIST)));
     return;
   }
 
@@ -371,37 +398,193 @@ const server = http.createServer((req, res) => {
   // 产物里若真有高于地板的语法，复算会把它降掉 → token 计数变少 → 判负；
   // 而注释/字符串里的同名字符串在两边原样保留 → 计数相同 → 不误伤。
   const SYNTAX_FLOOR = 'es2015'; // ⚠️ 必须与 vite.minigame.config.ts 的 build.target 一致
+  //
+  // ⚠️ 必须**逐个 js 文件**查，不能只查入口。云端检查器看的是包内**所有**文件，
+  //    而拆包之后 `boot.js` 才是体积最大、语法最杂的那一个（pixi 全在里面）。
+  //    只查 game.js 的话，「pixi 带进来高版本语法」本地永远发现不了 ——
+  //    症状与下面记录的完全同构，只是报错文件名变成 `invalid file: boot.js`，
+  //    而且晚一步（要等上传/预览才炸）。
   {
-    const raw = fs.readFileSync(path.join(DIST, 'game.js'), 'utf8');
     const norm = (s) => s.replace(/\s+/g, '');
     const cnt = (s, p) => s.split(p).length - 1;
     // `**` 刻意不在列表里：JSDoc 的 `/**` 本身就含它，打印器对注释的重排会改变计数。
     const PATTERNS = ['?.', '??', 'catch{'];
 
-    let lowered = null;
-    let lowerErr = null;
-    try {
-      lowered = (await require('esbuild').transform(raw, { target: SYNTAX_FLOOR, loader: 'js', minify: false })).code;
-    } catch (e) {
-      lowerErr = e;
-    }
+    for (const file of ['game.js', 'boot.js']) {
+      const abs = path.join(DIST, file);
+      if (!fs.existsSync(abs)) {
+        add(`${file} 语法不高于 ${SYNTAX_FLOOR}`, false, '文件不在包内 —— 拆包没成功');
+        continue;
+      }
+      const raw = fs.readFileSync(abs, 'utf8');
 
-    if (!lowered) {
-      add(
-        `产物语法不高于 ${SYNTAX_FLOOR}`,
-        false,
-        `无法用 esbuild 复算（esbuild 是 vite 的传递依赖，缺失时本判据失效）：${lowerErr && lowerErr.message}`
-      );
-    } else {
+      let lowered = null;
+      let lowerErr = null;
+      try {
+        lowered = (await require('esbuild').transform(raw, { target: SYNTAX_FLOOR, loader: 'js', minify: false })).code;
+      } catch (e) {
+        lowerErr = e;
+      }
+
+      if (!lowered) {
+        add(
+          `${file} 语法不高于 ${SYNTAX_FLOOR}`,
+          false,
+          `无法用 esbuild 复算（esbuild 是 vite 的传递依赖，缺失时本判据失效）：${lowerErr && lowerErr.message}`
+        );
+        continue;
+      }
       const drift = PATTERNS.map((p) => [p, cnt(norm(raw), p), cnt(norm(lowered), p)]).filter(([, a, b]) => a !== b);
       add(
-        `产物语法不高于 ${SYNTAX_FLOOR}（微信云端检查器的地板）`,
+        `${file} 语法不高于 ${SYNTAX_FLOOR}（微信云端检查器的地板）`,
         drift.length === 0,
         drift.length
           ? drift.map(([p, a, b]) => `${p}: ${a}→${b}`).join('  ') + '（被降级 = 产物里存在高于地板的语法）'
           : `${(raw.length / 1024).toFixed(0)}KB 复算无差异；${PATTERNS.join(' / ')} 计数不变`
       );
     }
+  }
+
+  // ── 包结构：拆包边界 +「数据是运行期读的，不是构建期内联的」──────────────
+  //
+  // 这一组是 2026-09-23 那次拆包的**正面判据**。
+  //
+  // 拆包前的产物是一个 2.1MB 的单文件 `game.js`（IIFE），全部数据和第三方库
+  // 都糊在里面 —— 想看一眼「第 20 层放了哪些怪」得先翻两万行 pixi。拆完之后是
+  // `game.js`（入口）+ `boot.js`（垫片 + env 适配 + pixi）+ `data/*.json`。
+  //
+  // ## 为什么必须在这里判，而不是「看文件名对了就算成」
+  //
+  // 拆包这类改动最典型的失败**不是崩溃，而是「看起来成了、其实没生效」**：
+  //   · 数据拷进了包，却仍在构建期被内联进入口 → 改 json 不影响运行结果；
+  //   · 数据改成运行期读，但读的是另一份拷贝 → 改 json 还是不影响运行结果；
+  //   · 入口 require 不到 boot（路径写错）→ 只是「另一条路崩」，报错还不在本地。
+  // 三种都不报错、截图照样对。所以判据要**同时**看：读没读、有没有内联、清单对不对。
+  //
+  // ## ⚠️ 反向断言必须带探针（本项目纪律）
+  //
+  // 「game.js 里搜不到数据」是个反向断言，它有一种特有的假绿：**搜错了词**。
+  // 于是同一组里既要报「入口没有」，也要报「同一次搜法在数据文件里搜得到」。
+  //
+  // 本轮就真的踩到过一次，记在这里免得下次再踩：
+  // 一开始拿 `demonKingTrue` 当探针，结果它在 `game.js` 里**确实存在** ——
+  // 但来源不是游戏数据，而是 `assets/MANIFEST.json`（图集清单，被 `atlas.ts`
+  // 静态 import 烘进了入口）。**图集在入口里是正常的，游戏数据在入口里才是问题。**
+  // 所以探针要取「只可能来自 data/ 的那类文本」，见下面的 `dataNeedle`。
+  {
+    const jsFiles = report.packageJs || [];
+    add(
+      '包内 js 恰好是 game.js + boot.js 两个模块（拆包成功）',
+      jsFiles.length === 2 && jsFiles.includes('/game.js') && jsFiles.includes('/boot.js'),
+      jsFiles.length ? `${jsFiles.length} 个：${jsFiles.join(', ')}` : '宿主没枚举到任何 js'
+    );
+
+    // 入口该是「能直接读的那一份」。体积差是这条最直白的证据
+    //（pixi 一千多 KB，业务代码两百多 KB）。真正的结构判据在 verify:sandbox 里
+    // （按标记函数找 pixi 在哪），这里只做包内体积分工的交叉核对。
+    const sizeOf = (name) => {
+      const p = path.join(DIST, name);
+      return fs.existsSync(p) ? fs.statSync(p).size : 0;
+    };
+    const entrySize = sizeOf('game.js');
+    const bootSize = sizeOf('boot.js');
+    add(
+      '入口 game.js 明显小于 boot.js（pixi 不在入口里）',
+      entrySize > 0 && bootSize > entrySize * 3,
+      `game.js ${(entrySize / 1024).toFixed(1)}KB / boot.js ${(bootSize / 1024).toFixed(1)}KB`
+    );
+
+    // ── 清单：源码声明 == 包内实际 ────────────────────────────────────
+    // 期望清单不是在这里另抄一份，而是从 `src/data/runtime-files.mjs` 现读
+    //（游戏代码与拷贝脚本用的是同一份）。楼层文件名由 `floors/index.json`
+    // 的 `id` 推出 —— 与 `src/data/index.ts` 的推法一致。
+    const { RUNTIME_FLOOR_DIR, RUNTIME_TOP_JSON } = await import(
+      pathToFileURL(path.join(ROOT, 'src', 'data', 'runtime-files.mjs')).href
+    );
+    const srcIndex = JSON.parse(fs.readFileSync(path.join(ROOT, 'data', 'floors', 'index.json'), 'utf8'));
+    /** key（相对 data/）→ 源码文件绝对路径 */
+    const expected = new Map();
+    for (const key of RUNTIME_TOP_JSON) expected.set(key, path.join(ROOT, 'data', key));
+    for (const entry of srcIndex.floors) {
+      const key = `${RUNTIME_FLOOR_DIR}/${entry.id}.json`;
+      expected.set(key, path.join(ROOT, 'data', RUNTIME_FLOOR_DIR, `${entry.id}.json`));
+    }
+
+    const pkgData = report.packageData || [];
+    const actualSet = new Set(pkgData);
+    const missing = [...expected.keys()].filter((k) => !actualSet.has(`data/${k}`));
+    const extra = pkgData.filter((k) => !expected.has(k.replace(/^data\//, '')));
+    add(
+      '包内 data/ 与源码清单逐一对应（不多不少）',
+      missing.length === 0 && extra.length === 0 && pkgData.length > 0,
+      missing.length || extra.length || !pkgData.length
+        ? `缺 ${missing.length} 个${missing.length ? `（${missing.slice(0, 3).join(', ')}…）` : ''}` +
+            ` / 多 ${extra.length} 个${extra.length ? `（${extra.slice(0, 3).join(', ')}…）` : ''}`
+        : `${pkgData.length} 个 json（顶层 ${RUNTIME_TOP_JSON.length} + 楼层 ${srcIndex.floors.length}）`
+    );
+
+    // ── 内容：包内那份必须是**刚出的**那一版 ──────────────────────────
+    //
+    // 与「包内图集必须是最新一份」完全同源：`dist-minigame/data/` 是
+    // `copy-minigame-assets.mjs` 拷过去的**副本**，改完 `data/*.json`
+    // 不跑 `build:minigame` 就还是旧的。上面那条只证明「清单对」，
+    // 证明不了「内容对」——两者失败原因不同，报错指向也不同，所以要分开。
+    const driftData = [];
+    for (const [key, srcPath] of expected) {
+      const dstPath = path.join(DIST, 'data', key);
+      if (!fs.existsSync(dstPath)) {
+        driftData.push(`${key} 不在包内`);
+        continue;
+      }
+      const a = hash12(srcPath);
+      const b = hash12(dstPath);
+      if (a !== b) driftData.push(`${key} 源=${a} 包=${b}`);
+    }
+    add(
+      '包内 data/*.json 与 data/ 源码逐字节一致（不是上一版数据）',
+      driftData.length === 0,
+      driftData.length
+        ? `${driftData.slice(0, 3).join(' | ')}${driftData.length > 3 ? ` …共 ${driftData.length} 个` : ''}` +
+            ' —— 改过数据就要跑一次 npm run build:minigame'
+        : `${expected.size} 个文件全部一致`
+    );
+
+    // ── 正面：启动过程真的去读了代码包 ────────────────────────────────
+    //
+    // 判据数的是宿主桩里 `readFileSync` 的调用次数（`report.readFileCalls`），
+    // 期望值 = 顶层数 + 楼层数（每个文件恰好读一次）。
+    // 路径必须全部以 `data/` 开头、不带 `./` `../` `/` 前缀 ——
+    // 这是官方「访问代码包文件」的硬要求，桩里也会当场报红，这里再正向确认一遍。
+    const readPaths = report.readFilePaths || [];
+    const reads = report.readFileCalls || 0;
+    const wantReads = RUNTIME_TOP_JSON.length + srcIndex.floors.length;
+    const badPaths = readPaths.filter((p) => !/^data\//.test(p));
+    add(
+      '数据是启动期真读代码包读出来的（不是构建期内联）',
+      reads >= wantReads && badPaths.length === 0,
+      `${reads} 次 readFileSync（期望 ≥ ${wantReads} = 顶层 ${RUNTIME_TOP_JSON.length} + 楼层 ${srcIndex.floors.length}）` +
+        (badPaths.length
+          ? `；${badPaths.length} 次路径不合规：${badPaths.slice(0, 2).join(', ')}`
+          : '；路径全部形如 data/…')
+    );
+
+    // ── 反面（带探针）：入口里没有数据原文 ────────────────────────────
+    // 探针现取：从 `data/tiles.json` 里截第一段 ≥12 个连续汉字。
+    // 这类文本（`$comment` 的中文说明）只可能来自数据 —— 它既不在业务代码里，
+    // 也不在图集清单里，而且被内联后**原文照样是这些汉字**（压缩只动引号空格）。
+    const tilesRaw = fs.readFileSync(path.join(ROOT, 'data', 'tiles.json'), 'utf8');
+    const dataNeedle = (tilesRaw.match(/[\u4e00-\u9fa5]{12,}/) || [])[0];
+    const entrySrc = fs.readFileSync(path.join(DIST, 'game.js'), 'utf8');
+    const inEntry = !!dataNeedle && entrySrc.includes(dataNeedle);
+    const inPkgData = !!dataNeedle && fs.readFileSync(path.join(DIST, 'data', 'tiles.json'), 'utf8').includes(dataNeedle);
+    add(
+      '数据没有在构建期内联进 game.js（入口里没有数据原文）',
+      inPkgData && !inEntry,
+      dataNeedle
+        ? `探针「${dataNeedle}」：包内 data/tiles.json ${inPkgData ? '有' : '没有（探针失效，本条不可信）'}、` +
+            `game.js ${inEntry ? '有 —— 数据被内联了' : '没有'}`
+        : '从 data/tiles.json 里取不到中文探针（数据格式变了？本条不可信）'
+    );
   }
 
   const moves = report.moves || [];
@@ -590,8 +773,11 @@ const server = http.createServer((req, res) => {
   }
 
   if (beaconFrame) console.log(`\n  探针自采的首帧：${beaconFrame}`);
+  // 打出 `(通过/总数)` 而不是只打失败数：条数**变少**本身是个信号
+  //（某条判据被合并或吞掉），只看「有没有 ❌」是看不出来的。
   console.log(
-    `\n${failed === 0 ? '✅ 全部通过' : `❌ ${failed} 条不通过`}（截图：assets/preview/minigame-board.png）\n`
+    `\n${failed === 0 ? '✅ 全部通过' : `❌ ${failed} 条不通过`}` +
+      `（${checks.length - failed}/${checks.length}）（截图：assets/preview/minigame-board.png）\n`
   );
   process.exit(failed === 0 ? 0 : 1);
 })().catch((err) => {

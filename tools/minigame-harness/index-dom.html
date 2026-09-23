@@ -39,6 +39,21 @@
     -->
     <script src="/wx-stub.js"></script>
     <!--
+      源码表 + CommonJS 装载器 —— 产物是「入口 + 它 require 的 chunk」两个文件，
+      不能再用一个 `<script src="/game.js">` 装。
+
+      为什么不顺着用 `<script src="/boot.js">` 再 `<script src="/game.js">`：
+      那只有**一个全局作用域**，产物里 PRELUDE 的 `var document` 会变成真的全局
+      `window.document`。而这一页的前提恰恰是「宿主本来没有 document」——
+      那等于自己把被测条件破坏掉。装载器用模块包装函数把每个文件的 var 关进去，
+      这也正是小游戏真实语义（官方「模块化」：一个 js 文件的变量只在该文件有效）。
+
+      完整理由见 tools/minigame-harness/cjs-loader.js 文件头。
+    -->
+    <script src="/__sources.js"></script>
+    <script src="/__data.js"></script>
+    <script src="/cjs-loader.js"></script>
+    <!--
       禁 unsafe-eval —— 与 Worker 宿主（worker.js 里的 importScripts）**共用同一份实现**。
 
       为什么有 DOM 的宿主也必须禁：浏览器（包括请 playwright 起的 chromium）默认允许 eval，
@@ -46,18 +61,21 @@
       「漏了 `pixi.js/unsafe-eval`」这个 bug **永远不会暴露**：测试全绿，实际什么都没测到。
       装上禁令，「有 DOM / 无 DOM」两条路径才都真的覆盖它。
 
-      ⚠️ 顺序：必须在 `/game.js` **之前**。Pixi 的探测结果会被记忆化，
+      ⚠️ 顺序：必须在**装载产物之前**。Pixi 的探测结果会被记忆化，
         第一次探测就发生在渲染器构造时。
+
+      ⚠️ 它换的是 `globalThis.Function`，**不动 `eval`** —— 装载器用的正是直接 eval，
+        两者刻意错开，免得装载器跟被测环境打架。
     -->
     <script src="/no-unsafe-eval.js"></script>
     <!-- 装上的**当刻**先自查一次并存证：驱动脚本启动后再查一次，两次对比才说明
-         「禁令是在 game.js 之前装上的，而且启动过程没把它换掉」。 -->
+         「禁令是在装载产物之前装上的，而且启动过程没把它换掉」。 -->
     <script>
       window.__evalBannedAtStart = window.__unsafeEvalBan.armed();
     </script>
-    <script src="/game.js"></script>
     <script>
-      // 报告给驱动脚本：本页只提供「宿主事实」，判据全部在 verify-dom-host.cjs 里。
+      // 装载产物。`/game.js` 内部会 `require('./boot.js')`，两个文件都要在源码表里。
+      window.__motaLoadCjs('/game.js');
       window.__domHostReady = true;
     </script>
   </body>
