@@ -20,7 +20,8 @@
  *   A2 假墙不泄漏：`w` 格必须与「同位置真墙」走同一条规则（隐藏通路设计的命门）
  *   A3 无空键：不许出现 `?字符` 这种「没映射」的兜底态
  *   A4 变体是活的：地面/墙身键在棋盘上确实用到了多个变体（防止变体路径被绕过）
- *   A5 怪物布局：非 BOSS 精灵装得进一格；每只怪有且只有一个战斗评级指示灯，且指示灯在格内
+ *   A5 怪物布局：非 BOSS 精灵装得进一格，且脚下**干净**（精灵之外只留 BOSS 圈；
+ *      曾经画在脚下的评级色点在 2026-09-23 被要求移除，A5b 现在就守着这条）
  *   A6 BOSS 与倍数：画得比一格大的必须是玩法上的 BOSS（不许有「巨大的杂兵」）
  *   A7 面板版式：每块面板的标题落在同一套坐标上（见「统一版式」）
  *   A8 版面：模块间隙相等，棋盘没被挤小，棋盘盒与面板同栏
@@ -29,11 +30,15 @@
  *   A11 道具栏：空背包整块不占位，有道具时高度按件数算
  *   A12 手绘怪物：落屏用的是 monsters 图集且帧与 MANIFEST 一致（不退回程序化图形）
  *   A13 楼层浏览：选完某一层后「返回」始终可达，返回后勇者回来且输入复活
- *   A14 攻击动画：挥剑全程勇者精灵的形体和尺寸**不变**，靠 `attackFx` 的时间轴演
+ *   A14 攻击动画：挥剑期间确实换成挥剑帧（anim 出现过 attack），而形体与尺寸**不变**，
+ *       刀光/前冲由 `attackFx` 的时间轴演（帧画了却没接上会被这条抓住）
  *   A15 对话折行：台词折行不超卡片内宽、不以收尾标点开头（中文行首禁则）
  *   A16 上下楼梯：两张瓦片既不逐像素相同、也不互为上下翻转，且形体走向各就各位
  *   A17 像素密度：图集帧升到出图网格（原始素材 ×supersample）、drawScale 同比缩小，落屏尺寸不变
  *   A18 文字光栅化分辨率跟随设备像素比（dsf=3 时必须是 3，写死 2 会挂）
+ *   A19 墙是手绘错缝砌法（调色板 ≥5 色、相邻砌层竖缝错开半块），不是第三方位图的超采样
+ *   A20 待机呼吸是渲染层的刚体位移：贴图/帧高全程不变，只在原位上抬 1px
+ *       （素材层再做「上半身位移 + 接缝补偿」会立刻被这条抓住）
  *
  * 用法：node tools/verify-visual.cjs [--verbose]（先 npm run build）
  */
@@ -47,6 +52,18 @@ const ROOT = path.resolve(__dirname, '..');
 const DIST = path.join(ROOT, 'dist');
 const PORT = Number(process.env.PORT || 4201);
 const VERBOSE = process.argv.includes('--verbose');
+/**
+ * A20 的采样窗口（ms）。
+ *
+ * 必须**盖住一个完整呼吸周期**，否则会拍到「一直在原位」的实体，假红成
+ * 「呼吸没生效」。渲染层的周期见 board.ts：怪物 2600ms、NPC 4200ms ——
+ * 取 5600 是为了给 NPC 留出余量（它的相位可能刚好从「刚落回」开始，
+ * 窗口只比周期大一点点时余量会被相位吃掉）。
+ *
+ * ⚠️ board.ts 里那两个周期**一改就要回来同步这个值**。漏同步的后果是一条
+ * 很难看的假红：A20 报「某个实体一次都没动」，而实现其实完全正常。
+ */
+const BOB_WINDOW_MS = 5600;
 
 // ── 期望值：在 Node 侧独立重实现一遍渲染规则 ────────────────────────
 // ⚠️ 这里的映射必须与 src/render/atlas.ts 的 CHAR_TO_KEY 一致。
@@ -301,30 +318,34 @@ function check(name, ok, detail) {
     );
 
     const layoutBad = [];
-    const noPlate = [];
-    const outsideCell = [];
+    const withDot = [];
+    const strayDraw = [];
     let monsterViews = 0;
     let floorsWithMonsters = 0;
+    let bossRings = 0;
+    // 「按 label 找子节点」这套方法本身有效的证据（见 A5b 的说明）
+    let npcPlateProbe = 0;
 
     for (const floor of sorted) {
       await page.evaluate((f) => window.mota.game.__goto(f), floor);
-      const mons = await page.evaluate(() => {
+      const probe = await page.evaluate(() => {
         const g = window.mota.game;
         const b = g.board;
         const S = b.cellPx;
         const isSp = (n) => n && n.texture !== undefined && n.anchor !== undefined;
-        const isTx = (n) => n && typeof n.text === 'string' && n.style !== undefined;
         // 生产构建会压缩类名（Graphics → H），所以不能看 constructor.name；
-        // 渲染层给指示灯设置了唯一的 label='gradeDot'（Pixi v8 用 label 不用 name），直接按 label 找。
-        const isPlate = (n) => n && n.label === 'gradeDot';
+        // 渲染层给每种自绘标记设了唯一的 label（Pixi v8 用 label 不用 name），
+        // 直接按 label 找 —— 这也是 A5b 能判「脚下干不干净」的前提。
+        const isDot = (n) => n && n.label === 'gradeDot';
+        const isRing = (n) => n && n.label === 'bossRing';
+        const isNpcPlate = (n) => n && n.label === 'npcPlate';
         const out = [];
         for (const v of b.entityViews) {
           if (!v.node || !v.monsterId) continue;
-          const sp = (v.node.children || []).find(isSp);
-          const plate = (v.node.children || []).find(isPlate);
-          const nPlates = (v.node.children || []).filter(isPlate).length;
+          const kids = v.node.children || [];
+          const sp = kids.find(isSp);
+          const ring = kids.find(isRing);
           const gb = sp ? sp.getBounds() : null;
-          const pb = plate ? plate.getBounds() : null;
           const cellL = b.x + v.x * S;
           const cellT = b.y + v.y * S;
           out.push({
@@ -338,21 +359,30 @@ function check(name, ok, detail) {
             spriteBottom: gb ? gb.maxY : null,
             spriteTop: gb ? gb.minY : null,
             spriteH: gb ? gb.height : null,
-            plateCount: nPlates,
-            plateL: pb ? pb.minX : null,
-            plateR: pb ? pb.maxX : null,
-            plateT: pb ? pb.minY : null,
-            plateB: pb ? pb.maxY : null
+            dotCount: kids.filter(isDot).length,
+            ringCount: kids.filter(isRing).length,
+            // 精灵与 BOSS 圈之外**任何**额外绘制物都算残留
+            extraCount: kids.filter((n) => !isSp(n) && !isDot(n) && !isRing(n)).length,
+            ringVisible: ring ? ring.getBounds().width > 0 : false
           });
         }
-        return out;
+        // 顺带数一遍 NPC 的脚下名牌 —— 见 A5b 的「断言有效性」说明
+        let npcPlates = 0;
+        for (const v of b.entityViews) {
+          if (!v.node || !v.npcId) continue;
+          npcPlates += (v.node.children || []).filter(isNpcPlate).length;
+        }
+        return { mons: out, npcPlates };
       });
+      const mons = probe.mons;
+      npcPlateProbe += probe.npcPlates;
 
       if (mons.length) floorsWithMonsters++;
       monsterViews += mons.length;
 
       for (const m of mons) {
         const boss = bossIds.includes(m.id) && bigIds.includes(m.id);
+        if (m.ringVisible) bossRings++;
         if (!m.hasSprite) {
           layoutBad.push({ ...m, why: '没有精灵（图集没就绪？）' });
           continue;
@@ -364,24 +394,9 @@ function check(name, ok, detail) {
         if (!boss && m.spriteH > m.S + 0.01) {
           layoutBad.push({ id: m.id, cell: [m.x, m.y], why: `精灵高 ${m.spriteH}px > 格子 ${m.S}px` });
         }
-        if (m.plateCount !== 1) {
-          noPlate.push({ id: m.id, cell: [m.x, m.y], plateCount: m.plateCount });
-          continue;
-        }
-        // 指示灯要留在格子里（允许 1px 抗锯齿溢出）
-        const pad = 1.01;
-        if (
-          m.plateL < m.cellL - pad ||
-          m.plateR > m.cellL + m.S + pad ||
-          m.plateT < m.cellT - pad ||
-          m.plateB > m.cellT + m.S + pad
-        ) {
-          outsideCell.push({
-            id: m.id,
-            cell: [m.x, m.y],
-            plate: [m.plateL.toFixed(1), m.plateT.toFixed(1), m.plateR.toFixed(1), m.plateB.toFixed(1)],
-            cellBox: [m.cellL, m.cellT, m.cellL + m.S, m.cellT + m.S]
-          });
+        if (m.dotCount !== 0) withDot.push({ id: m.id, cell: [m.x, m.y], dotCount: m.dotCount });
+        if (m.extraCount !== 0 || m.ringCount !== 1) {
+          strayDraw.push({ id: m.id, cell: [m.x, m.y], extra: m.extraCount, rings: m.ringCount });
         }
       }
     }
@@ -394,12 +409,35 @@ function check(name, ok, detail) {
         : `${layoutBad.length} 只异常，前 3：${JSON.stringify(layoutBad.slice(0, 3))}`
     );
 
+    // ── A5b：怪物脚下**必须干净** ────────────────────────────────────
+    //
+    // 这条断言在 2026-09-23 **反了过来**。改前它要求「每只怪恰好一个指示灯
+    // （`gradeDot`）」，因为那时脚下确实画着一颗 6×4 的评级色点。玩家的反馈是
+    // 「移除怪物脚底的点或者阴影」—— 那颗点的颜色是 `shade(怪物主色, -0.62)`，
+    // 落在浅色地板上读起来就是一块脏东西，而不是一个评级标记（评级本来在
+    // HUD 战斗面板里就有）。
+    //
+    // 现在它守的是**反向**的约束：脚下不许再出现任何标记。写成断言而不是
+    // 删掉了事，是因为「脚下干净」是个容易被后人无意破坏的状态 ——
+    // 想在脚下加点提示的人，会先在这里看到一条说明为什么不能加的红。
+    //
+    // ⚠️ 断言有效性：`dotCount === 0` 有可能是「因为 isDot 永远找不到东西」
+    // 而恒真的假绿（比如 label 被改掉、或生产构建把 label 抹了）。
+    // 所以同时探一下 **NPC 的脚下名牌**（`npcPlate`，另一处按 label 找的节点）：
+    // 它必须数得出来。数不出来就说明「按 label 找子节点」这条路本身断了，
+    // 这条断言也就不作数 —— 那时报红是对的。
+    const dotOk = withDot.length === 0;
+    const strayOk = strayDraw.length === 0;
+    const probeOk = npcPlateProbe > 0;
     check(
-      `A5b 怪物指示灯：每只怪恰好一个战斗评级指示灯，且落在自己格内`,
-      noPlate.length === 0 && outsideCell.length === 0,
-      noPlate.length === 0 && outsideCell.length === 0
-        ? `全部 ${monsterViews} 只都恰好一个指示灯且未出格`
-        : `缺/多个指示灯 ${noPlate.length} 只；指示灯出格 ${outsideCell.length} 只，前 3：${JSON.stringify(outsideCell.slice(0, 3))}`
+      `A5b 怪物脚下无标记：精灵之外只留 BOSS 圈（探针：NPC 名牌 ${npcPlateProbe} 个）`,
+      dotOk && strayOk && probeOk,
+      !probeOk
+        ? '断言无效：按 label 找不到 NPC 脚下名牌（npcPlate），说明 label 这条路断了，本判据不作数'
+        : dotOk && strayOk
+          ? `全部 ${monsterViews} 只脚下干净（BOSS 圈 ${bossRings} 个）`
+          : `脚下仍有标记 ${withDot.length} 只、多余绘制物 ${strayDraw.length} 只，` +
+            `前 3：${JSON.stringify((withDot.length ? withDot : strayDraw).slice(0, 3))}`
     );
 
     // ── A7：面板版式一致性 ────────────────────────────────────────
@@ -862,20 +900,27 @@ function check(name, ok, detail) {
         `ret=${JSON.stringify(afterReturn)} steps ${beforeWalk}→${afterWalk.steps}`
     );
 
-    // ── A14 攻击动画：挥剑全程形体与尺寸不变，靠 attackFx 的时间轴演 ──
+    // ── A14 攻击动画：换挥剑帧 + 前冲 + 刀光，全程形体与尺寸不变 ──
     //
     // 「攻击时角色会变小」是观感问题，但它有可量的代理量：**精灵的贴图矩形与
-    // 落屏宽高**。旧做法是切到挥剑帧，而挥剑帧身体只有 17 行、剑尖顶到底边，
-    // 在 bottom_center 锚点下把整个人抬离地面 —— 看起来就是「变小 + 浮空」。
-    // 新做法全程用走路帧，动的是 `heroLunge`（前冲）与 `attackFx`（刀光）。
-    // 所以断言量：全程 size/frame 只有**一个**取值、且等于待机时的取值；
-    // 过程中 attackFx 的实测包围盒面积 > 0（真的有东西落屏），
-    // 结束后回到 0 且 attacking=false（收干净）。四个方向都过一遍。
+    // 落屏宽高**。当年切到挥剑帧之所以出问题，是因为那组 ArMM 帧本身
+    // 弓身只剩 17 行、剑尖又顶到底边（bottom_center 锚点下把人抬离地面）。
+    //
+    // 2026-09-23 勇者改成手绘后，那两条都不成立了（见 board.ts 的
+    // `refreshHeroTexture`：四向都是底行恒为 23，行数的变化全来自向上伸的剑），
+    // 所以挥剑帧接回来了。判据相应改成：
+    //   · `anim` 全程**必须出现过 'attack'** —— 否则就是「帧画了没接上」，
+    //     而这正是本次要防的退化（接回来之前，16 帧挥剑素材一直是死的）；
+    //   · `size` / `frame` 的**尺寸**仍必须全程只有一个取值 —— 挥剑帧与走路帧
+    //     同为 16×26（图集里 64×104），所以「不变小」依然成立；
+    //     这里量的是尺寸而不是帧的身份，接帧不会让它红，尺寸变宽才会。
+    //   · 过程中 attackFx 的实测包围盒面积 > 0（刀光真的落屏），结束后归零。
     const atk = await page.evaluate(async () => {
       const b = window.mota.game.board;
       const idle = b.__hero();
       const sizes = new Set();
       const frames = new Set();
+      const anims = new Set();
       const turn = {};
       let maxLunge = 0;
       let maxFx = 0;
@@ -887,6 +932,7 @@ function check(name, ok, detail) {
           const h = b.__hero();
           sizes.add(key(h.size));
           frames.add(key(h.frame));
+          anims.add(h.anim);
           turn[dir] = turn[dir] ?? h.dir;
           maxLunge = Math.max(maxLunge, Math.abs(h.lunge.x), Math.abs(h.lunge.y));
           maxFx = Math.max(maxFx, h.fxBounds.w * h.fxBounds.h);
@@ -899,9 +945,11 @@ function check(name, ok, detail) {
         idleFrame: key(idle.frame),
         sizes: [...sizes],
         frames: [...frames],
+        anims: [...anims],
         turn,
         maxLunge,
         maxFx,
+        afterAnim: after.anim,
         afterAttacking: after.attacking,
         afterFx: after.fxBounds.w * after.fxBounds.h
       };
@@ -911,18 +959,27 @@ function check(name, ok, detail) {
       atkBad.push(`挥剑全程落屏尺寸出现 ${atk.sizes.length} 种：${atk.sizes.join(' / ')}（待机是 ${atk.idleSize}）`);
     }
     if (atk.frames.length !== 1 || atk.frames[0] !== atk.idleFrame) {
-      atkBad.push(`挥剑全程贴图帧出现 ${atk.frames.length} 种：${atk.frames.join(' / ')}（待机是 ${atk.idleFrame}）`);
+      atkBad.push(`挥剑全程贴图帧出现 ${atk.frames.length} 种尺寸：${atk.frames.join(' / ')}（待机是 ${atk.idleFrame}）`);
+    }
+    if (!atk.anims.includes('attack')) {
+      atkBad.push(
+        `挥剑全程贴的都是走路帧（anim 只出现过 ${atk.anims.join(' / ')}）—— ` +
+          `图集里的挥剑帧没被接上，画了就白画`
+      );
     }
     if (atk.maxFx <= 0) atkBad.push('挥剑全程 attackFx 的包围盒一直是 0 —— 刀光根本没画出来');
     if (atk.maxLunge <= 1) atkBad.push(`前冲位移最大只有 ${atk.maxLunge.toFixed(2)}px —— 没看出有挥剑动作`);
     if (atk.afterAttacking || atk.afterFx !== 0) {
       atkBad.push(`挥剑结束后没有收干净：attacking=${atk.afterAttacking} fxArea=${atk.afterFx}`);
     }
+    if (atk.afterAnim !== 'walk') {
+      atkBad.push(`挥剑结束后贴的还是 ${atk.afterAnim} 帧 —— 勇者会定格在举剑造型上`);
+    }
     for (const dir of ['right', 'left', 'up', 'down']) {
       if (atk.turn[dir] !== dir) atkBad.push(`朝 ${dir} 挥剑时朝向是 ${atk.turn[dir]}`);
     }
     check(
-      `A14 攻击动画：四向挥剑全程形体恒为 ${atk.idleSize}（不切帧、不变小），刀光面积峰值 ${atk.maxFx}px²`,
+      `A14 攻击动画：四向挥剑换成挥剑帧（anim=${atk.anims.join('/')}）而形体恒为 ${atk.idleSize}，刀光面积峰值 ${atk.maxFx}px²`,
       atkBad.length === 0,
       atkBad.slice(0, 3).join(' | ') || `尺寸/帧各只有 1 种取值，前冲峰值 ${atk.maxLunge.toFixed(1)}px`
     );
@@ -1335,6 +1392,124 @@ function check(name, ok, detail) {
         ' 色，相邻砌层的竖缝错开半块',
       wallBad.length === 0,
       wallBad.slice(0, 3).join(' | ') || '不是 0x72 位图的超采样'
+    );
+
+    // ── A20 待机呼吸 = 渲染层的刚体位移，素材不参与 ──
+    //
+    // 玩家连着两轮报「抖动时出现压缩，应该是图层层级造成的」。根因确实在图层 ——
+    // 但在**素材**那一层：idle 曾被做成 4 帧「上半身整体上移 1 行 + 用下摆首行
+    // 填住腰上的缝」，补的那一行读出来就是压缩；手绘怪物更糟，它们的内容顶满画布
+    // （kraken/knight/wraith 实测 0..31），上移 2 行 = 直接裁掉头顶 2 行。
+    //
+    // 现在素材每只怪 / 每个 NPC 的 idle 只有 **1 帧静止图**（build-assets.py 的
+    // `mon_art_frames` / `npc_art_frames` 各有一条「帧数必须为 1」的断言），
+    // 呼吸由 board.ts 把整只精灵抬起 0/1 个落屏像素 —— 刚体位移不改任何像素的形状。
+    //
+    // 这条断言只读屏幕上的精灵，不看代码：
+    //   ① 贴图 uid 与帧矩形全程不变 —— 素材真的没参与动画（回到多帧会立刻红）；
+    //   ② 落屏高度全程不变 —— 没有压缩/拉伸（**正是玩家报的那个症状**）；
+    //   ③ spriteY 至多两档、且相差恰好 1px —— 是位移，不是缩放；
+    //   ④ 两档都出现过 —— 否则「呼吸压根没动」也会假绿；
+    //   ⑤ 怪物与 NPC 两种实体都要采到 —— 只验一种等于只修了一半。
+    //
+    // ⚠️ 采样按 `key` 分组而不是 `id`：同一层可能有好几只同 id 的怪（相位不同），
+    //    按 id 合并会把不同实体的 y 混在一起，误判成「位移有 N 档」。
+    // ⚠️ 窗口必须盖住一个完整周期（NPC 2400ms），否则会拍到「一直在原位」的假红。
+    const floorsDir = path.join(ROOT, 'data/floors');
+    let monFloor = null;
+    let npcFloor = null;
+    if (fs.existsSync(floorsDir)) {
+      for (const f of fs.readdirSync(floorsDir).sort()) {
+        const j = JSON.parse(fs.readFileSync(path.join(floorsDir, f), 'utf8'));
+        const es = j.entities ?? [];
+        const n = Number((f.match(/floor-(\d+)/) ?? [])[1]);
+        if (!Number.isFinite(n)) continue;
+        if (monFloor === null && es.some((e) => e.type === 'monster')) monFloor = n;
+        if (npcFloor === null && es.some((e) => e.type === 'npc')) npcFloor = n;
+        if (monFloor !== null && npcFloor !== null) break;
+      }
+    }
+    const bobProbe =
+      monFloor !== null && npcFloor !== null
+        ? await page.evaluate(
+            async ({ mon, npc, ms }) => {
+              const b = window.mota.game.board;
+              const run = async (floor) => {
+                window.mota.game.__goto(floor);
+                const acc = new Map();
+                const t0 = performance.now();
+                await new Promise((res) => {
+                  const tick = () => {
+                    for (const s of b.__sprites()) {
+                      if (s.kind === 'item' || !s.id) continue;
+                      if (s.spriteY === null || s.spriteH === null) continue; // 隐藏实体没有精灵
+                      let a = acc.get(s.key);
+                      if (!a) {
+                        a = { id: s.id, kind: s.kind, uids: new Set(), frames: new Set(), hs: new Set(), ys: new Set() };
+                        acc.set(s.key, a);
+                      }
+                      a.uids.add(String(s.uid));
+                      a.frames.add(
+                        s.frame ? `${s.frame.x},${s.frame.y},${s.frame.w},${s.frame.h}` : 'null'
+                      );
+                      a.hs.add(Math.round(s.spriteH * 100) / 100);
+                      a.ys.add(Math.round(s.spriteY * 100) / 100);
+                    }
+                    if (performance.now() - t0 < ms) requestAnimationFrame(tick);
+                    else res();
+                  };
+                  requestAnimationFrame(tick);
+                });
+                return [...acc.values()].map((a) => ({
+                  id: a.id,
+                  kind: a.kind,
+                  uids: [...a.uids],
+                  frames: [...a.frames],
+                  hs: [...a.hs],
+                  ys: [...a.ys].sort((x, y) => x - y)
+                }));
+              };
+              return [...(await run(mon)), ...(await run(npc))];
+            },
+            { mon: monFloor, npc: npcFloor, ms: BOB_WINDOW_MS }
+          )
+        : null;
+
+    const bobBad = [];
+    if (!bobProbe) {
+      bobBad.push('找不到「有怪物」与「有 NPC」的楼层，无法采样呼吸');
+    } else {
+      const kinds = new Set();
+      for (const s of bobProbe) {
+        kinds.add(s.kind);
+        if (s.uids.length !== 1) {
+          bobBad.push(`${s.id} 呼吸期间换了贴图（uid ${s.uids.length} 种）—— 素材又参与动画了`);
+        }
+        if (s.frames.length !== 1) {
+          bobBad.push(`${s.id} 呼吸期间帧矩形变了：${s.frames.join(' / ')}`);
+        }
+        if (s.hs.length !== 1) {
+          bobBad.push(`${s.id} 呼吸期间落屏高度变了 ${s.hs.join(' / ')} —— 这就是「压缩」`);
+        }
+        if (s.ys.length > 2) {
+          bobBad.push(`${s.id} 呼吸位移出现 ${s.ys.length} 档：${s.ys.join(' / ')}`);
+        } else if (s.ys.length === 2 && Math.abs(s.ys[1] - s.ys[0]) !== 1) {
+          bobBad.push(`${s.id} 呼吸位移幅度 ${Math.abs(s.ys[1] - s.ys[0])}px，应为 1px`);
+        } else if (s.ys.length < 2) {
+          bobBad.push(`${s.id} 在 ${BOB_WINDOW_MS}ms 里一次都没动 —— 呼吸没生效`);
+        }
+      }
+      if (!kinds.has('monster') || !kinds.has('npc')) {
+        bobBad.push(`只采到 ${[...kinds].join('/')} —— 怪物与 NPC 两种都要验`);
+      }
+    }
+    const bobN = bobProbe ? bobProbe.length : 0;
+    check(
+      `A20 待机呼吸：${bobN} 个实体全程贴图/帧高不变，只在原位上抬 1px（怪物 + NPC 都验）`,
+      bobBad.length === 0,
+      bobBad.slice(0, 3).join(' | ') ||
+        `采到 ${bobN} 个实体（第 ${monFloor} 层怪物 / 第 ${npcFloor} 层 NPC），` +
+          `一整个周期内贴图 uid、帧矩形、落屏高度恒定`
     );
 
     check('无控制台错误', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | ') || '干净');

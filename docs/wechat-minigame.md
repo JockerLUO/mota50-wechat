@@ -1380,8 +1380,9 @@ dsf=3 的页面**再验一遍，期望值必须是 3。
 ```bash
 npm run build:minigame    # 构建产物（含 tsc --noEmit）
 npm run verify:sandbox    # 干净 V8（node:vm）宿主实测，9 条判据（含裸标识符视图 ×7）
-npm run verify:visual     # 渲染层回归，21 条判据（A1–A19，含版面/位面/道具栏/手绘怪物，
-                          #   浏览出口 / 攻击动画 / 对话折行 / 上下楼梯可区分 / 墙的错缝砌法）
+npm run verify:visual     # 渲染层回归，22 条判据（A1–A20，含版面/位面/道具栏/手绘怪物、
+                          #   脚下无标记 / 浏览出口 / 攻击动画 / 对话折行 / 上下楼梯 /
+                          #   像素密度 / 文字分辨率 / 手绘墙 / 待机呼吸）
 npm run verify:minigame   # 无 DOM 环境实测，25 条判据（含禁 unsafe-eval ×3、图集逐字节一致、触摸端到端）
 npm run verify:dom        # 有原生 DOM 宿主实测，19 条判据（含触摸端到端 ×4、图集 ×1）
                           #   注：驱动 UI 的点击必须模拟真实节奏，见 §9.13

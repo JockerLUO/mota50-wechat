@@ -109,8 +109,7 @@ export class Game {
     this.backdrop = new Backdrop();
     this.board = new Board(LAYOUT.board.cell, {
       onHover: (x, y) => this.onHover(x, y),
-      onClick: (x, y) => void this.onBoardClick(x, y),
-      gradeFor: (monId) => previewBattle(this.state, this.data, monId)?.grade ?? null
+      onClick: (x, y) => void this.onBoardClick(x, y)
     });
     this.board.x = LAYOUT.board.x;
     this.board.y = LAYOUT.board.y;

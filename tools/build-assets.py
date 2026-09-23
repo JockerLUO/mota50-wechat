@@ -1307,49 +1307,490 @@ HERO_DIRS = ["down", "right", "up", "left"]
 NPC_DIRS = ["down", "left", "up", "right"]
 
 
-def slice_armm_rows(path: Path, row_specs):
-    """
-    row_specs: [(y0, y1, x_positions, crop_w), ...]
-    返回 [[frame, ...], ...]，每帧已裁到内容包围盒。
+# ─────────────────────────────────────────────────────────────────────
+# 九之一·B、勇者造型（程序化手绘：铠甲 / 剑 / 盾）
+# ─────────────────────────────────────────────────────────────────────
+#
+# ## 为什么不再切 ArMM 的 character.png
+#
+# 它是全套素材里**最后一个**还在用的第三方位图角色（6 个 NPC 与 35 只怪都已手绘）。
+# 问题不在精细度，而在**读不出装备**：
+#   · 走路 4 帧之间只差「整张图上下 1 行」，看不出在迈步；
+#   · 右手没有剑、左手没有盾、身上是一件红布衫 —— 玩家的原话是
+#     「优化玩家角色的模型，增加剑、盾、铠甲」；
+#   · 它自带软边描边，与手绘的 NPC / 怪物并排时不像一家人。
+#
+# ## 画法：与 NPC / 怪物同一套语言
+#
+# `_put()` 填硬边像素块 + `add_outline()` 收 1px 深色描边。装备与身体一起画，
+# 但**分区**：剑在画面左（右手）、盾在画面右（左手）、铠甲占躯干与双肩。
+# 三件装备各用一套专属色（钢 / 靛蓝 + 金 / 银蓝），漏画一件或挪了位置都会被断言抓住。
+#
+# ## 三条硬约束（断言在盯，改之前先读）
+#
+#   ① **实心内容恰好 4..23**（20 行）。`verify_npc_scale` 拿勇者朝下第 0 帧的
+#      行区间当**基准**去卡六个 NPC —— 改这里等于改 NPC 的身高。
+#      做法：绘制 5..22，描边上下各外扩 1 行 → 4..23。
+#   ② **最宽 ≥ 12 列**（NPC 最宽处 12；勇者比它窄，NPC 站旁边就会显得更大）。
+#      现在剑到 x=1、盾到 x=14，描边后 0..15 —— 16 列画布正好用满。
+#   ③ **帧画布尺寸不许变**：走路 16×26、挥剑 20×26。
+#      `verify-visual` 的 A17 钉着「落屏勇者 32×52」。
+#
+# ## 侧面只画一次
+#
+# `left` 由 `right` **镜像**得到（`transpose(FLIP_LEFT_RIGHT)`）。旧素材的四行带顺序
+# 踩过坑（见 HERO_DIRS 上的注释：「想当然写成下左上右」），镜像能让
+# 「左右走时朝向反了」这类错在原理上不可能发生。
+#
+# ## 走路「迈步」的做法（不是整体上下挪）
+#
+# 走路 4 帧**不动绘制区间**，只改腿部相位：抬起的腿少一行、靴子跟着抬一行。
+#
+# ⚠️ 这里踩过一次：最初照旧素材的做法「1/3 帧整体下移 1 行」，结果帧 1 的脚
+#    描边落到了第 24 行 —— 正好是影子的那一行，半透明影子把脚描边盖成半透明，
+#    于是 `solid_rows` 量出的实心底行从 24 掉回 23，**各帧高度变成 19 与 20 两种**，
+#    `verify_npc_scale` 判据 1（勇者各帧高度必须一致）当场红。
+#    影子必须紧贴脚下、又必须半透明，所以「整体挪」这条路在 26 行的画布里走不通 ——
+#    靠腿部相位表达迈步反而更接近真实走路（脚一直踩在地上）。
 
-    crop_w 必须传「帧距」而不是一个够大的数 —— 相邻帧只差 16px，
-    裁宽了就会把下一帧的头一起吃进来。
+HERO_W, HERO_H = 16, 26
+# 挥剑帧**不比走路帧宽**（曾经是 20，注释写着「旧素材也是 20」）。
+# 两个理由：
+#   ① 抬剑只改 y（剑在 x=1..2 固定两列），横向范围根本没变 —— 20 是白送的 4 列透明边；
+#   ② 落屏 = 帧宽 ×2，20 → 40px，比 32px 的格子还宽，挥剑时人会**横向溢出格子**
+#      压到邻格上。走路帧 16 → 32px 正好一格。
+# 渲染层 A14 靠 `frame` 的**尺寸**判「挥剑不变小」，两套帧同尺寸也是它成立的前提。
+HERO_DRAW_TOP = 5                # 绘制顶行（描边后 = 可见顶行 4）
+HERO_DRAW_FEET = 22              # 绘制底行（描边后 = 可见底行 23）
+HERO_SHADOW_Y0, HERO_SHADOW_Y1 = 24, 25      # 影子占的两行
+
+# 调色板（前缀 H_ = hero）。这套色只属于勇者，别处不要再引用。
+H_SKIN = (247, 214, 178, 255)
+H_SKIN_DK = (206, 166, 128, 255)
+H_MOUTH = (186, 118, 106, 255)
+H_HAIR = (110, 68, 34, 255)
+H_HAIR_DK = (68, 40, 20, 255)
+H_HI = (232, 238, 248, 255)      # 铠甲高光
+H_ARMOR = (166, 178, 198, 255)   # 铠甲主色（银蓝）
+H_ARMOR_DK = (100, 112, 134, 255)
+H_LEATHER = (120, 78, 44, 255)
+H_BOOT = (74, 54, 40, 255)
+H_CLOAK = (176, 52, 58, 255)     # 战袍红 —— 旧勇者的红衣记号，留在胸口
+H_STEEL = (222, 230, 244, 255)
+H_STEEL_HI = (250, 253, 255, 255)
+H_GOLD = (236, 192, 78, 255)
+H_GRIP = (104, 66, 34, 255)
+H_SHIELD = (56, 94, 168, 255)
+H_SHIELD_HI = (96, 142, 214, 255)
+# 盾徽。⚠️ **这个色不许用白**（原来是 246,248,252）—— 见 `verify_hero_art` 的判据 5：
+# 那里靠「接近某色」在帧里找剑（`H_STEEL_HI` 是近白的高光），逐分量容差 6。
+# 白徽记与它的差只有 (4,5,3)，**落在容差内** → 盾徽被误认成剑像素，
+# 报出「剑的像素跑到了第 13 列（帧宽 16）」这种假红（2026-09-23 实际踩到）。
+# 判据色的选择因此不是美术自由，是有约束的：彼此至少隔开 2×tol。
+H_SHIELD_MARK = (168, 206, 248, 255)
+
+# ── 横向解剖（16 列画布）────────────────────────────────────────────
+#    剑（右手）  剑身 x=1..2（左列更亮 = 剑刃）、护手 x=1..3、柄 x=2、剑尖朝上
+#    左臂        x=3..4
+#    躯干        x=5..10（肩甲压在 x=4 与 x=11）
+#    右臂        x=11..12
+#    盾（左手）   x=12..14（盖住右臂外侧 1 列 = 「手臂在盾后」）
+# 剑与左臂各自描边后会在 x=2 处相接 —— 像素画里武器贴着身体是常态，
+# 中间那条深色描边正好把它们分开，读得出是「剑」而不是「身体的一部分」。
+#
+# ⚠️ 剑身**必须 2 列宽**。1 列宽时描边会在它两侧各糊一列深色，整把剑读出来是
+#    「一根白线套着黑框」—— 第一版就是这样，放大图上一眼像根晾衣绳。
+H_SWORD_X0, H_SWORD_X1 = 1, 2
+H_GUARD_X0 = 1
+H_GRIP_X = 2
+H_ARM_L, H_ARM_R = 3, 11
+H_TORSO_X0, H_TORSO_X1 = 5, 10
+H_LEG_L, H_LEG_R = 5, 9
+H_SHIELD_X0, H_SHIELD_X1 = 11, 14
+# 剑盾换到另一侧时的落点（背面 / 侧面用）：
+#   正面 —— 剑在画面左（x=1）、盾在画面右（x=11）
+#   背面 —— 背对时右手在画面**右**，所以剑在 x=13、盾在 x=1
+#   侧面 —— 剑在身前（画面右 x=13）、盾垂在身后侧（x=1）
+H_SWORD_X0_OTHER = 13
+H_SHIELD_X0_OTHER = 1
+
+# ── 纵向解剖（绘制行号，画布 26 行）─────────────────────────────────
+#    发顶 5..7 / 脸 8..13 / 眼 9..10
+#    躯干 14..18（腰带在 18）/ 腿 19..21 / 靴 22
+# 头（9 行）比躯干（5 行）+ 腿（4 行）还高一点 —— Q 版头身比，与旧素材一致。
+H_HAIR_TOP = 5
+H_FACE_TOP, H_FACE_BOT = 8, 13
+H_EYE_ROW = 9
+H_TORSO_TOP, H_TORSO_BOT = 14, 18
+H_LEG_TOP = 19
+H_BOOT_ROW = 22
+
+
+def _hero_shadow(im: Image.Image, cx: int) -> None:
     """
-    im = Image.open(path).convert("RGBA")
-    out = []
-    for y0, y1, xs, cw in row_specs:
-        row = []
-        for x0 in xs:
-            cell = im.crop((x0, y0, x0 + cw, y1 + 1))
-            bb = cell.getbbox()
-            row.append(cell.crop(bb) if bb else cell)
-        out.append(row)
-    return out
+    脚下的落地影（两行、半透明）。三个必须记住的点：
+
+      · **alpha 必须 < `SOLID_ALPHA`(250)。** 否则 `solid_rows()` 会把影子算进
+        「可见内容」，勇者的基准行区间就从 4..23 变成 4..25 —— 六个 NPC 的比例
+        断言会集体误报。这不是审美问题，是量法的前提。
+      · **必须在 `add_outline()` 之后叠。** 描边把 alpha>120 的像素当内容，
+        影子先画就会被描一圈深色，看起来像地上挖了个坑。
+      · **直接写像素，不要 `paste(im, pos, im)`。** 后者拿自己当 mask 会把 alpha
+        平方（102 → 41）—— 旧素材的影子被平方两次后只剩 alpha≈7，等于没有影子，
+        这正是「勇者看不出站在哪」的根因。
+
+    内圈比外圈深一档：两行的高度差做不出「扁椭圆」的读感时，靠深浅分层补。
+    """
+    d = ImageDraw.Draw(im)
+    d.ellipse([cx - 5, HERO_SHADOW_Y0, cx + 4, HERO_SHADOW_Y1], fill=(58, 48, 68, 164))
+    d.ellipse([cx - 3, HERO_SHADOW_Y0, cx + 2, HERO_SHADOW_Y1], fill=(44, 36, 54, 206))
+
+
+def _hero_legs(p, step: int) -> None:
+    """
+    两条腿 + 靴。`step` = 0 并拢 / 1 抬右腿 / -1 抬左腿。
+
+    16 网格上「迈步」只能靠**腿的长短**读出来：抬起的那条腿少两行、靴子跟着抬两行。
+    差 1 行在 8× 放大图上还看得出来，落到 32px 的格子上就完全没了 ——
+    第一版就是只差 1 行，走路读起来像「两条腿在抖」而不是在迈。
+    """
+    for x0, raised in ((H_LEG_L, step == -1), (H_LEG_R, step == 1)):
+        if raised:
+            p(x0, H_LEG_TOP, 2, 1, H_LEATHER)
+            p(x0, H_LEG_TOP + 1, 2, 1, H_BOOT)
+        else:
+            p(x0, H_LEG_TOP, 2, 3, H_LEATHER)
+            p(x0, H_BOOT_ROW, 2, 1, H_BOOT)
+
+
+def _hero_torso(p, back: bool = False) -> None:
+    """
+    铠甲躯干：胸甲（正面）/ 背板（背面）+ 双肩甲 + 腰带。
+
+    三样东西一起才读得出「铠甲」：
+      · 肩甲（x=4 / x=11，两行）—— 比胸甲亮一阶，是铠甲最显眼的记号；
+      · 胸甲中缝（一条暗竖线）—— 只涂一整块灰会读成「穿了件灰衣服」；
+      · 腰带 —— 把躯干和下摆分开，不然上下连成一根柱子。
+    """
+    th = H_TORSO_BOT - H_TORSO_TOP + 1
+    p(H_TORSO_X0, H_TORSO_TOP, 6, th, H_ARMOR)
+    p(H_TORSO_X0, H_TORSO_TOP, 1, th, H_HI)              # 左受光列
+    p(H_TORSO_X1, H_TORSO_TOP, 1, th, H_ARMOR_DK)        # 右背光列
+    for x in (H_TORSO_X0 - 1, H_TORSO_X1 + 1):           # 肩甲：x=4 与 x=11
+        p(x, H_TORSO_TOP, 1, 2, H_HI)
+    if back:
+        p(7, H_TORSO_TOP + 1, 2, th - 2, H_LEATHER)      # 背带
+    else:
+        p(7, H_TORSO_TOP + 1, 2, 2, H_CLOAK)             # 胸口露出的战袍红
+        p(7, H_TORSO_TOP, 1, th, H_ARMOR_DK)             # 胸甲中缝
+    p(H_TORSO_X0, H_TORSO_BOT, 6, 1, H_LEATHER)          # 腰带
+
+
+# 剑的「举到哪一档」。三档都只是**整体上抬**：剑身、护手、柄、以及持剑臂
+# 全部按同一个 lift 平移 —— 分开处理就会出现「手在腰上、剑飘在头顶」。
+#   0 = 竖握在身侧（走路 / 收势）
+#   2 = 提到胸口（挥砍的中段）
+#   4 = 高举过顶（再高一行剑尖就会被画布裁掉，见下）
+#
+# ⚠️ `up` 不能取 5 以上：剑尖在绘制行 `5 - lift`，描边再往上占一行，
+#    lift=5 时描边落到 -1 行、**被画布裁掉** —— 整把剑会短一截而且没有尖。
+#    4 是「剑尖到第 1 行、描边正好落在第 0 行」的上限。
+HERO_SWORD_LIFT = {"rest": 0, "mid": 2, "up": 4}
+
+
+def _hero_sword(p, x0: int, lift: int) -> None:
+    """
+    剑：剑身 2 列（**左列更亮 = 刃**）+ 3 列护手 + 1 列柄 + 收成三角的剑尖。
+
+    ⚠️ 剑身必须 2 列宽。1 列宽时描边会在两侧各糊一列深色，整把剑读出来是
+    「一根白线套着黑框」—— 第一版就是这样，放大图上一眼像根晾衣绳。
+    """
+    p(x0, 6 - lift, 2, 1, H_STEEL_HI)                # 剑尖：2 列
+    p(x0 + 1, 5 - lift, 1, 1, H_STEEL_HI)            # 再收 1 列 → 三角
+    p(x0, 7 - lift, 2, 10, H_STEEL)                  # 剑身 7..16
+    p(x0, 7 - lift, 1, 10, H_STEEL_HI)               # 左列 = 刃
+    p(x0 - 1, 17 - lift, 3, 1, H_GOLD)               # 护手
+    p(x0, 18 - lift, 2, 2, H_GRIP)                   # 柄 18..19（2 列宽，手正好握在这里）
+
+
+def _hero_sword_arm(p, x0: int, lift: int) -> None:
+    """持剑臂 + 手。`lift` 必须与 `_hero_sword` 用同一个值，否则剑会「脱手」。"""
+    p(x0, H_TORSO_TOP + 1 - lift, 2, 3, H_ARMOR)
+    p(x0 - 1, H_TORSO_TOP + 4 - lift, 3, 1, H_SKIN)      # 手伸向柄
+
+
+def _hero_arm(p, x0: int) -> None:
+    """**非持剑**那只手臂的臂甲。持剑那只走 `_hero_sword_arm`（它要跟着剑上抬）。"""
+    p(x0, H_TORSO_TOP + 1, 2, 3, H_ARMOR)
+
+
+def _hero_shield(p, x0: int) -> None:
+    """
+    鸢盾（4 列宽）：上 3 行满宽 → 收 2 行 → 下尖 1 行。金边 + 白色徽记。
+
+    2 列宽时描边会把它糊成一枚「蓝色小方块」，读不出是盾。4 列宽正好盖住
+    持盾那条手臂（x=11..12）—— 「手臂在盾后」本身就是「举盾」这个动作的读法。
+    """
+    p(x0, H_TORSO_TOP, 4, 3, H_SHIELD)                   # 14..16
+    p(x0, H_TORSO_TOP, 4, 1, H_GOLD)                     # 顶边金饰
+    p(x0, H_TORSO_TOP + 1, 1, 2, H_SHIELD_HI)            # 左受光列
+    p(x0 + 1, H_TORSO_TOP + 1, 2, 1, H_SHIELD_MARK)      # 徽记
+    p(x0 + 1, H_TORSO_TOP + 3, 2, 2, H_SHIELD)           # 17..18 收窄
+    p(x0 + 2, H_TORSO_TOP + 5, 1, 1, H_SHIELD)           # 19 下尖
+
+
+def _hero_head_front(p) -> None:
+    """
+    正面头部：头发 5..7、脸 8..13、眼 9..10。
+
+    脸和头发**同宽**（x=4..11，8 列），只有鬓角两列压在脸的两侧。
+    改前头发占了 4 行、脸只剩 6 列被包在中间，放大图上看是一颗大棕方块 +
+    中间一小条脸 —— 这正是 NPC 那轮踩过的「头上的长方形太细」，同一种错不犯第二次。
+    """
+    p(6, H_HAIR_TOP, 4, 1, H_HAIR)                       # 行 5 发顶收口
+    p(4, H_HAIR_TOP + 1, 8, 2, H_HAIR)                   # 行 6..7 头发
+    p(4, H_FACE_TOP, 8, H_FACE_BOT - H_FACE_TOP + 1, H_SKIN)
+    p(4, H_FACE_BOT, 8, 1, H_SKIN_DK)                    # 下巴压暗
+    p(4, H_FACE_TOP, 1, 3, H_HAIR)                       # 行 8..10 左鬓
+    p(H_TORSO_X1 + 1, H_FACE_TOP, 1, 3, H_HAIR)          # 右鬓
+    p(5, H_EYE_ROW, 1, 2, NPC_INK)
+    p(10, H_EYE_ROW, 1, 2, NPC_INK)
+    p(7, H_FACE_BOT - 1, 2, 1, H_MOUTH)
+
+
+def _hero_head_back(p) -> None:
+    """背面头部：整颗后脑都是头发（无脸），两侧压暗读出圆颅。"""
+    p(6, H_HAIR_TOP, 4, 1, H_HAIR)
+    p(4, H_HAIR_TOP + 1, 8, 2, H_HAIR)                   # 行 6..7
+    p(4, H_HAIR_TOP + 3, 8, 6, H_HAIR)                   # 行 8..13 后脑
+    p(4, H_FACE_TOP, 1, 6, H_HAIR_DK)
+    p(H_TORSO_X1 + 1, H_FACE_TOP, 1, 6, H_HAIR_DK)
+
+
+def _hero_head_side(p) -> None:
+    """侧面头部：后脑在左（x=4..5）、脸朝右（x=5..11）、鼻尖凸出到 x=12。"""
+    p(5, H_HAIR_TOP, 4, 1, H_HAIR)                       # 行 5
+    p(4, H_HAIR_TOP + 1, 5, 2, H_HAIR)                   # 行 6..7（x=4..8）
+    p(5, H_FACE_TOP, 7, H_FACE_BOT - H_FACE_TOP + 1, H_SKIN)   # 脸 x=5..11
+    p(4, H_FACE_TOP, 2, 6, H_HAIR)                       # 行 8..13 后脑
+    p(4, H_FACE_TOP, 1, 6, H_HAIR_DK)                    # 后脑外缘压暗
+    p(5, H_FACE_BOT, 7, 1, H_SKIN_DK)                    # 下巴
+    p(10, H_EYE_ROW, 1, 2, NPC_INK)                      # 眼（靠脸的前缘）
+    p(12, H_EYE_ROW + 1, 1, 1, H_SKIN)                   # 鼻尖凸出一列 —— 侧面朝哪边全靠它
+
+
+def _hero_front(layer, pose: dict) -> None:
+    """正面（朝下）：看得见脸；剑在画面左（右手），盾在画面右（左手）。"""
+
+    def p(x, y, w, h, c):
+        _put(layer, x, y, w, h, c)
+
+    lift = HERO_SWORD_LIFT[pose["sword"]]
+    _hero_legs(p, pose["leg"])
+    _hero_torso(p)
+    _hero_head_front(p)
+    _hero_sword_arm(p, H_ARM_L, lift)
+    _hero_arm(p, H_ARM_R)
+    p(H_ARM_R, H_TORSO_TOP + 4, 2, 1, H_SKIN)            # 左手持盾
+    _hero_sword(p, H_SWORD_X0, lift)
+    _hero_shield(p, H_SHIELD_X0)
+
+
+def _hero_back(layer, pose: dict) -> None:
+    """背面（朝上）：后脑 + 背板 + 背带。背对时右手在画面**右** —— 剑盾跟着换边。"""
+
+    def p(x, y, w, h, c):
+        _put(layer, x, y, w, h, c)
+
+    lift = HERO_SWORD_LIFT[pose["sword"]]
+    _hero_legs(p, pose["leg"])
+    _hero_torso(p, back=True)
+    _hero_head_back(p)
+    _hero_arm(p, H_ARM_L)
+    p(H_ARM_L, H_TORSO_TOP + 4, 2, 1, H_SKIN)            # 左手（画面左）持盾
+    _hero_sword_arm(p, H_ARM_R, lift)
+    _hero_sword(p, H_SWORD_X0_OTHER, lift)               # 剑换到画面右
+    _hero_shield(p, H_SHIELD_X0_OTHER)                   # 盾换到画面左
+
+
+def _hero_side(layer, pose: dict) -> None:
+    """侧面（朝右）：脸朝右；剑在身前（画面右），盾在身侧（画面左）。`left` 是它的镜像。"""
+
+    def p(x, y, w, h, c):
+        _put(layer, x, y, w, h, c)
+
+    lift = HERO_SWORD_LIFT[pose["sword"]]
+    _hero_legs(p, pose["leg"])
+    _hero_torso(p)
+    _hero_head_side(p)
+    _hero_arm(p, H_ARM_L)                                # 后手（持盾）
+    p(H_ARM_L, H_TORSO_TOP + 4, 2, 1, H_SKIN)
+    _hero_sword_arm(p, H_ARM_R, lift)                    # 前手（持剑）
+    _hero_sword(p, H_SWORD_X0_OTHER, lift)               # 剑在身前
+    _hero_shield(p, H_SHIELD_X0_OTHER)                   # 盾垂在身后侧
+
+
+def _hero_pose(kind: str, i: int) -> dict:
+    """
+    这一帧的姿态参数。
+
+      走路：`leg` 在 0 / 1 / 0 / -1 之间交替（并拢 / 抬右 / 并拢 / 抬左），
+            剑始终竖握 —— 走路时保持持剑，玩家一眼知道「这是带装备的勇者」。
+      挥剑：`sword` 走 竖握 → 提到胸前 → 高举过顶 → 收势。
+            三档之间是**整体上抬**（见 `HERO_SWORD_LIFT`），配渲染层的刀光演出挥砍，
+            所以这一侧不需要画出真实的挥剑轨迹 —— 画了也会被刀光盖住。
+    """
+    if kind == "walk":
+        return {"leg": (0, 1, 0, -1)[i % 4], "sword": "rest"}
+    return {"leg": 0, "sword": ("rest", "mid", "up", "rest")[i % 4]}
+
+
+def hero_frame(direction: str, kind: str, i: int) -> Image.Image:
+    """
+    勇者的一帧（含描边与落地影），返回**完整画布**。
+
+    画布尺寸**两套动画一致**：走路与挥剑都是 16×26。曾经挥剑帧是 20×26
+    （「留给以后真的要把剑抡出去」），实测图集里就是 **80×104 的帧** ——
+    而 `bottom_center()` 并不裁宽度，于是落屏 40px，比 32px 的格子还宽，
+    挥剑时人会横向压到邻格上。抬剑只改 y，横向范围压根没变，那 4 列是白送的。
+
+    两套同尺寸还有个直接好处：`verify-visual` 的 A14 靠 `frame` 的**尺寸**判
+    「挥剑不变小」，尺寸一致时这条判据只需要关心「有没有换成挥剑帧」，
+    不必再为两种尺寸单独写一套期望值。
+    """
+    base = "right" if direction == "left" else direction
+    im = Image.new("RGBA", (HERO_W, HERO_H), (0, 0, 0, 0))
+    pose = _hero_pose(kind, i)
+    if base == "down":
+        _hero_front(im, pose)
+    elif base == "up":
+        _hero_back(im, pose)
+    else:
+        _hero_side(im, pose)
+    im = add_outline(im, INK)
+    # 影子跟着**解剖表的中心**（x=8），不是画布中心 —— 挥剑帧画布更宽，
+    # 用 w//2 会让影子整体偏右两列、与脚对不上。
+    _hero_shadow(im, HERO_W // 2)
+    if direction == "left":
+        # 镜像放在最后：连影子和描边一起翻，不需要为「左」再画一套像素
+        im = im.transpose(Image.FLIP_LEFT_RIGHT)
+    return im
 
 
 def build_actor_sheet():
     """
-    产出勇者（走路 4 向 × 4 帧 + 挥剑 4 向 × 4 帧）+ 6 个 NPC（各 4 向 × 4 帧）。
-    这是全套素材里唯一真正的「多角度」来源，务必切准。
+    产出勇者的走路 / 挥剑帧 —— 4 向 × 4 帧各一套，按 `HERO_DIRS` 顺序排列。
+
+    返回 (walk, attack)：`walk[di][fi]` / `attack[di][fi]`。
+    NPC 不在这里 —— 它们由 `npc_art_frames()` 单独产出（见九之二）。
     """
-    char = ARMM / "character.png"
-    src = Image.open(char).convert("RGBA")
-    px = src.load()
-    W, H = src.size
-    rowbands = bands([sum(1 for x in range(W) if px[x, y][3] > 8) for y in range(H)])
-
-    # 走路：行带 0..3 = 下/左/上/右，每带第一组 4 帧，帧距 16
-    walk_specs = [(rowbands[i][0], rowbands[i][1], [0, 16, 32, 48], 16) for i in range(4)]
-    walk = slice_armm_rows(char, walk_specs)
-
-    # 挥剑：行带 4..7，列位 7 / 40 / 72 / 104 —— 帧距 32，所以裁宽可以给到 32
-    atk_specs = [(rowbands[i][0], rowbands[i][1], [7, 40, 72, 104], 32) for i in range(4, 8)]
-    attack = slice_armm_rows(char, atk_specs)
-
-    # NPC 不再从图集切 —— NPC_test.png 是**单角色**表（64×128 = 4 向 × 4 帧，全图一个人），
-    # 6 个 NPC 只能用同一张图换色，长得一模一样。现在改为程序化手绘，见 npc_art()。
-    # 勇者仍然从这里切：character.png 是真正的多角色表。
+    walk = [[hero_frame(d, "walk", i) for i in range(4)] for d in HERO_DIRS]
+    attack = [[hero_frame(d, "attack", i) for i in range(4)] for d in HERO_DIRS]
     return walk, attack
+
+
+# 判据色匹配的逐分量容差。
+# 为什么不是 0：`add_outline` 不碰原像素，但将来微调调色板时不该因为 ±2 的
+# 微调就把判据打红。代价是判据色之间必须**隔开至少 2×这个值** ——
+# 那条约束由 verify_hero_art 的判据 5 强制（写成断言，不靠注释提醒）。
+HERO_COLOR_TOL = 6
+
+
+def verify_hero_art(walk: list, attack: list) -> list:
+    """
+    勇者造型断言：**三件装备必须在位、在正确的一侧**。
+    用户的诉求是「增加剑、盾、铠甲」。而「画了但没画上」「剑盾左右画反」
+    「挥剑四帧一模一样」这三件事**在代码里都看不出来**（写的是三次调用，长得也对），
+    所以判据全部落在像素上 —— 颜色 + 位置：
+
+      1. 朝下第 0 帧必须同时出现钢色（剑）、靛蓝（盾）、银灰（铠甲）；
+      2. 剑的像素都在帧的**左侧**、盾的都在**右侧** —— 抓左右画反；
+      3. 四个方向的静止帧都要有剑和盾 —— 抓「只画了正面」；
+      4. 挥剑的举剑帧里剑的最上沿要比静止帧高 ≥3 行 —— 抓「四帧一样」；
+      5. **判据色彼此远离**（自检，见下）。
+
+    ⚠️ 颜色比较用「接近」而不是相等：`add_outline` 不碰原像素，取 ±6 的容差
+    是为了将来微调调色板时不误报。
+
+    ⚠️⚠️ 但「容差」是一把双刃的刀，判据 5 就是为它配的保险 —— 见下面那段注释。
+    """
+    problems: list[str] = []
+
+    def where(im: Image.Image, color, tol: int = HERO_COLOR_TOL):
+        """该颜色的像素落在哪些列、最上行是第几行（都没有则 cols 为空、top 为 None）。"""
+        px = im.load()
+        cols, top = set(), None
+        for y in range(im.height):
+            for x in range(im.width):
+                r, g, b, a = px[x, y]
+                if a < 200:
+                    continue
+                if abs(r - color[0]) <= tol and abs(g - color[1]) <= tol and abs(b - color[2]) <= tol:
+                    cols.add(x)
+                    top = y if top is None else min(top, y)
+        return cols, top
+
+    front = walk[0][0]
+    w = front.width
+    for name, color in (("剑（钢）", H_STEEL_HI), ("盾（靛蓝）", H_SHIELD), ("铠甲（银灰）", H_ARMOR)):
+        if not where(front, color)[0]:
+            problems.append(f"勇者朝下帧里找不到{name}色 rgba{color} —— 三件装备必须都在")
+    sword_cols = where(front, H_STEEL_HI)[0]
+    shield_cols = where(front, H_SHIELD)[0]
+    if sword_cols and max(sword_cols) > w * 0.45:
+        problems.append(
+            f"剑的像素跑到了第 {max(sword_cols)} 列（帧宽 {w}）—— 剑该在画面左（右手）"
+        )
+    if shield_cols and min(shield_cols) < w * 0.5:
+        problems.append(
+            f"盾的像素跑到了第 {min(shield_cols)} 列（帧宽 {w}）—— 盾该在画面右（左手）"
+        )
+
+    for d, frames in zip(HERO_DIRS, walk):
+        f = frames[0]
+        if not where(f, H_STEEL_HI)[0] or not where(f, H_SHIELD)[0]:
+            problems.append(f"勇者的 {d} 向静止帧缺剑或缺盾 —— 四个方向都要能看出装备")
+
+    # 挥剑：举剑帧的剑尖必须真的比静止帧高（`attack[i][2]` 是 up 档）
+    rest_top = where(walk[0][0], H_STEEL_HI)[1]
+    up_top = where(attack[0][2], H_STEEL_HI)[1]
+    if rest_top is None or up_top is None:
+        problems.append("挥剑帧里量不到剑的最上沿，无法确认「举起来了」")
+    elif rest_top - up_top < 3:
+        problems.append(
+            f"挥剑的举剑帧剑尖在第 {up_top} 行、静止帧在第 {rest_top} 行 —— "
+            f"只高了 {rest_top - up_top} 行，读不出「举起来」"
+        )
+
+    # ── 判据 5：判据色必须彼此远离（自检） ───────────────────────────
+    #
+    # 为什么需要这条：判据 1/2 是**按近似色在整帧里找像素**。只要调色板里还有
+    # 第二个颜色落在容差内，它就会被算成「剑」或「盾」—— 于是「装备跑错边」
+    # 立刻报出来。**报错信息指向绘制，实际病因在调色板**，
+    # 下一个人会先去改画法（改错地方），这是最昂贵的一类假红。
+    #
+    # 2026-09-23 实际踩到：盾徽原本是近白 (246,248,252)，与剑刃 (250,253,255)
+    # 逐分量只差 (4,5,3)，全在 tol=6 内 → 报「剑的像素跑到了第 13 列」，
+    # 而剑明明在 1..2 列。把「谁可能撞上谁」做成构建时就红的检查，
+    # 比写一句「注意别用近似色」的注释可靠 —— 注释不会拦人。
+    palette = {
+        k: v
+        for k, v in globals().items()
+        if k.startswith("H_") and isinstance(v, tuple) and len(v) == 4
+    }
+    for pname, pc in (("剑（钢）", H_STEEL_HI), ("盾（靛蓝）", H_SHIELD), ("铠甲（银灰）", H_ARMOR)):
+        for k, c in palette.items():
+            if c == pc:
+                continue   # 判据色自己（含同值别名）
+            if all(abs(c[i] - pc[i]) <= HERO_COLOR_TOL for i in range(3)):
+                problems.append(
+                    f"调色板里的 {k} rgba{c} 与判据色「{pname}」rgba{pc} 逐分量差都 ≤ "
+                    f"{HERO_COLOR_TOL} —— 判据 1/2 会把 {k} 的像素当成{pname}，"
+                    f"报出「装备跑错边」的假红（改画法改不掉，得改颜色）。"
+                    f"两者至少要让一个分量差 > {HERO_COLOR_TOL}"
+                )
+    return problems
+
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -1456,7 +1897,9 @@ NPC_FOOT_ROW = 22
 NPC_ART_TOP, NPC_ART_FEET = NPC_HAT_TOP, NPC_FOOT_ROW   # 绘制行区间（描边前）
 NPC_CONTENT_TOP = NPC_ART_TOP - 1    # 产出后可见顶行（add_outline 往上占一行）
 NPC_FEET = NPC_ART_FEET
-NPC_BREATH_SPLIT = NPC_ROBE_TOP      # 呼吸帧分界：这一行往上整体抬 1px，往下不动
+# 注：这里曾经有 `NPC_BREATH_SPLIT`（呼吸帧的上下身分界行）。呼吸已经整体移到
+# 渲染层，素材里不再有位移帧，所以那个常量连同它的两处误用一起删了 ——
+# 留着一个「呼吸分界」等于给下一个人指一条已经废弃的路。
 
 # ── 横向解剖（列号，画布 16 列）────────────────────────────────────────
 #
@@ -1537,6 +1980,20 @@ NPC_ART = {
         prop="none",
     ),
 }
+
+
+def _npc_shadow(im: Image.Image) -> None:
+    """
+    脚下两行半透明落地影 —— 与勇者同一套参数（见 `_hero_shadow` 的三条注意）。
+
+    为什么要跟着勇者一起加：勇者的影子是**技术上必需**的（它要撑住帧的包围盒，
+    否则 `bottom_center()` 贴底之后可见行区间会跑偏，NPC 的比例基准会跟着错）。
+    但勇者有影子、六个 NPC 没有，并排站在棋盘上就很怪 —— 上下两个人一个踩地、
+    一个悬着。所以两边一起补，这才是「一起补影子才协调」那句备注的落地。
+    """
+    d = ImageDraw.Draw(im)
+    d.ellipse([3, 24, 12, 25], fill=(58, 48, 68, 164))
+    d.ellipse([5, 24, 10, 25], fill=(44, 36, 54, 206))
 
 
 def _npc_base(spec) -> Image.Image:
@@ -1670,48 +2127,42 @@ def _npc_base(spec) -> Image.Image:
         _put(im, 13, NPC_TORSO_TOP + 2, 2, 3, pc)
         _put(im, 14, NPC_TORSO_TOP + 5, 1, 1, pc)
 
-    return add_outline(im, INK)
-
-
-def _breathe(base: Image.Image, robe, lift: int = 1) -> Image.Image:
-    """
-    呼吸帧：头与躯干整体上移 `lift` 像素，**脚原位不动**，下摆跟着上身一起抬。
-
-    为什么不整张图上移：精灵是底部锚定的（board.ts: sp.anchor.set(0.5, 1)），
-    整图上移会让脚离地 1px —— 那是「在飘」，不是「在呼吸」。
-
-    分界行是 `NPC_BREATH_SPLIT`（**下摆**的第一行，现在是第 19 行）。
-
-    ⚠️ 补缝的做法是这一版的关键修复：上一版用**平铺的袍色**填那条水平缝
-    （`_put(out, ..., robe)`），结果腰上出现一条全宽平色带，把角色「撕成
-    上下两半」—— 正是用户说的「抖动时上下分离」。而且那条缝只覆盖
-    x=3..12，手臂外侧还会透出透明缺口，看起来更像裂开了。
-
-    现在改成：把**下摆的第一行原样向上平移 `lift` 行**填进缝里。这样躯干与上身
-    始终是连续延伸的一条，袍子跟着上身一起抬，腰上不再有平色带、也不会透底，
-    只是「上半身整体往上喘了一口气」。
-    """
-    out = Image.new("RGBA", base.size, (0, 0, 0, 0))
-    out.paste(base.crop((0, lift, NPC_W, NPC_BREATH_SPLIT)), (0, 0))
-    out.paste(base.crop((0, NPC_BREATH_SPLIT, NPC_W, NPC_H)), (0, NPC_BREATH_SPLIT))
-    # 缝：下摆首 `lift` 行原样上移填进缝，全宽、且是真实像素 —— 杜绝平色带与透明缺口
-    seam = base.crop((0, NPC_BREATH_SPLIT, NPC_W, NPC_BREATH_SPLIT + lift))
-    for k in range(lift):
-        out.paste(seam, (0, NPC_BREATH_SPLIT - lift + k))
+    out = add_outline(im, INK)
+    _npc_shadow(out)      # 影子必须在描边之后叠 —— 理由见 _npc_shadow
     return out
 
 
 def npc_art_frames(npc_id: str) -> list[Image.Image]:
     """
-    一个 NPC 的 4 帧 idle，节奏是「吸气—回位」。
+    一个 NPC 的 idle 帧 —— **只有 1 帧，这是刻意的，不是漏画**。
 
-    帧数与 0x72 那批怪物刻意保持一致（都是 4 帧），
-    这样 board.ts 的换帧逻辑对两者是同一条路径。
+    ## 为什么素材里不再有「呼吸帧」（2026-09-23 改）
+
+    原先这里出 4 帧「静止 / 上身抬起 / 静止 / 上身抬起」。抬起的做法是把**上半身
+    整体上移 1 行**（脚不动），再用下摆首行填住腰上让出来的那条缝。玩家连着两轮
+    反馈「抖动时出现压缩，像是图层层级错了」，说的就是它。
+
+    根因不在缝填得对不对，而在**「呼吸」被做进了素材几何**：只要在素材里把精灵
+    拆成「上半身 / 下半身」两层做相对位移，那条接缝就必须有补偿 ——
+
+      · 复制一行来填 → 腰上多出一行重复像素，读出来就是「被压了一下」；
+      · 留空不填     → 躯干与下摆之间透出背景，读出来是「上下分离」；
+      · 干脆整图上移 → 底部锚定下脚离地 1px，读出来是「在飘」。
+
+    三条路都是错的，因为它们都在**改像素的形状**。
+
+    ## 现在的分工
+
+      素材（本函数）：只出**静止帧**，几何永远正确。
+      渲染层（src/render/board.ts 的 `update()`）：让整只精灵做 1 个落屏像素的
+      **刚体位移**，上半程抬起、下半程落回，各实体相位错开。
+
+    刚体位移不改变任何像素的位置关系，「压缩」在原理上就不可能发生 ——
+    这比「把缝填得更好看」高一个层次：前者是消除病因，后者是修饰症状。
+
+    `verify_npc_art` 有一条判据钉死「帧数 == 1」，防止将来有人又把位移帧加回来。
     """
-    spec = NPC_ART[npc_id]
-    base = _npc_base(spec)
-    up = _breathe(base, spec["robe"], 1)
-    return [base, up, base, up]
+    return [_npc_base(NPC_ART[npc_id])]
 
 
 def verify_npc_art(images: dict) -> list:
@@ -1719,12 +2170,15 @@ def verify_npc_art(images: dict) -> list:
     NPC 造型断言。**必须写成断言，不能靠眼看** —— 「六个 NPC 长得一样」这个问题
     在代码里完全看不出来（它们本来就都是「一个 16×26 的精灵」）。
 
-    三条判据：
+    四条判据：
       1. 任意两个职能的静止帧不能逐像素相同；
       2. 剪影（实心像素集合）必须不同 —— 「同一张图换色」会被这条拦下；
       3. 实心底行必须正好落在**鞋下一行的描边**上（`NPC_FOOT_ROW + 1`）——
          精灵是底部锚定的（`anchor.set(0.5, 1)`），脚没有确定的落点就会出现
          「一只脚踩地、一只脚悬空」这种只在画面上看得见的错。
+      4. **每个 NPC 的 idle 帧数必须是 1。** 呼吸归渲染层做刚体位移，
+         素材里一旦又出现「上半身/下半身错位」的位移帧，压缩就会跟着回来 ——
+         判据 1~3 全都看不见这件事（它们只看静止帧），所以必须单独钉一条。
 
     判据 3 的期望行数**不是帧底**（第 25 行）：勇者那套素材脚底下还带着
     2 行半透明影子，但身体本身也落在第 23 行（见 SOLID_ALPHA）。
@@ -1749,6 +2203,13 @@ def verify_npc_art(images: dict) -> list:
             elif silhouette(fa) == silhouette(fb):
                 problems.append(f"{a} 与 {b} 剪影完全相同（只换了颜色）")
     for npc_id, frames in images.items():
+        if len(frames) != 1:
+            problems.append(
+                f"{npc_id} 出了 {len(frames)} 帧 idle —— 素材里只允许静止帧。"
+                f"呼吸是渲染层的刚体位移（board.ts 的 NPC_BOB_PX），"
+                f"在素材里做上下错位必然要在接缝处补偿，那就是「抖动时压缩」的来源"
+            )
+            continue
         base = frames[0]
         _, bottom = solid_rows(base)
         if bottom != NPC_FOOT_ROW + 1:
@@ -1820,7 +2281,10 @@ def verify_npc_scale(npc_images: dict, hero_frames: list) -> list:
     判据：
       1. 勇者自己各帧的可见高度必须一致（基准要靠它，不一致说明素材切帧变了）；
       2. 静止帧的可见行区间 == 勇者朝下那帧的行区间（4..23），高度 == 20；
-      3. 呼吸帧：脚不走（底行不变），顶行不越过勇者的最顶行；
+      3. 若将来又出现额外的 idle 帧：脚不走（底行不变）、顶行不越过勇者的最顶行。
+         ⚠️ 现在素材只有静止帧，这条一次都不进循环 —— 呼吸已经挪到渲染层
+         （见 `npc_art_frames`），所以「帧数 == 1」由 `verify_npc_art` 判据 4 钉。
+         留着这段是为了万一有人加回第二帧时，至少能拦住「脚离地」这一种；
       4. 头（发际线..下巴）主块宽度 ≥ `NPC_HEAD_MIN_W`；
       5. 下摆主块宽度 ≤ 头 + `NPC_HEM_OVER_HEAD`；
       6. 任意一行的可见跨度 ≤ 勇者的最宽行。
@@ -1879,13 +2343,14 @@ def verify_npc_scale(npc_images: dict, hero_frames: list) -> list:
                 f"NPC {npc_id} 最宽的一行 {widest} 列，勇者最宽 {hero_max_w} 列 —— 站一起会显得更大"
             )
 
-        # 呼吸帧：脚不能走，头顶也不能越界
+        # 若真有额外的 idle 帧：脚不能走，头顶也不能越界（现在帧数恒为 1，不会进这里）
         for i, fr in enumerate(frames[1:], start=1):
             b_top, b_bottom = solid_rows(fr)
             if b_bottom != ref_bottom:
                 problems.append(
-                    f"NPC {npc_id} 第 {i} 帧（呼吸）底行到了 {b_bottom} —— "
-                    f"底部锚定下脚离地会变成「在飘」，呼吸只该抬上身"
+                    f"NPC {npc_id} 第 {i} 帧底行到了 {b_bottom} —— "
+                    f"底部锚定下脚离地会变成「在飘」。素材里不该有第二帧："
+                    f"呼吸是渲染层的刚体位移，请改 board.ts 而不是再加素材帧"
                 )
             if b_top < hero_top:
                 problems.append(
@@ -2002,20 +2467,6 @@ def _stamp(rows: list[str], legend: dict[str, tuple]) -> Image.Image:
             _put(im, x, y, x2 - x, 1, legend[ch])
             x = x2
     return im
-
-
-def _mon_squash(base: Image.Image, lift: int = 2) -> Image.Image:
-    """
-    呼吸帧：内容整体上抬 `lift` px，再把最底 `lift` 行补回最底 —— **脚不离地**。
-
-    整张图上移是不行的：底部锚定下那就是「怪物飘起来了」。
-    补回底行的做法让身体看起来在「喘」，与 NPC 的呼吸帧是同一个套路。
-    `lift` 取 2（32 网格下 = 1 个落屏像素），1px 在 32 网格上会被 Scale2x 吃掉看不见。
-    """
-    out = Image.new("RGBA", base.size, (0, 0, 0, 0))
-    out.paste(base.crop((0, lift, MON_W, MON_H)), (0, 0))
-    out.paste(base.crop((0, MON_H - lift, MON_W, MON_H)), (0, MON_H - lift))
-    return out
 
 
 # ── 形状 ────────────────────────────────────────────────────────────
@@ -2925,32 +3376,54 @@ def mon_art_base(art_id: str) -> Image.Image:
 
 def mon_art_frames(art_id: str) -> list[Image.Image]:
     """
-    4 帧 idle，节奏与 0x72 的怪物一致（「吸—回—吸—回」），
-    这样 board.ts 的换帧逻辑对新旧两批怪物是同一条路径。
+    怪物的 idle 帧 —— **只有 1 帧**，理由与 `npc_art_frames` 完全相同。
 
-    帧序 [静止, 呼吸, 静止, 呼吸] 与 NPC 的 [静止, 抬, 静止, 抬] 对齐。
+    这里原先的 `_mon_squash` 比 NPC 那边错得更明显：它把整只怪上移 2 行、
+    再把最底 2 行复制到底部（想做出「脚不离地」）。但手绘怪物的内容本来就
+    **顶在第 0 行**（kraken / knight / wraith 实测 base 内容区间是 0..31，
+    画布 32 行全满），上移 2 行 = **头顶被画布裁掉 2 行**，而底部又长出 2 行
+    重复的腿根 —— 一裁一补，读出来就是「整只怪被压扁了一截」。
+
+    实测数据（改前）：
+        kraken / knight / ghostWarrior   base 内容 (0,31) → breathe 仍 (0,31)
+        dragon / vampire                 base 内容 (2,31) → breathe (0,31)
+    顶到 0 的那几只每一轮呼吸都掉 2 行头顶，正是玩家说的「抖动时压缩」。
+
+    现在素材只出静止帧，呼吸在渲染层做刚体位移（board.ts 的 `MONSTER_BOB_PX`）。
     """
-    base = mon_art_base(art_id)
-    return [base, _mon_squash(base), base, _mon_squash(base)]
+    return [mon_art_base(art_id)]
 
 
-def verify_mon_art(bases: dict[str, Image.Image]) -> list:
+def verify_mon_art(frames: dict[str, list[Image.Image]]) -> list:
     """
-    程序化怪物造型断言。四条判据，全是「代码里看不出来、只有量才知道」的：
+    程序化怪物造型断言。五条判据，全是「代码里看不出来、只有量才知道」的：
 
       1. **每个形状的剪影互不相同** —— 抓「画了半天结果都是同一个圆」；
       2. **同形状的变体必须有区别** —— 抓「换色没生效 / 两只一模一样」；
       3. **底行必须有像素** —— 底部锚定下帧底留白 = 怪物浮在半空；
-      4. **每个形状至少有一只怪在用它** —— 抓「画了却忘了接进 PROC_MONSTERS」。
+      4. **每个形状至少有一只怪在用它** —— 抓「画了却忘了接进 PROC_MONSTERS」；
+      5. **每只怪只出 1 帧 idle** —— 理由与 NPC 判据 4 同：呼吸归渲染层做刚体
+         位移。手绘怪物的内容本来就顶到画布第 0 行，素材里再做「上移 + 补底」
+         就是**裁头顶**（实测 kraken/knight/wraith 每轮掉 2 行），
+         那正是玩家报的「抖动时压缩」。判据 1~4 全都看不见这件事。
 
     与 NPC 的断言刻意分开：NPC 是「六个各不相同」，怪物是「七种形状、同形状可成族换色」——
     两边的判据不一样，所以不能共用一个函数。
     """
     problems: list[str] = []
+    bases = {k: v[0] for k, v in frames.items()}
 
     def sil(im: Image.Image):
         a = im.getchannel("A").tobytes()
         return {i for i, v in enumerate(a) if v > 8}
+
+    for art_id, fs in frames.items():
+        if len(fs) != 1:
+            problems.append(
+                f"怪物 {art_id} 出了 {len(fs)} 帧 idle —— 素材里只允许静止帧。"
+                f"手绘怪物的内容顶满画布（顶行 0），在素材里上下错位只会裁掉头顶、"
+                f"补出重复的腿根，读出来就是「压缩」。呼吸请改 board.ts 的 MONSTER_BOB_PX"
+            )
 
     by_shape: dict[str, list[str]] = {}
     for art_id, spec in PROC_MONSTERS.items():
@@ -3523,6 +3996,9 @@ def main() -> int:
 
     # ── 2. 勇者 + NPC ───────────────────────────────────────────
     walk, attack = build_actor_sheet()
+    # 「剑、盾、铠甲都画上了吗、有没有画反」只有量像素才知道（见 verify_hero_art）
+    for p in verify_hero_art(walk, attack):
+        missing.append("勇者造型断言失败：" + p)
     actor_cells: list[tuple[str, Image.Image]] = []
     actor_meta: list[dict] = []
 
@@ -3543,7 +4019,11 @@ def main() -> int:
             push_actor(f"hero.walk.{d}.{fi}", im, {"group": "hero", "anim": "walk", "dir": d, "frame": fi})
     for di, d in enumerate(HERO_DIRS):
         for fi, fr in enumerate(attack[di]):
-            im = bottom_center(fr, 20, 26)
+            # ⚠️ 这里的 16 必须与上面走路帧的 16 一致。曾经这里是 **20**
+            # （配合 `HERO_ATK_W`），结果是图集里出现 80×104 的挥剑帧、落屏 40px，
+            # 比 32px 的格子还宽 —— 挥剑时勇者会横向压到邻格上。
+            # 两套帧同尺寸还是 A14 判「挥剑不变小」的前提（它比的是帧尺寸）。
+            im = bottom_center(fr, 16, 26)
             push_actor(f"hero.attack.{d}.{fi}", im, {"group": "hero", "anim": "attack", "dir": d, "frame": fi})
 
     # NPC：程序化手绘，四个方向写同一组帧（NPC 是静止实体，只取 down —— 见 NPC_ART 说明）
@@ -3577,8 +4057,10 @@ def main() -> int:
     actor_sheet.save(ATLAS_DIR / "actors.png")
 
     # 组装 actors 结构。atlas / drawScale 提到角色级，帧只留 x,y,w,h。
-    # 注意：角色的帧宽高不是常量（走路 16×26、挥剑 20×26），
-    # 所以 w/h 必须留在帧上，不能像怪物那样提到组级。
+    # 注意：角色的帧宽高不是常量 —— 勇者是 16×26，而 NPC 帧是 26 行高、
+    # 宽度按各自造型；所以 w/h 必须留在帧上，不能像怪物那样提到组级。
+    # （2026-09-23 起勇者的走路与挥剑**同为 16×26**，但「不必留 w/h」依然不成立：
+    #  NPC 那一组仍然不是同一个尺寸。）
     actors = manifest["actors"]
     for m in actor_place:
         if m["group"] == "hero":
@@ -3591,7 +4073,12 @@ def main() -> int:
             npc["atlas"], npc["drawScale"] = m["atlas"], m["drawScale"]
             npc.setdefault("walk", {}).setdefault(m["dir"], []).append(
                 {k: m[k] for k in ("x", "y", "w", "h")})
-    actors.setdefault("hero", {})["src"] = "ArMM1998 / Zelda-like tilesets and sprites — character.png"
+    # 来源必须写实：这批不再是 ArMM 的 character.png（那张表已经不再被切）。
+    # 写成 ArMM 会让人去那张图集里找一个根本不存在的「带剑盾铠甲的勇者」。
+    actors.setdefault("hero", {})["src"] = (
+        "本仓库手绘（tools/build-assets.py: _hero_* 系列）—— 16×26 程序化像素画，"
+        "铠甲 / 剑 / 盾三件装备分区绘制，left 由 right 镜像"
+    )
     actors.setdefault("hero", {})["dirOrder"] = HERO_DIRS
     for npc_id in NPC_ART:
         if npc_id in actors.get("npcs", {}):
@@ -3606,7 +4093,9 @@ def main() -> int:
     mon_cells: list[tuple[str, Image.Image]] = []
     mon_meta: list[dict] = []
     proc_used: set[str] = set()
-    proc_bases: dict[str, Image.Image] = {}
+    # id -> idle 帧列表。现在恒为 1 帧（见 mon_art_frames），
+    # 但断言仍按「列表」收 —— 判据「帧数必须为 1」要有东西可量。
+    proc_frames: dict[str, list[Image.Image]] = {}
 
     for mid, (src_name, xf, scale, note) in MONSTERS.items():
         # 源名 "gen" = 本仓库按名称手绘（蝙蝠/史莱姆/龙/乌贼/石头人/吸血鬼/魔王）。
@@ -3616,8 +4105,8 @@ def main() -> int:
                 missing.append(f"{mid}: MONSTERS 标了 gen，但 PROC_MONSTERS 里没有它的造型")
                 continue
             proc_used.add(mid)
-            proc_bases[mid] = mon_art_base(mid)
             frames = mon_art_frames(mid)
+            proc_frames[mid] = frames
             for anim in ("idle", "run"):
                 for fi, im in enumerate(frames):
                     im = _mon_out(im, scale)          # 出图网格；artH 必须按出图后量
@@ -3678,8 +4167,9 @@ def main() -> int:
     for p in verify_monster_fit(_fit):
         missing.append(p)
 
-    # 手绘怪物的造型断言：七种形状互不相同、同形状的变体确有区别、帧底不留白
-    for p in verify_mon_art(proc_bases):
+    # 手绘怪物的造型断言：七种形状互不相同、同形状的变体确有区别、帧底不留白、
+    # 且每只怪只有 1 帧 idle（呼吸在渲染层，见 mon_art_frames）
+    for p in verify_mon_art(proc_frames):
         missing.append("怪物造型断言失败：" + p)
     # 两张表必须严格一一对应 —— 「在 MONSTERS 里标了 gen 却忘了画」会静默少一只怪
     declared = {mid for mid, (s, _, _, _) in MONSTERS.items() if s == "gen"}
@@ -3818,8 +4308,8 @@ def main() -> int:
     print(f"  地形   {len(manifest['terrain'])} 项（含墙顶边变体）")
     print(f"  怪物   {sum(1 for v in manifest['monsters'].values() if v)}/{len(manifest['monsters'])} 只有素材")
     print(f"  道具   {sum(1 for v in manifest['items'].values() if v)}/{len(manifest['items'])} 项有素材")
-    print(f"  勇者   {len(HERO_DIRS)} 向 × 4 帧走路 + {len(HERO_DIRS)} 向 × 4 帧挥剑")
-    print(f"  NPC    {len(NPC_ART)} 人（程序化手绘）× {len(NPC_DIRS)} 向 × 4 帧")
+    print(f"  勇者   {len(HERO_DIRS)} 向 × 4 帧走路 + {len(HERO_DIRS)} 向 × 4 帧挥剑（手绘：铠甲 / 剑 / 盾）")
+    print(f"  NPC    {len(NPC_ART)} 人（程序化手绘）× {len(NPC_DIRS)} 向 × 1 帧静止 —— 呼吸在渲染层")
     total = sum((ATLAS_DIR / m["file"]).stat().st_size for m in manifest["meta"]["atlases"].values())
     print(f"\n  图集总大小 {total/1024:.1f} KB")
     if missing:
