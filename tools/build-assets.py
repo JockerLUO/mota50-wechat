@@ -43,7 +43,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 try:
-    from PIL import Image, ImageDraw
+    from PIL import Image, ImageDraw, ImageFilter
 except ImportError:  # pragma: no cover
     sys.exit(
         "需要 Pillow：\n"
@@ -1869,18 +1869,35 @@ NPC_INK = (44, 34, 42, 255)
 # 修它会让勇者重新长出影子 —— 那是另一件事，得连 NPC 一起补影子才协调。
 SOLID_ALPHA = 250
 
-# `verify_boss_art` 用的两个门槛。
+# `verify_boss_art` 用的门槛。三个都是「先量、再定」的 —— 每一版素材都要重新量
+# 改前/改后的分布，阈值定在**改前必红、改后有余量**的位置，否则它只是一条
+# 永远为真的装饰性断言（见 §「断言红了先怀疑期望值」那条铁律的反向用法）。
 #
 # BOSS_DETAIL_MIN：每个 8×8 块的**中位**独立颜色数。
-#   实测值：真画在 64 网格上的 BOSS ≈ 2.6；把 32 网格的杂兵帧放大到 64 ≈ 1.3。
-#   门槛取 2.0 是两者之间偏下一点 —— 留出调色板微调的空间，又不至于放过「放大货」。
-#   ⚠️ 这个量对**纯色大面积**的造型不友好（一整块纯色 = 1 色）。BOSS 有明暗三阶
-#   与装备分区，所以天然过线；将来若真要做一只「纯黑剪影」的 BOSS，
-#   要一起改的是这个判据，而不是把 BOSS 画花。
+#   实测（2026-09-23 定稿这一版）：改前 2.0 ~ 3.0，改后 **3.0 ~ 4.0**。
+#   门槛取 3.0 —— 改前 vampire 恰好是 2.0（大面积纯色斗篷），会被这条抓住。
+#   ⚠️ 改后有 5 只**恰好落在 3.0**：这就是地板值本身，掉一色即红，
+#   是刻意的（它保护的就是「每个 8×8 区域至少三色」这件事）。
+# BOSS_INNER_MIN：只统计**身体内部**（离透明边缘 ≥2px）的 4×4 块，
+#   取均值。为什么要它：8×8 密度里**轮廓线**贡献很大，边缘复杂但内部偷懒的
+#   造型也能过线。实测改前 1.61 ~ 2.13、改后 **1.97 ~ 2.28**，门槛 1.8。
+# BOSS_HEAD_SYM_MAX：正面朝向的 BOSS，头部区域的不对称像素占比上限。
+#   实测：改前 dragon（侧视）39.4%、demonKingTrue 15.1%（角与手臂左右各差
+#   1~7 列，之前没人发现）；改后最大 2.3%。门槛 12% 留足余量。
 # BOSS_SIL_MIN_DIFF：两只 BOSS 剪影至少差这么多像素。不写「不相等」是因为
 #   差 1 个像素也叫不相等 —— 那种判据拦不住「八只都长一个样、只是换了色」。
-BOSS_DETAIL_MIN = 2.0
+BOSS_DETAIL_MIN = 3.0
+BOSS_INNER_MIN = 1.80
+BOSS_HEAD_SYM_MAX = 0.12
 BOSS_SIL_MIN_DIFF = 400
+
+# 哪些 BOSS 是**正面朝向玩家**的（判据 7 只对它们生效）。
+#
+# 名单写死、而不是「对所有 BOSS 都量对称度」：骷髅队长手持圆盾、骑士队长
+# 手持大剑、法师抱着法杖、吸血鬼**刻意**做成不对称（竖领一高一低、斗篷偏披）
+# —— 这些是合法的不对称，全局判据会把它们全部误杀。
+# 往名单里加一只之前，先确认它的不对称**全部**来自剧情道具或刻意的站姿。
+HEAD_FRONT = ("dragon", "demonKing", "demonKingTrue", "kraken")
 
 
 def solid_rows(im: Image.Image) -> tuple[int, int]:
@@ -3106,6 +3123,23 @@ def _beam(im, x0, y0, x1, y1, thick, color):
              thick, thick, color)
 
 
+def _bez(p0, p1, bow, t):
+    """二次贝塞尔取点。`p0`/`p1` 是端点，`bow` 是控制点相对弦中点的横向偏移。
+
+    存在的理由：腕上的吸盘必须落在**腕自己那条曲线上**。六条腕的弯度各不相同，
+    给吸盘手写坐标必然有几颗飘在腕外（1:1 落屏后是「腕旁边有几个紫点」）。
+    把它抽出来之后，`_tentacle` 与吸盘共用同一条曲线。
+    """
+    x0, y0 = p0
+    x1, y1 = p1
+    mx, my = (x0 + x1) / 2, (y0 + y1) / 2
+    dx, dy = x1 - x0, y1 - y0
+    ln = math.hypot(dx, dy) or 1.0
+    cx, cy = mx - dy / ln * bow, my + dx / ln * bow
+    return ((1 - t) ** 2 * x0 + 2 * (1 - t) * t * cx + t ** 2 * x1,
+            (1 - t) ** 2 * y0 + 2 * (1 - t) * t * cy + t ** 2 * y1)
+
+
 def _tentacle(im, x0, y0, x1, y1, bow, thick0, c_main, c_tip):
     """一条腕（二次贝塞尔）：粗细由 `thick0` 收到 1，末端 1/4 换 `c_tip` 色。
 
@@ -3113,15 +3147,10 @@ def _tentacle(im, x0, y0, x1, y1, bow, thick0, c_main, c_tip):
     「逐行给一个 x」：六条腕手写坐标必然长短不一、弯度各异，而「六条对称的腕」
     恰恰是乌贼最好认的地方。
     """
-    mx, my = (x0 + x1) / 2, (y0 + y1) / 2
-    dx, dy = x1 - x0, y1 - y0
-    ln = math.hypot(dx, dy) or 1.0
-    cx, cy = mx - dy / ln * bow, my + dx / ln * bow
-    n = max(2, int(ln))
+    n = max(2, int(math.hypot(x1 - x0, y1 - y0)))
     for k in range(n + 1):
         t = k / n
-        x = (1 - t) ** 2 * x0 + 2 * (1 - t) * t * cx + t ** 2 * x1
-        y = (1 - t) ** 2 * y0 + 2 * (1 - t) * t * cy + t ** 2 * y1
+        x, y = _bez((x0, y0), (x1, y1), bow, t)
         th = max(1, int(round(1 + (thick0 - 1) * (1 - t) ** 0.85)))
         _put(im, int(round(x)) - th // 2, int(round(y)) - th // 2, th, th,
              c_main if t < 0.72 else c_tip)
@@ -3164,6 +3193,61 @@ def _wing_draw(im, x_shoulder, cols, c_rib, c_mem, edge=2, mirror=True):
                 _put(im, x, y, 1, 1, col)
 
 
+def _beam_sym(im, x0, y0, x1, y1, thick, color):
+    """`_beam` 的**镜像版**：只写左半（或右半），另一半由 `_sym` 出来。
+
+    为什么需要它：`_beam` 内部是 `_put(x, y, …)` 左对齐的，手工算「另一侧该从
+    哪个 x 起笔」要写 `im.width - x - thick` —— 这正是 `_sym` 的注释里说的
+    「手写成对坐标时最容易两边差 1px」。BOSS 的角 / 手臂 / 腿全是成对的斜带，
+    所以补这个原语，而不是每处手算。
+    """
+    n = max(1, int(max(abs(x1 - x0), abs(y1 - y0))))
+    for k in range(n + 1):
+        t = k / n
+        x = int(round(x0 + (x1 - x0) * t))
+        y = int(round(y0 + (y1 - y0) * t))
+        _sym(im, x - thick // 2, y - thick // 2, thick, thick, color)
+
+
+def _scales(im, x0, y0, cols, rows, step, color, mirror=False):
+    """错行铺的鳞片/铆钉阵：每行 `cols` 枚、共 `rows` 行，行间横向错开半格。
+
+    这是本轮「增加细节」的主力原语。细节密度的最大杀手是**一整块纯色**
+    （一整块纯色 = 每块 1 色）；铺一层错行鳞片就把同一块变成 2~3 色。
+    错行（而不是方格阵）是因为方格阵在 1:1 落屏后会读成「网格纸」。
+    """
+    for r in range(rows):
+        off = step // 2 if r % 2 else 0
+        for c in range(cols):
+            x, y = x0 + c * step + off, y0 + r * step
+            if mirror:
+                _sym(im, x, y, 2, 1, color)
+            else:
+                _put(im, x, y, 2, 1, color)
+
+
+def _rivets(im, x0, y, n, step, color, mirror=False):
+    """一排 1px 铆钉/宝石 —— 金饰边缘、甲片接缝用。"""
+    for k in range(n):
+        x = x0 + k * step
+        if mirror:
+            _sym(im, x, y, 1, 1, color)
+        else:
+            _put(im, x, y, 1, 1, color)
+
+
+def _gem(im, cx, cy, r, color, hi=MON_WHITE):
+    """菱形宝石 + 一点高光 —— 胸甲/剑格/额冠上的单点装饰。
+
+    用菱形而不是圆：1:1 落屏后 3~5px 的圆读成一个脏点，菱形的四个尖角还留着，
+    在 64 网格上是**唯一能在 4×4 块里同时给出「亮色 + 底色 + 高光」三色的形状**。
+    """
+    for k in range(-r, r + 1):
+        w = r - abs(k)
+        _put(im, cx - w, cy + k, 2 * w + 1, 1, color)
+    _put(im, cx - 1, cy - r + 1, 2, 1, hi)
+
+
 # ── 1. 骷髅队长（第 10 层） ─────────────────────────────────────────
 
 def _boss_skeleton(s) -> Image.Image:
@@ -3178,60 +3262,80 @@ def _boss_skeleton(s) -> Image.Image:
     blade, shield, rim = s["blade"], s["shield"], s["shield_rim"]
 
     # 腿：两根骨柱（膝盖套关节环），脚向外张 —— 底三行必须有像素
-    for x0 in (21, 37):
-        _put(im, x0 + 2, 46, 6, 9, bone)
-        _put(im, x0 + 1, 54, 8, 3, joint)
-        _put(im, x0 + 2, 57, 6, 5, bone)
-    _put(im, 19, 60, 13, 4, bone)
-    _put(im, 32, 60, 13, 4, bone)
-    # 骨盆
+    #
+    # ⚠️ 成对结构一律改走 `_sym`。原稿手写 `for x0 in (21, 37)`：左柱 x23..28 的
+    # 镜像应该是 x35..40，而 37+2=39 —— 两条腿左右**差 4 列**，1:1 落屏后
+    # 是「一只脚内八、一只脚外八」。剪影判据只看总差异像素，抓不到这种错位。
+    _sym(im, 23, 46, 6, 9, bone)             # 胫骨
+    _sym(im, 22, 54, 8, 2, joint)            # 踝关节环
+    _sym(im, 23, 57, 6, 5, bone)
+    _sym(im, 20, 60, 12, 4, bone)            # 脚掌
+    _sym(im, 21, 62, 3, 2, joint)            # 趾缝
+    _sym(im, 26, 62, 3, 2, joint)
+    # 骨盆 + 腰甲带 + 带扣
     _ell(im, BOS_CX, 45, 11, 6, bone)
     _put(im, 26, 44, 13, 2, joint)
-    # 脊柱 + 四对肋骨（上宽下窄，肋间隙压暗）
+    _put(im, 23, 47, 19, 2, armor)
+    _gem(im, BOS_CX, 48, 3, trim)
+    # 脊柱 + 脊椎节 + **六对**肋骨（原为四对 —— 肋骨是这只最大的纯色块）
     _put(im, 30, 22, 4, 24, joint)
-    for k, y in enumerate((25, 30, 35, 40)):
-        w = 13 - 2 * k
-        _ell(im, BOS_CX, y + 3, w, 4, bone)
-        _put(im, BOS_CX - w + 4, y + 4, 2 * w - 7, 1, joint)
-    # 肩甲 + 高光
+    for y in range(24, 48, 3):
+        _put(im, 30, y, 4, 2, bone)
+    for k, y in enumerate((23, 27, 31, 35, 39, 43)):
+        w = 14 - 2 * (k // 2)
+        _ell(im, BOS_CX, y + 2, w, 3, bone)
+        _put(im, BOS_CX - w + 3, y + 3, 2 * w - 5, 1, joint)
+    # 骨上的暗阶 + 亮阶（骨是米白，不加这两阶的话整片就是一色）
+    _sym(im, 24, 33, 3, 8, joint)
+    _sym(im, 28, 30, 3, 10, blade)
+    # 肩甲 + 高光 + 边缘铆钉（镜像点：cx 的搭档是 63-cx，腋下写 47 会偏 1 列）
     _ell(im, 17, 28, 10, 7, armor)
-    _ell(im, 47, 28, 10, 7, armor)
+    _ell(im, 46, 28, 10, 7, armor)
     _ell(im, 17, 26, 5, 3, trim)
-    _ell(im, 47, 26, 5, 3, trim)
-    # 手臂（骨）
+    _ell(im, 46, 26, 5, 3, trim)
+    _rivets(im, 11, 22, 3, 5, trim, mirror=True)
+    # 手臂（骨）+ 肘环
     _put(im, 14, 33, 6, 13, bone)
     _put(im, 44, 33, 6, 13, bone)
     _put(im, 13, 45, 8, 5, bone)
     _put(im, 43, 45, 8, 5, bone)
-    # 头盔拱顶 + 帽檐 + 金冠饰
+    _put(im, 14, 37, 6, 2, joint)
+    _put(im, 44, 37, 6, 2, joint)
+    # 头盔拱顶 + 帽檐 + 冠饰（原稿三枚写 22/29/36 —— 22..24 的搭档是 39..41，
+    # 36..38 是**偏 3 列**的，正面看是「歪的王冠」）
     _half(im, BOS_CX, 22, 15, 15, armor, up=True)
     _put(im, 17, 19, 31, 4, armor)
     _put(im, 17, 23, 31, 1, trim)
     _put(im, 22, 7, 21, 3, armor)
-    for sx in (22, 29, 36):
+    for sx in (22, 30, 39):
         _put(im, sx, 3, 3, 5, armor)
     _put(im, 22, 7, 21, 1, trim)
-    # 颅骨下半 + 面颊 + 下颌（画在头盔之后，压住拱顶的下半）
+    _rivets(im, 19, 20, 6, 5, trim, mirror=True)
+    # 颅骨下半 + 面颊 + 下颌 + 牙缝（`_put` 宽 1 的镜像搭档是 63-x）
     _half(im, BOS_CX, 22, 12, 12, bone, up=False)
     _put(im, 22, 24, 21, 5, bone)
     _put(im, 24, 29, 17, 5, bone)
     _put(im, 26, 30, 13, 1, joint)
-    for tx in (27, 31, 35):
+    for tx in (27, 31, 32, 35):
         _put(im, tx, 30, 1, 3, joint)
-    # 眼窝 / 鼻腔
+    # 眼窝 / 鼻腔 / 眼内红光（原稿右眼窝写 38，搭档是 63-26=37）
     _ell(im, 26, 19, 4, 5, MON_INK)
-    _ell(im, 38, 19, 4, 5, MON_INK)
+    _ell(im, 37, 19, 4, 5, MON_INK)
     _put(im, 30, 23, 5, 3, MON_INK)
-    # 大圆盾（画面左侧 —— 离观众近的那一侧）
+    _sym(im, 26, 19, 2, 2, blade)
+    # 大圆盾（画面左侧 —— 离观众近的那一侧）：辐条 + 铆钉 + 中心宝石
     _ell(im, 12, 43, 12, 14, rim)
     _ell(im, 12, 43, 10, 12, shield)
     _put(im, 2, 42, 21, 3, trim)
-    _ell(im, 12, 43, 4, 5, rim)
-    # 白骨长剑（画面右侧，斜握）
+    _put(im, 12, 32, 1, 23, trim)
+    _rivets(im, 4, 33, 4, 6, trim)
+    _gem(im, 12, 43, 4, trim)
+    # 白骨长剑（画面右侧，斜握）：血槽 + 剑格宝石
     _beam(im, 56, 12, 51, 48, 4, blade)
     _beam(im, 56, 13, 52, 48, 1, trim)
     _put(im, 45, 48, 14, 3, armor)
-    _put(im, 49, 51, 4, 9, s["grip"])
+    _gem(im, 52, 50, 3, trim)
+    _put(im, 49, 53, 4, 9, s["grip"])
     return im
 
 
@@ -3248,7 +3352,7 @@ def _boss_knight(s) -> Image.Image:
     armor, dark, light = s["armor"], s["dark"], s["light"]
     trim, cape, blade = s["trim"], s["cape"], s["blade"]
 
-    # 披风（最里层）：从肩到地的喇叭 + 压暗的内衬
+    # 披风（最里层）：从肩到地的喇叭 + 压暗的内衬，**再在内衬上压亮褶**
     for k in range(28):
         hw = 13 + int(round(k * 0.52))
         _put(im, BOS_CX - hw, 30 + k, 2 * hw + 1, 1, cape)
@@ -3256,44 +3360,65 @@ def _boss_knight(s) -> Image.Image:
     for k in range(22):
         hw = 9 + int(round(k * 0.42))
         _put(im, BOS_CX - hw, 36 + k, 2 * hw + 1, 1, s["cape_dk"])
+    # 布褶：亮暗交替的竖条（一整片纯色是这只最大的密度洼地，
+    # 而且「披风的褶」本身就是骑士盔甲的读数关键 —— 没褶就是一块红布）
+    for x in range(18, 47, 6):
+        _put(im, x, 36, 2, 22, cape)
     # 腿甲 + 靴（压三行暗，靴底踩在格底）
     for x0 in (22, 34):
         _put(im, x0, 46, 8, 12, dark)
         _put(im, x0 + 1, 46, 3, 12, armor)
+    _sym(im, 23, 47, 2, 9, light)            # 腿甲高光阶
     _put(im, 20, 58, 12, 5, armor)
     _put(im, 32, 58, 12, 5, armor)
+    _put(im, 20, 60, 12, 1, dark)            # 靴甲分片
+    _put(im, 32, 60, 12, 1, dark)
     _put(im, 20, 62, 12, 2, dark)
     _put(im, 32, 62, 12, 2, dark)
-    # 躯干 + 胸甲 + 金色十字徽
+    # 躯干 + 胸甲 + 金色十字徽 + 中心宝石 + 上缘铆钉
     _ell(im, BOS_CX, 36, 16, 12, armor)
     _put(im, 17, 34, 31, 13, armor)
     _put(im, 17, 46, 31, 3, dark)
     _put(im, 30, 30, 5, 18, trim)
     _put(im, 23, 36, 19, 5, trim)
+    _gem(im, BOS_CX, 38, 4, trim)
+    _rivets(im, 19, 33, 5, 6, trim, mirror=True)
     _put(im, 17, 33, 31, 2, light)
-    # 肩甲
+    _sym(im, 20, 39, 4, 8, light)            # 胸甲高光阶
+    # 肩甲（镜像点：cx=15 的搭档是 48，原稿写 49 是偏 1 列的）
     _ell(im, 15, 26, 10, 7, armor)
-    _ell(im, 49, 26, 10, 7, armor)
+    _ell(im, 48, 26, 10, 7, armor)
     _ell(im, 15, 24, 5, 3, light)
-    _ell(im, 49, 24, 5, 3, light)
-    # 头盔 + 面罩 + 金羽
+    _ell(im, 48, 24, 5, 3, light)
+    _sym(im, 12, 29, 6, 3, light)            # 肩甲下缘高光阶
+    # 头盔 + 面罩（加竖缝）+ 金羽（加节）
     _ell(im, BOS_CX, 16, 13, 13, armor)
     _put(im, 19, 12, 27, 5, dark)
     _ell(im, BOS_CX, 12, 13, 7, armor)
     _put(im, 27, 13, 11, 4, s["visor"])
+    _sym(im, 29, 13, 1, 4, dark)
+    _sym(im, 32, 13, 1, 4, dark)
     _put(im, 30, 2, 5, 10, trim)
     _put(im, 26, 4, 13, 3, trim)
-    # 鸢盾（左手）：上圆下尖
+    _put(im, 30, 5, 5, 1, trim)
+    _put(im, 30, 7, 5, 1, dark)
+    _put(im, 30, 10, 5, 1, dark)
+    # 鸢盾（左手）：上圆下尖 + 横带 + 铆钉
     _put(im, 2, 30, 18, 13, s["shield"])
     for k in range(9):
         _put(im, 3 + k, 43 + k, 16 - 2 * k, 1, s["shield"])
     _put(im, 2, 30, 18, 2, trim)
     _put(im, 10, 32, 3, 13, trim)
-    # 大剑（右手，竖握）
+    _put(im, 2, 36, 18, 2, trim)
+    _rivets(im, 4, 33, 4, 5, trim)
+    _gem(im, 11, 41, 3, s["blade"])
+    # 大剑（右手，竖握）：中线 + 剑格宝石
     _put(im, 54, 4, 5, 40, blade)
     _put(im, 54, 4, 1, 40, light)
+    _put(im, 56, 6, 1, 36, light)
     _put(im, 49, 42, 15, 3, trim)
-    _put(im, 55, 45, 3, 9, s["grip"])
+    _gem(im, 56, 44, 3, trim)
+    _put(im, 55, 47, 3, 9, s["grip"])
     return im
 
 
@@ -3319,15 +3444,39 @@ def _boss_vampire(s) -> Image.Image:
     for k in range(20):
         hw = 9 - int(round(k * 0.28))
         _put(im, BOS_CX - hw, 30 + k, 2 * hw + 1, 1, cape_in)
-    # 高竖领（两片向上外撇的尖）
+    # 斗篷褶皱：**跟着喇叭的宽度走**（写死 x 会在窄处落到斗篷外、在宽处堆在中间），
+    # 只压在内衬之外的两侧 —— 内衬本来就是暗的，压上去等于没画。
+    for k in range(20):
+        hw = 12 + int(round((k + 12) * 0.55))
+        shift = -3 if (k + 12) < 16 else 0
+        for d in (8, 13):
+            _put(im, BOS_CX - d + shift, 40 + k, 2, 1, cape_in)
+            _put(im, BOS_CX + d - 2 + shift, 40 + k, 2, 1, cape_in)
+    # 褶边的亮线（三阶化：cape / cape_in / light）—— 只压暗不提高光的话，
+    # 每个 8×8 块里永远只有「底色 + 暗色」两种，细节密度卡在 2.0 上不去
+    for k in range(20):
+        hw = 12 + int(round((k + 12) * 0.55))
+        shift = -3 if (k + 12) < 16 else 0
+        for d in (8, 13):
+            _put(im, BOS_CX - d + shift - 1, 40 + k, 1, 1, light)
+            _put(im, BOS_CX + d + shift, 40 + k, 1, 1, light)
+    # 下摆的扇形垂边
+    for x in range(4, 60, 9):
+        _put(im, x, 62, 5, 2, cape_in)
+    # 高竖领（两片向上外撇的尖，本就一高一低）+ 领内衬亮线
     _beam(im, 20, 32, 9, 8, 6, cape)
     _beam(im, 44, 32, 55, 14, 6, cape)
     _beam(im, 9, 8, 15, 5, 4, cape)
     _beam(im, 55, 14, 49, 6, 4, cape)
-    # 身（暗袍）+ 交叠的手臂
+    _beam(im, 22, 30, 11, 10, 2, light)
+    _beam(im, 46, 30, 57, 14, 2, light)
+    # 身（暗袍）+ 交叠的手臂 + 袖口 + 指爪 + 胸针
     _ell(im, BOS_CX, 46, 13, 14, cape_in)
     _put(im, 22, 42, 21, 5, light)
     _put(im, 22, 42, 21, 2, cape)
+    _sym(im, 21, 41, 2, 8, cape)
+    _sym(im, 21, 46, 3, 2, skin)
+    _gem(im, BOS_CX, 40, 3, eye)
     # 头：苍白面孔 + 尖下颌
     _ell(im, BOS_CX, 24, 10, 11, skin)
     _put(im, 27, 33, 11, 5, skin)
@@ -3337,16 +3486,17 @@ def _boss_vampire(s) -> Image.Image:
     _put(im, 30, 22, 5, 7, hair)
     _put(im, 32, 28, 1, 5, hair)
     _put(im, 22, 16, 21, 4, hair)
-    # 红瞳 + 眉毛 + 獠牙
+    # 红瞳 + 眉毛 + 獠牙（镜像点：cx=27 的搭档是 36，原稿写 38 是偏 2 列的）
     _ell(im, 27, 24, 4, 3, MON_WHITE)
-    _ell(im, 38, 24, 4, 3, MON_WHITE)
+    _ell(im, 36, 24, 4, 3, MON_WHITE)
     _ell(im, 27, 24, 2, 3, eye)
-    _ell(im, 38, 24, 2, 3, eye)
+    _ell(im, 36, 24, 2, 3, eye)
+    _sym(im, 26, 22, 1, 1, MON_WHITE)
     _put(im, 23, 20, 9, 2, hair)
-    _put(im, 34, 20, 9, 2, hair)
+    _put(im, 32, 20, 9, 2, hair)
     _put(im, 28, 31, 9, 2, MON_INK)
     _put(im, 29, 33, 2, 4, fang)
-    _put(im, 34, 33, 2, 4, fang)
+    _put(im, 33, 33, 2, 4, fang)
     return im
 
 
@@ -3363,28 +3513,49 @@ def _boss_mage(s) -> Image.Image:
     hat, skin, beard = s["hat"], s["skin"], s["beard"]
     staff, orb, trim = s["staff"], s["orb"], s["trim"]
 
-    # 法杖（最里层）+ 大金宝珠
+    # 法杖（最里层）+ 大金宝珠 + 杖身环纹 + 宝珠符文
     _put(im, 47, 14, 5, 50, staff)
     _put(im, 47, 14, 1, 50, light)
     _ell(im, 49, 11, 10, 10, dark)
     _ell(im, 49, 11, 8, 8, orb)
     _ell(im, 47, 8, 3, 3, (255, 250, 226, 255))
+    _put(im, 43, 8, 13, 1, dark)
+    _put(im, 45, 15, 9, 1, dark)
+    for k in range(7):
+        _put(im, 46, 20 + k * 6, 7, 1, trim)
     # 金袍：从腰到地的喇叭 + 袍褶
+    #
+    # ⚠️ 袍褶原来是四条**写死 x** 的竖线（13, 22, 42, 51）：既偏了 2 列
+    # （13..14 的搭档是 49..50，不是 51），又在袍窄的上段落到袍外（y47 时
+    # 袍只到 x16..48，x13 那条压在须和袍的边界上）。现在跟着喇叭宽度走。
     for k in range(24):
         hw = 11 + int(round(k * 0.68))
         _put(im, BOS_CX - hw, 40 + k, 2 * hw + 1, 1, robe)
     _put(im, 3, 61, 58, 3, robe)
-    for x in (13, 22, 42, 51):
-        _put(im, x, 47, 2, 15, dark)
-    # 上身 + 金披肩
+    for k in range(18):
+        hw = 11 + int(round((k + 4) * 0.68))
+        for d in (5, 10, 15):
+            if d < hw - 2:
+                _put(im, BOS_CX - d - 1, 44 + k, 2, 1, dark)
+                _put(im, BOS_CX + d - 1, 44 + k, 2, 1, dark)
+        # 褶边亮线（三阶：robe / dark / light）
+        for d in (3, 8, 13):
+            if d < hw - 2:
+                _put(im, 31 - d, 44 + k, 1, 1, light)
+                _put(im, 32 + d, 44 + k, 1, 1, light)
+    # 上身 + 金披肩 + 披肩铆钉
     _ell(im, BOS_CX, 38, 14, 9, robe)
     _ell(im, BOS_CX, 34, 17, 7, dark)
     _put(im, 15, 34, 35, 3, trim)
-    # 白须（压在袍上、框住脸；从第 40 行起，正好接在下巴）
+    _rivets(im, 18, 35, 5, 7, dark, mirror=True)
+    # 白须（压在袍上、框住脸；从第 40 行起，正好接在下巴）+ 须缕
     for k in range(18):
         hw = 12 - int(round(k * 0.12))
         _put(im, BOS_CX - hw, 40 + k, 2 * hw + 1, 1, beard)
     _put(im, BOS_CX - 6, 58, 13, 5, beard)
+    for d in (4, 9):
+        _put(im, BOS_CX - d - 1, 42, 2, 18, s["beard_dk"])
+        _put(im, BOS_CX + d - 1, 42, 2, 18, s["beard_dk"])
     # 脸 + 鼻 + 眼
     #
     # ⚠️ 改前脸中心在 y28、帽檐椭圆在 y27（ry=5 → 覆盖 22..32）——
@@ -3396,12 +3567,14 @@ def _boss_mage(s) -> Image.Image:
     _put(im, 30, 34, 5, 3, (232, 186, 142, 255))
     _put(im, 25, 27, 3, 3, MON_INK)
     _put(im, 36, 27, 3, 3, MON_INK)
-    # 尖帽：锥体 + 帽檐 + 帽带 + 穗
+    # 尖帽：锥体 + 帽檐 + 帽带 + 带扣宝石 + 穗
     for k in range(19):
         hw = 3 + int(round(k * 0.68))
         _put(im, BOS_CX - hw, 2 + k, 2 * hw + 1, 1, hat)
     _ell(im, BOS_CX, 21, 19, 4, hat)
     _put(im, 12, 19, 41, 3, trim)
+    _put(im, 13, 23, 39, 1, dark)
+    _gem(im, BOS_CX, 20, 3, orb)
     _put(im, 31, 0, 3, 4, trim)
     return im
 
@@ -3428,95 +3601,152 @@ def _boss_kraken(s) -> Image.Image:
     body, dark, light = s["body"], s["dark"], s["light"]
     eye, pupil = s["eye"], s["pupil"]
 
-    # 侧鳍（最里层，向外上收尖的三角；`_sym` 保证左右一致）
+    # 侧鳍（最里层，向外上收尖的三角；`_sym` 保证左右一致）+ 鳍上的纹
     for k in range(12):
         _sym(im, 15 - k, 19 - k, 1, 12 - k, dark)
+    for k in range(5):
+        _sym(im, 13 - k, 19 - k, 1, 2, light)
     # 六条长腕（三条向左弯、三条向右弯；末梢换色收尾）
-    for (x0, x1, bow, th) in (
-        (16, 1, 10, 8), (21, 10, 6, 8), (26, 24, -3, 8),
-        (48, 63, -10, 8), (43, 54, -6, 8), (38, 40, 3, 8),
-    ):
+    tents = ((16, 1, 10, 8), (21, 10, 6, 8), (26, 24, -3, 8),
+             (48, 63, -10, 8), (43, 54, -6, 8), (38, 40, 3, 8))
+    for (x0, x1, bow, th) in tents:
         _tentacle(im, x0, 40, x1, 63, bow, th, dark, light)
-    # 外套膜：**纵向水滴形**（rx 18 / ry 24 —— 高比宽长三分之一）
+    # 腕上的吸盘：**与腕共用同一条贝塞尔**（见 `_bez` 的注释）
+    for (x0, x1, bow, th) in tents:
+        for t in (0.32, 0.52, 0.72):
+            sx, sy = _bez((x0, 40), (x1, 63), bow, t)
+            _put(im, int(round(sx)), int(round(sy)), 1, 1, body)
+    # 外套膜：**纵向水滴形**（rx 18 / ry 24 —— 高比宽长三分之一）+ 膜斑
     _ell(im, BOS_CX, 26, 18, 24, body)
+    _scales(im, 22, 36, 5, 3, 4, dark, mirror=True)
+    _scales(im, 24, 34, 4, 3, 4, light, mirror=True)
     _half(im, BOS_CX, 20, 15, 12, light, up=True)
-    # 眼下压暗，把巨眼衬出来
-    _put(im, 22, 30, 21, 4, dark)
-    _put(im, 36, 30, 21, 4, dark)
-    # 两只巨眼 + 竖瞳 + 高光
+    # 眼下压暗，把巨眼从外套膜上「抠」出来（一条横贯的暗带就够，
+    # 原稿写成两条各 21 列、其中右条起自 x36 —— 与左条差 15 列，等于没压）
+    _put(im, 21, 30, 22, 4, dark)
+    # 两只巨眼 + 竖瞳 + 高光（镜像点：cx=22 的搭档是 41，cx=19 的搭档是 44）
     _ell(im, 22, 28, 9, 10, eye)
-    _ell(im, 42, 28, 9, 10, eye)
+    _ell(im, 41, 28, 9, 10, eye)
     _ell(im, 22, 29, 5, 7, pupil)
-    _ell(im, 42, 29, 5, 7, pupil)
+    _ell(im, 41, 29, 5, 7, pupil)
     _ell(im, 19, 24, 3, 3, MON_WHITE)
-    _ell(im, 39, 24, 3, 3, MON_WHITE)
-    # 角质喙（外套膜下缘的 V 形开口）
+    _ell(im, 44, 24, 3, 3, MON_WHITE)
+    # 角质喙（外套膜下缘的 V 形开口）+ 下伸的钩尖
     _put(im, 26, 46, 13, 8, dark)
     for k in range(7):
         _put(im, 27 + k, 47 + k, 11 - 2 * k, 1, MON_INK)
+    _put(im, 31, 52, 2, 11, MON_INK)
     return im
 
 
 # ── 6. 魔龙（第 35 层） ────────────────────────────────────────────
 
 def _boss_dragon(s) -> Image.Image:
-    """魔龙：**侧视朝左** —— 巨角 + 长吻 + 张口獠牙 + 背脊大翼 + 尾 + 两腿。
+    """魔龙：**正面朝向玩家** —— 横展双翼 + 方吻张口 + 竖瞳 + 粗腿利爪 + 甩到右下的尾。
 
-    侧视是有意的：正面龙会与魔王撞剪影（都是「对称的角 + 一张脸」）。
-    侧视之后，**长吻**成了它独有的记号，一眼就能和魔王分开。
+    ## 为什么从侧视改成正面（本轮）
+
+    改前是侧视朝左，理由是「正面龙会与魔王撞剪影」。这条理由只对了一半：
+    两只撞剪影的真正原因是**共用同一套骨架**（对称的角 + 一对膜翼 + 一张脸），
+    而不是「正面」本身。侧视躲开了撞车，代价是把龙的辨识度全押在**长吻**
+    这一个记号上 —— 而长吻缩到 64px 后只剩几像素宽的横条，玩家读到的
+    是「一只大蜥蜴」，不是龙（这也是上一轮它被改了三次形状的那个东西）。
+
+    正面重画之后，记号改成五条**互相独立**的（任何一条单独成立就够认出来）：
+
+    | 记号 | 内容 | 魔王有没有 |
+    |---|---|---|
+    | 方吻 + 张口 | 头部下半是一块比头略窄的方形，中间一道黑口 + 上下交错獠牙 | 无（魔王圆头无吻） |
+    | 竖瞳 | 金底眼 + 一道**竖直**的缝 | 无（魔王是横的发光条） |
+    | 颊鳍 | 头两侧向外下收的膜鳍 | 无 |
+    | 甩尾 | 尾从身体右侧甩到画面右下，末端下勾 | 无（魔王不画尾） |
+    | 横展翼 | 翼根在肩、**向左右外侧**展开成 T 形 | 不同（魔王翼是贴身上扬的） |
+
+    ⚠️ 这五条**没有一条靠颜色** —— 缩到 32px 或转灰度也分得开。
+    判据也换了：`verify_boss_art` ⑦ 量**头部区域的左右对称度** —— 正面朝向的头
+    必然左右对称，而侧视的头偏在一边会直接报红（改前实测 39.4%，阈值 12%）。
+    没有这条判据，「转成正面」只是这次改对了、下次改形状时没人拦得住。
     """
     im = _bos_canvas()
     body, wing, belly = s["body"], s["wing"], s["belly"]
     dark, eye, horn, claw = s["dark"], s["eye"], s["horn"], s["claw"]
 
-    # 大翼（最里层，从背脊向右上扇开；不镜像 —— 侧视只有一片）
+    # ① 双翼（最里层）：翼根在肩（y30..40）、**向左右下外展开**到翼尖（y46..62）。
     #
-    # ⚠️ 两处改过：
-    #   ① 翼要**大**（13 列 → 17 列）—— 龙的辨识度几乎全靠翼，而它缩到
-    #      64px 后只占画布右上角一小片，读成「背上的一片鳍」。
-    #   ② 展开方向要**朝右上方**：`_wing_draw` 的 x 是 `x_shoulder - i`
-    #      （i 越大越靠左），所以「翼尖在右上」要求剖面的 top 随 i **变大**。
-    #      原来的 `_wing_fan(13, 26,40, 6,22, ...)` 是 26→6（递减），
-    #      翼尖朝左上、压在头上，这也是它显得「没翅膀」的原因之一。
-    _wing_draw(im, 48, _wing_fan(17, 2, 18, 26, 46, (0, 4, 8, 12), 5),
-               wing, dark, edge=3, mirror=False)
-    # 尾：从身体右后方甩出去，末端收成箭尖
-    _beam(im, 58, 46, 61, 26, 8, body)
-    _beam(im, 61, 26, 57, 14, 5, body)
-    _put(im, 55, 8, 7, 6, dark)
-    # 身体（收细）+ 腹甲（**贴地那一条**）
+    # ⚠️ 展开方向是本轮试出来的第二个坑。第一版照蝙蝠那样「向上外扬」，
+    # 落屏后**读不出是翼**：躯干 rx=17 占了 x15..49，两侧各只剩 15 列，
+    # 向上的窄膜在这 15 列里只是一根斜柱。改成**向下展开**之后：
+    #   ① 可见面积大（外侧 15 列 × 纵向 30 行都是膜）；
+    #   ② 与魔王的「贴身上扬膜翼」正好相反，剪影差异反而更大；
+    #   ③ 正面龙两翼下垂护体，本身就是这类生物的经典站姿。
+    _wing_draw(im, 26, _wing_fan(21, 30, 40, 46, 62, (0, 5, 10, 15, 20), 5),
+               body, wing, edge=3, mirror=True)
+    # 翼膜上的暗斑（膜不能是一整块纯色）+ 翼尖的钩爪
+    _sym(im, 10, 46, 3, 2, dark)
+    _sym(im, 13, 55, 3, 2, dark)
+    _sym(im, 6, 58, 4, 5, claw)
+    # ② 尾：从身体右侧甩出，末端收成箭尖（正面龙唯一伸到画面右缘的细结构）
+    _beam(im, 44, 44, 61, 48, 5, body)
+    _beam(im, 61, 48, 53, 57, 4, body)
+    for k in range(4):
+        _put(im, 47 + k, 52 + k, 9 - 2 * k, 1, dark)
+    # ③ 腿 + 脚 + 每脚三只爪（爪踩在最后一行 —— 底行必须有像素）
     #
-    # ⚠️ 腹甲原来是 `_ell(42, 50, 15, 8)` + 5 条横纹横贯腰侧，落屏后读成
-    # 「肋骨外翻」。腹甲是腹部贴地的一条浅色，不是腰上的纹路 —— 下移 + 只留 3 条。
-    _ell(im, 40, 46, 16, 13, body)
-    _ell(im, 40, 53, 13, 6, belly)
+    # ⚠️ 爪的左右坐标是**镜像算出来的**（镜像轴 x=31.5，所以 15..18 的搭档是 45..48），
+    # 不是「另一只脚从 31 起步」—— 手写成对坐标差了 2 列，1:1 落屏后就是
+    # 「两只脚的爪不对称」，而这种 1px 级的错位肉眼极难定位。
+    for x0 in (17, 34):
+        _put(im, x0, 50, 13, 10, body)
+        _put(im, x0 - 2, 58, 17, 5, body)
     for k in range(3):
-        _put(im, 30, 50 + k * 3, 21, 1, dark)     # 腹甲横纹
-    # 颈（从左上的头连到身体）
-    _beam(im, 34, 40, 20, 22, 10, body)
-    _put(im, 26, 30, 10, 9, body)
-    # 两腿 + 爪（踩在格底）
-    for x0 in (28, 46):
-        _put(im, x0, 52, 9, 9, body)
-        _put(im, x0 - 1, 59, 11, 5, body)
-        _put(im, x0 - 2, 60, 13, 4, claw)
-    # 头 + 长吻（朝左 —— **长吻是它与魔王分开的唯一记号**，占画布近 1/3 宽度）
-    _ell(im, 18, 22, 13, 11, body)
-    _put(im, 0, 18, 20, 9, body)
-    _put(im, 0, 18, 20, 2, belly)          # 吻上缘高光（龙的 spec 没有 light，用腹甲色）
-    _put(im, 0, 22, 20, 2, dark)           # 嘴缝
-    _put(im, 2, 24, 3, 4, claw)            # 下颚獠牙
-    _put(im, 9, 24, 2, 3, claw)
-    _put(im, 1, 16, 3, 2, MON_INK)         # 鼻孔
-    # 双角：**从后脑向后上弯**。
+        _put(im, 15 + k * 6, 61, 4, 3, claw)
+        _put(im, 45 - k * 6, 61, 4, 3, claw)
+    # 腿鳞（错行）—— 一整块纯色是细节密度最大的杀手
+    _scales(im, 18, 49, 3, 3, 4, dark, mirror=True)
+    # ④ 躯干：**宽胸 + 收腰**（两段叠加），腹甲从中线一条铺下来
     #
-    # ⚠️ 改前是从头顶朝前伸的一对骨带（`_beam(24,14 → 38,3)`），落屏后读成
-    # **兔耳** —— 角的方向就是「这是龙不是兔」的全部，比长短重要得多。
-    _beam(im, 27, 18, 42, 5, 5, horn)
-    _beam(im, 31, 23, 48, 14, 4, horn)
-    _ell(im, 16, 16, 5, 5, eye)            # 巨眼
-    _put(im, 14, 16, 3, 5, dark)
-    _put(im, 5, 13, 11, 3, dark)           # 眉脊
+    # 单一椭圆（rx=ry）落屏后读成「甲虫的圆壳」—— 兽形靠的是轮廓起伏。
+    _ell(im, 32, 38, 18, 11, body)
+    _ell(im, 32, 47, 15, 9, body)
+    _ell(im, 32, 46, 11, 12, belly)
+    for k in range(4):
+        _put(im, 24, 40 + k * 4, 17, 1, dark)
+    # 三阶化：躯干两侧压暗、中线提亮（只有两阶的色块在 8×8 尺度上永远只有 2 色）
+    _sym(im, 15, 34, 4, 12, wing)
+    _sym(im, 20, 12, 3, 6, wing)
+    _put(im, 30, 32, 4, 5, belly)
+    # ⑤ 颈（两侧对称压暗）
+    _put(im, 26, 27, 13, 12, body)
+    _sym(im, 26, 27, 3, 12, dark)
+    # ⑥ 头盖（比躯干窄）+ 颊鳍
+    _ell(im, 32, 16, 14, 12, body)
+    for k in range(6):
+        _sym(im, 17 - k, 18 + k, 2, 9 - k, dark)
+    # ⑦ 方吻：**比头窄**（x25..39 vs 头盖 x18..46）—— 这一步是「楔形头」的全部，
+    #    第一版把吻做成与头齐宽，1:1 落屏后读出来是「一张圆脸 + 一张大嘴」，
+    #    仍然是「放大的杂兵」，不是龙。
+    _put(im, 25, 21, 15, 11, body)
+    _put(im, 25, 21, 15, 1, belly)           # 吻背亮线：头与吻的分界
+    _put(im, 26, 25, 13, 5, MON_INK)         # 口腔
+    for x in (27, 31, 34):                   # 上獠牙（朝下）
+        _put(im, x, 25, 3, 3, claw)
+    for x in (29, 32):                       # 下獠牙（朝上）
+        _put(im, x, 28, 3, 2, claw)
+    _put(im, 27, 22, 3, 2, MON_INK)          # 鼻孔
+    _put(im, 34, 22, 3, 2, MON_INK)
+    # ⑧ 眼 + **竖瞳** + 眉脊 + 额脊（右眼中心 = 63-25 = 38）
+    _ell(im, 25, 14, 6, 5, eye)
+    _ell(im, 38, 14, 6, 5, eye)
+    _put(im, 24, 10, 3, 9, MON_INK)
+    _put(im, 37, 10, 3, 9, MON_INK)
+    _sym(im, 18, 7, 13, 2, dark)
+    _put(im, 31, 6, 2, 7, dark)              # 额脊：跨镜像轴 2px，天然对称
+    # ⑨ 双角：从头顶两侧向上外弯（比魔王那对短而粗、**只有一段**）+ 环纹
+    _beam_sym(im, 23, 8, 17, 0, 6, horn)
+    _sym(im, 18, 4, 5, 1, dark)
+    _sym(im, 20, 8, 6, 1, dark)
+    # ⑩ 肩刺
+    _beam_sym(im, 21, 32, 14, 25, 4, horn)
     return im
 
 
@@ -3562,60 +3792,72 @@ def _boss_demon(s) -> Image.Image:
     else:
         _wing_draw(im, 18, _wing_fan(15, 24, 46, 4, 24, (0, 4, 8, 12), 5),
                    light, dark, edge=3, mirror=True)
-    # 腿（粗壮，踩在格底）
+    # 翼膜斑（膜上不能只有三根指骨 —— 一整片纯色是细节密度最大的杀手）
+    _sym(im, 12, 30, 4, 2, dark)
+    _sym(im, 9, 26, 3, 2, dark)
+    # 腿（粗壮，踩在格底）+ 腿甲分片 + 脚爪
+    #
+    # ⚠️ 成对结构统一改走 `_sym`。原稿是两行手写坐标，腿（16/38）**碰巧**对了，
+    # 但同一段里的脚掌（14/37）与分片（18/…）各错各的 —— 同一个函数里
+    # 「一半对、一半差 1 列」比全错更难查。镜像点恒为 63-cx。
     if true_form:
         # 真身站得更开 —— 下盘一宽，整个剪影就与「并腿站着」的普通魔王不同
-        _put(im, 16, 52, 10, 10, body)
-        _put(im, 38, 52, 10, 10, body)
-        _put(im, 14, 60, 13, 4, dark)
-        _put(im, 37, 60, 13, 4, dark)
+        _sym(im, 16, 52, 10, 10, body)
+        _sym(im, 14, 60, 13, 4, dark)
+        _sym(im, 18, 56, 7, 1, dark)          # 腿甲分片
+        _sym(im, 16, 60, 5, 3, horn)          # 脚爪
     else:
-        _put(im, 20, 52, 10, 10, body)
-        _put(im, 34, 52, 10, 10, body)
-        _put(im, 18, 60, 13, 4, dark)
-        _put(im, 33, 60, 13, 4, dark)
-    # 躯干 + 胸甲 + 发光徽
+        _sym(im, 20, 52, 10, 10, body)
+        _sym(im, 18, 60, 13, 4, dark)
+        _sym(im, 22, 56, 7, 1, dark)
+        _sym(im, 20, 60, 5, 3, horn)
+    # 腹甲横排（两腿之间的躯干下缘）
+    for k in range(3):
+        _put(im, 26, 54 + k * 3, 13, 1, dark)
+    # 躯干 + 胸甲 + 上缘铆钉 + 发光徽（徽外再套一圈亮环）
     _ell(im, BOS_CX, 46, 17, 15, body)
     _ell(im, BOS_CX, 44, 14, 12, plate)
     _put(im, BOS_CX - 14, 40, 29, 4, light)
+    _rivets(im, 20, 39, 4, 8, light, mirror=True)
+    _ell(im, BOS_CX, 46, 8, 9, light)
     _ell(im, BOS_CX, 46, 5, 6, glow)
     _ell(im, BOS_CX, 46, 2, 3, MON_WHITE)
+    # 三阶化：躯干两侧与腿上的高光条（躯干是整片 body 纯色，只压暗不出效果）
+    _sym(im, 20, 48, 4, 6, light)
+    _sym(im, 22, 54, 3, 4, light)
     # 手臂
     if true_form:
-        # 斜向上举的粗臂（斜带而非竖条 —— 竖条会和翼的指骨混成一片）
-        _beam(im, 22, 42, 8, 22, 7, dark)
-        _beam(im, 42, 42, 56, 22, 7, dark)
+        # 斜向上举的粗臂（斜带而非竖条 —— 竖条会和翼的指骨混成一片）。
+        # 原稿写右手 `_beam(42,42 → 56,22)`，而左手的镜像起点是 35..41 不是 42..48
+        # —— 两只手臂**差 7 列**，落屏后是「一只举手、一只搭在腰上」。
+        _beam_sym(im, 22, 42, 8, 22, 7, dark)
     else:
-        _put(im, 12, 36, 7, 14, dark)
-        _put(im, 45, 36, 7, 14, dark)
-    # 巨角（骨色，向外上弯）
+        _sym(im, 12, 36, 7, 14, dark)
+    # 巨角（骨色，向外上弯）+ 环纹
     if true_form:
-        # 三段、末端伸到画布左右边缘（x=4 / x=60）
-        _beam(im, 26, 26, 10, 8, 6, horn)
-        _beam(im, 22, 16, 4, 0, 5, horn)
-        _beam(im, 38, 26, 54, 8, 6, horn)
-        _beam(im, 42, 16, 60, 0, 5, horn)
+        # 两段、末端伸到画布左右边缘 —— `_beam_sym` 只写左半
+        _beam_sym(im, 26, 26, 10, 8, 6, horn)
+        _beam_sym(im, 22, 16, 4, 0, 5, horn)
     else:
-        _beam(im, 24, 24, 12, 6, 6, horn)
-        _beam(im, 22, 16, 8, 2, 5, horn)
-        _beam(im, 40, 24, 52, 6, 6, horn)
-        _beam(im, 42, 16, 56, 2, 5, horn)
-    # 头 + 发光眼 + 獠牙
+        _beam_sym(im, 24, 24, 12, 6, 6, horn)
+        _beam_sym(im, 22, 16, 8, 2, 5, horn)
+    _sym(im, 19, 20, 5, 1, dark)
+    _sym(im, 18, 13, 5, 1, dark)
+    # 头 + 发光眼 + 獠牙（原稿右眼写 34、右瞳写 38、獠牙写 37 —— 分别偏 1、1、2 列）
     _ell(im, BOS_CX, 24, 13, 13, body)
     _ell(im, BOS_CX, 20, 11, 8, dark)
-    _put(im, 23, 22, 8, 4, glow)
-    _put(im, 34, 22, 8, 4, glow)
-    _put(im, 24, 23, 3, 2, MON_INK)
-    _put(im, 38, 23, 3, 2, MON_INK)
+    _sym(im, 23, 22, 8, 4, glow)
+    _sym(im, 24, 23, 3, 2, MON_INK)
     _put(im, 26, 31, 13, 3, MON_INK)
-    for tx in (27, 32, 37):
-        _put(im, tx, 34, 2, 4, MON_WHITE)
-    # 王冠（真身专属）
+    _sym(im, 27, 34, 2, 4, MON_WHITE)
+    _put(im, 31, 34, 2, 4, MON_WHITE)
+    # 王冠（真身专属）+ 冠顶嵌宝石
     if s.get("crown"):
         _put(im, 21, 8, 23, 4, s["crown"])
-        for sx in (21, 29, 37):
+        for sx in (21, 29, 39):
             _put(im, sx, 2, 4, 6, s["crown"])
         _put(im, 21, 8, 23, 1, MON_WHITE)
+        _gem(im, BOS_CX, 5, 3, s["crown"], MON_WHITE)
     return im
 
 
@@ -3650,7 +3892,7 @@ PROC_BOSSES = {
     "archmage": dict(
         shape="mageBoss", robe=(196, 148, 42, 255), dark=(128, 88, 18, 255),
         light=(248, 214, 106, 255), skin=(238, 200, 160, 255), hat=(160, 116, 28, 255),
-        beard=(250, 250, 246, 255), staff=(122, 86, 48, 255),
+        beard=(250, 250, 246, 255), beard_dk=(196, 196, 190, 255), staff=(122, 86, 48, 255),
         orb=(252, 226, 92, 255), trim=(252, 234, 142, 255)),
     "kraken": dict(
         shape="krakenBoss", body=(132, 78, 176, 255), dark=(74, 38, 112, 255),
@@ -3912,11 +4154,19 @@ def verify_boss_art(frames: dict[str, list[Image.Image]]) -> list:
          所以断言里同时要求**它们两两之间至少差 N 个像素**，不是「不相等」就算过。
       5. **细节密度达标** —— 把「更精致」变成可量的东西：把画面切成 8×8 的块，
          数每块里的**独立颜色数**，取中位数。32 网格的素材即便放大到 64，
-         每块的中位数也只有 ~1.3（像素是摊开的）；真画在 64 网格上有 ~2.6。
-         阈值取 2.0（实测值见常量 `BOSS_DETAIL_MIN` 的注释）。
+         每块的中位数也只有 ~1.3（像素是摊开的）；真画在 64 网格上有 3.0~4.0。
+         阈值 3.0（实测分布见常量 `BOSS_DETAIL_MIN` 的注释）。
       6. **`BOSS_IDS` 与 `data/monsters.json` 的 boss 字段一致** ——
          数据里是 BOSS、素材里没画 = 会退回杂兵造型；素材画了但数据不是 BOSS =
          白画（不会有人在棋盘上看到它）。
+      7. **内部细节达标**（`_inner_detail`）—— 判据 5 只看 8×8 块，
+         而**轮廓线**本身就贡献 2~3 色，所以「边缘花哨 + 内部一整片纯色」
+         也能过。这一条先腐蚀掉轮廓外侧 2px，只量身体内部有没有纹理。门槛 1.8。
+      8. **正面朝向的 BOSS，头部必须左右对称**（`_head_asym`，名单见 `HEAD_FRONT`）
+         —— 这是「正面朝向玩家」的**唯一**可量判据。改前 dragon 是侧视朝左，
+         实测 39.4%；转正后 2.2%。只对 `HEAD_FRONT` 里的名字生效：另外四只
+         的不对称来自剧情道具（盾 / 大剑 / 法杖）或刻意站姿（吸血鬼），
+         全局量会把它们全部误杀。
     """
     problems: list[str] = []
     if set(frames) != set(BOSS_IDS):
@@ -3944,10 +4194,28 @@ def verify_boss_art(frames: dict[str, list[Image.Image]]) -> list:
         d = _detail_density(im)
         if d < BOSS_DETAIL_MIN:
             problems.append(
-                f"BOSS {bid} 的细节密度只有 {d:.2f}（每个 8×8 块的平均独立颜色数），"
-                f"低于阈值 {BOSS_DETAIL_MIN} —— 说明它是「把 32 网格放大到 64」"
-                f"而不是真画在 64 网格上（放大不创造颜色，只把同一批像素摊开）"
+                f"BOSS {bid} 的细节密度只有 {d:.2f}（每个 8×8 块的中位独立颜色数），"
+                f"低于阈值 {BOSS_DETAIL_MIN} —— 这个尺寸上「一色」是读不出结构的，"
+                f"要么是「把 32 网格放大到 64」（放大不创造颜色，只把同一批像素摊开），"
+                f"要么是大面积纯色没有压明暗三阶"
             )
+        inner = _inner_detail(im)
+        if inner < BOSS_INNER_MIN:
+            problems.append(
+                f"BOSS {bid} 的内部细节只有 {inner:.2f}（排除轮廓 2px 后，"
+                f"每个 4×4 块的平均独立颜色数），低于阈值 {BOSS_INNER_MIN} —— "
+                f"边缘再花哨也不算细节：身体内部必须有阴影 / 高光 / 刻线 / 鳞片"
+                f"（只压一层暗纹不够，要连高光一起给，同一个 4×4 里才会出现第三色）"
+            )
+        if bid in HEAD_FRONT:
+            asym = _head_asym(im)
+            if asym > BOSS_HEAD_SYM_MAX:
+                problems.append(
+                    f"BOSS {bid} 是正面朝向的，但头部区域的左右不对称像素占 "
+                    f"{asym:.1%}（上限 {BOSS_HEAD_SYM_MAX:.0%}）—— 它多半是侧视/"
+                    f"半侧视，或者成对结构（角 / 手臂 / 眼 / 牙）有一侧没走 `_sym`，"
+                    f"左右差了几列。正面朝向的对称结构一律用 `_sym` / `_beam_sym` 写"
+                )
 
     # 剪影两两差异：不要求「不相等」（一个像素也能让它不相等），要求差得足够多
     ids = sorted(frames)
@@ -4002,6 +4270,51 @@ def _detail_density(im: Image.Image, block: int = 8) -> float:
         return 0.0
     counts.sort()
     return counts[len(counts) // 2]
+
+
+def _inner_detail(im: Image.Image, block: int = 4, margin: int = 2) -> float:
+    """
+    内部细节 = 只统计**身体内部**（离透明区至少 `margin` 像素）的 `block×block`
+    块里有多少种颜色，取**均值**。
+
+    为什么在 `_detail_density` 之外还要这一条：8×8 的密度里**轮廓线**贡献很大 ——
+    任何一只 BOSS 的复杂边缘都会自然给出 2~3 色，于是「边缘花哨、内部大面积纯色」
+    也会过线。先用最小值滤波把轮廓外侧 `margin` 圈腐蚀掉，剩下的就纯粹是
+    「身体内部有没有纹理」：阴影、高光、刻线、鳞片。
+
+    实测（8 只 × 两版素材）：改前 1.61 ~ 2.13，改后 1.97 ~ 2.28。
+    """
+    mask = im.getchannel("A").filter(ImageFilter.MinFilter(2 * margin + 1))
+    px, mk = im.load(), mask.load()
+    counts = []
+    for by in range(0, im.height, block):
+        for bx in range(0, im.width, block):
+            cols, n = set(), 0
+            for y in range(by, min(by + block, im.height)):
+                for x in range(bx, min(bx + block, im.width)):
+                    if mk[x, y] > 0:
+                        n += 1
+                        cols.add(px[x, y])
+            if n >= block * block * 0.5:
+                counts.append(len(cols))
+    return sum(counts) / len(counts) if counts else 0.0
+
+
+def _head_asym(im: Image.Image, y1: int = 34) -> float:
+    """
+    头部区域（画布最上 `y1` 行）的**左右不对称度** = 不对称像素 / 并集像素。
+
+    这是「正面朝向玩家」的可量判据。侧视或半侧视的头必然偏在画布一侧，
+    怎么修形状都过不了这一条 —— 这正是它存在的理由：没有它，「把龙转成正面」
+    只是这一次改对了，下次有人为了「看着更威风」把它转回侧面，没有任何东西会报警。
+
+    实测：改前 dragon 39.4%（侧视朝左）、demonKingTrue 15.1%（角与手臂左右
+    各差 1~7 列）、kraken 7.2%、demonKing 9.4%；改后最大 2.3%。
+    """
+    head = im.crop((0, 0, im.width, y1))
+    a = _solid_set(head)
+    b = _solid_set(head.transpose(Image.FLIP_LEFT_RIGHT))
+    return len(a ^ b) / (len(a | b) or 1)
 
 
 # ─────────────────────────────────────────────────────────────────────
