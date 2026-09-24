@@ -11,8 +11,14 @@ import { documentBus, globalBus, hookEventTarget } from './events';
 import { MiniMouseEvent } from './mouse-event';
 import { installIntl, installNavigator } from './navigator';
 import { envState, g, type Any } from './state';
+import { installUrl } from './url';
 
 export function installGlobals(): void {
+  // `URL` 与 `Intl` 排在最前的理由相同：它们都是「产物一读到就抛」的类型。
+  // URL 只是读得晚（运行期的 `new URL(x, document.baseURI)`，见 url.ts 的说明），
+  // 但同样不该排在任何一个可能失败的项后面 —— 这是「攒够落脚点再谈别的」。
+  installUrl();
+
   // Intl 排在最前：它是 pixi **模块求值期**唯一会读的“裸标识符”全局，
   // 一旦缺失就是 `ReferenceError`，比 navigator 那条路径还早、还硬。
   installIntl();

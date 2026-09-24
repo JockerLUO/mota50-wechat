@@ -100,6 +100,46 @@
     }
   }
 
+  // ── 抹掉 `URL` / `location`（2026-09-24 加）───────────────────────────
+  //
+  // 成因与 `Intl` 同形，但这次**两个本地宿主都恰好有**，所以「全绿」曾经什么都不说明：
+  //
+  //   Web Worker（verify:minigame）  有 URL   ← WorkerGlobalScope 自带
+  //   真 Chromium（本页）            有 URL
+  //   真机小游戏                     **没有**（URL 是 BOM）  ← 只有这一侧会炸
+  //
+  // 炸点是**拆包之后**才出现的：Vite 给每个 `await import()` 生成
+  // `__vitePreload(loader, deps, importerUrl)`，第三实参在**实参位置**求值
+  // （哪怕函数体里根本用不到它），形态是 `new URL("boot.js", document.baseURI).href`。
+  // 它在 `autoDetectRenderer` 的调用链上 —— 启动必经之路，于是真机启动即失败：
+  // `ReferenceError: URL is not defined`。单文件 iife 时代动态导入被全量内联，
+  // 这段实参压根不存在，所以这是拆包带来的新问题。完整推理见 src/minigame/env/url.ts。
+  //
+  // `URL`：Web IDL 接口对象挂在 window 上是 configurable 的，能真删掉。
+  // `location`：`[LegacyUnforgeable]` 只读自有属性，**删不掉也遮不住**。
+  //            这里如实记一笔就够了 —— 那一侧（产物里唯一的用法是
+  //            `globalThis.location` 的属性读取，见 pixi 的 determineCrossOrigin）
+  //            由 verify:minigame 的 Worker 宿主负责覆盖，本页不假装测过。
+  var hostHadUrl = typeof URL !== 'undefined';
+  try {
+    delete globalThis.URL;
+  } catch (e) {
+    /* 落到下面的遮蔽 */
+  }
+  if (globalThis.URL !== undefined) {
+    try {
+      Object.defineProperty(globalThis, 'URL', { value: undefined, configurable: true, writable: true });
+    } catch (e) {
+      /* 删不掉也遮不住 → __urlGone 为 false → 判据会红 */
+    }
+  }
+  var hostHadLocation = typeof location !== 'undefined';
+  try {
+    delete globalThis.location;
+  } catch (e) {
+    /* LegacyUnforgeable，预期失败 */
+  }
+
   globalThis.__wxCalls = calls;
   globalThis.__storage = storage;
   globalThis.__canvases = canvases;
@@ -109,6 +149,14 @@
   // 删干净了吗？——「让路」的判据不能只看它在不在，得看**值**：
   // IDE 里它“在”但值是 undefined。这一项为 true 才说明本页确实复现了那种处境。
   globalThis.__navigatorGone = !(globalThis.navigator && globalThis.navigator.userAgent);
+
+  // `URL` / `location` 的取证与上面同规矩：**删除后瞬间**取值（此刻 game.js 还没跑），
+  // 不能等启动之后再查 —— 那时垫片已经把它们补上了，「补上了」会被误报成「没删掉」。
+  // （Intl 那一版就踩过这个坑，DOM 宿主侧误红过一次。）
+  globalThis.__hostHadUrl = hostHadUrl;
+  globalThis.__urlGone = typeof globalThis.URL === 'undefined';
+  globalThis.__hostHadLocation = hostHadLocation;
+  globalThis.__locationGone = typeof globalThis.location === 'undefined';
 
   globalThis.wx = {
     // ── 系统信息 ──────────────────────────────────────────────────

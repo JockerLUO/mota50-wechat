@@ -235,6 +235,20 @@ function analyzePixels(rec) {
       intlGone: g.__intlGone === true,
       // 启动之后 Intl 在不在 —— 在，说明垫片补上了（因为桩已证明删干净过）
       intlAfterBoot: typeof Intl !== 'undefined',
+      // `URL` 三态取证，理由同 Intl（删除状态必须在 game.js 之前由桩记下）。
+      // 行为探针用属性路径 `g.URL` 读**产物装在 globalThis 上的那份**。
+      hostHadUrl: g.__hostHadUrl === true,
+      urlGone: g.__urlGone === true,
+      urlUsableAfterBoot: typeof g.URL !== 'undefined',
+      urlProbe: (() => {
+        try {
+          return new g.URL('a/../b.png', 'wxgame://code-package/dir/').href;
+        } catch (err) {
+          return `ERR: ${err && err.message}`;
+        }
+      })(),
+      hostHadLocation: g.__hostHadLocation === true,
+      locationGone: g.__locationGone === true,
       // navigator 三态取证，理由同 Intl：
       //  —— hostHadNavigator：宿主本来有没有（证明删除这个动作有意义）
       //  —— navigatorGone：删除后是否**不可用**（`in` 判不出来，得看值）
@@ -331,6 +345,42 @@ function analyzePixels(rec) {
     state.intlAfterBoot === true,
     `启动后 typeof Intl = ${state.intlAfterBoot ? 'object（垫片）' : 'undefined —— 那 pixi 早该抛了'}`
   );
+
+  // ★ 宿主缺失的全局 `URL` —— 与 Intl 同一条规矩，但成因不同（2026-09-24）
+  //
+  // 这次**两个本地宿主都恰好有** `URL`（本页是真 Chromium，另一页是 Web Worker），
+  // 而真机小游戏没有（`URL` 是 BOM）—— 于是「两侧全绿」曾经什么都不说明：
+  // 拆包后 Vite 给动态导入生成的 `__vitePreload(loader, deps, importerUrl)`
+  // 第三实参是 `new URL("boot.js", document.baseURI).href`，**实参照样求值**，
+  // 位于 `autoDetectRenderer` 的调用链上 ⇒ 真机启动即失败。
+  //
+  // 判据结构与 Intl 那条一致（宿主本来有 ⇒ 删除有意义；真删掉 ⇒ 复现到位），
+  // 但**追加行为探针**：只看「存不存在」分不清「宿主原生」与「我们的垫片」，
+  // 而后者才是要证明的事。探针串带一段 `..`，一次验到 merge /
+  // remove_dot_segments / recompose 三段。
+  add(
+    '宿主本来有 URL，且已抹掉（复现真机小游戏的处境）',
+    state.hostHadUrl === true && state.urlGone === true,
+    `hostHadUrl=${state.hostHadUrl} urlGone=${state.urlGone}` +
+      (state.urlGone === false ? ' —— 没抹掉，这条路径没被真正测到' : '')
+  );
+  add(
+    'URL 缺失时由垫片补上，且相对解析结果正确',
+    state.urlUsableAfterBoot === true && state.urlProbe === 'wxgame://code-package/dir/b.png',
+    `启动后 new URL('a/../b.png', 'wxgame://code-package/dir/') = ${state.urlProbe}` +
+      (state.urlUsableAfterBoot ? '' : '（垫片没装上）')
+  );
+  // `location` 在真 Chromium 里是 `[LegacyUnforgeable]` 只读属性，**删不掉也遮不住** ——
+  // 所以本页不假装测过它，只如实报出这一侧的覆盖边界。
+  // 产物里 `location` 唯一的用法是 pixi `determineCrossOrigin` 的属性读取
+  // （`loc || (loc = globalThis.location)`），那条路径由 `verify:minigame` 的
+  // Worker 宿主负责覆盖（那里 `location` 删得掉）。
+  if (!state.locationGone) {
+    console.log(
+      `  ⓘ location 未能抹掉（真 Chromium 的 [LegacyUnforgeable] 属性）：` +
+        `hostHadLocation=${state.hostHadLocation}。该路径由 verify:minigame 覆盖。\n`
+    );
+  }
 
   // ★ 禁用 unsafe-eval —— `pixi.js/unsafe-eval` 有没有真的接管（2026-09-21 第四轮）
   //

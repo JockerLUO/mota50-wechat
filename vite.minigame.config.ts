@@ -260,7 +260,24 @@ const PRELUDE = [
   //    ⚠️ 这一条**不能**用上面那种「把兜底挂到 globalThis 上」的写法：兜底本身要转发给
   //    `globalThis.MouseEvent`，挂上去就自我递归了。改成**懒转发** ——
   //    调用那一刻才去取 `globalThis.MouseEvent`（也就是 `env.ts` 装的 `MiniMouseEvent`）。
-  'var MouseEvent = (typeof globalThis === "object" && globalThis && typeof globalThis.MouseEvent === "function") ? globalThis.MouseEvent : function (type, init) { return new globalThis.MouseEvent(type, init); };'
+  'var MouseEvent = (typeof globalThis === "object" && globalThis && typeof globalThis.MouseEvent === "function") ? globalThis.MouseEvent : function (type, init) { return new globalThis.MouseEvent(type, init); };',
+  // ⑦ URL —— 拆包之后最直接的裸读点：Vite 给动态导入生成的
+  //    `__vitePreload(loader, deps, importerUrl)` 第三实参里有
+  //    `new URL("boot.js", document.baseURI).href`，而**实参照样求值**。
+  //    真机没有 `URL`（它是 BOM）⇒ `ReferenceError: URL is not defined`，启动即挂。
+  //
+  //    ⚠️ 为什么非得放在这里（构建期词法垫片），而不是只靠 `env/url.ts` 的 `safeAssign`：
+  //    微信开发者工具有一条**白名单沙箱**路径，`globalThis` 是作用域链之外的影子对象 ——
+  //    装上去的键裸标识符读不到（§9.3 那个坑，`Intl` / `navigator` / `document` 都栽过）。
+  //    实测证据：把 `URL` 加进 `verify-sandbox.cjs` 的裸标识符名单，白名单沙箱里当场
+  //    `URL=ReferenceError`。所以词法这条路径必须单独铺。
+  //
+  //    ⚠️ 写法与 ⑥ 同理：**懒转发**，不能把兜底挂到 globalThis 上（挂上去就自我递归）。
+  //    真实现住在 `src/minigame/env/url.ts`，由 `installUrl()` 在运行期装到 `globalThis`；
+  //    构造函数的 `return` 一个对象时 `new` 表达式得到的就是那个对象，所以转发成立。
+  //    静态方法（`createObjectURL` / `revokeObjectURL`）**不转发** —— 本项目的产物不会
+  //    调用它们，而真机上它们本来也不可用（`MiniUrl` 那两个方法就是显式抛错）。
+  'var URL = (typeof globalThis === "object" && globalThis && typeof globalThis.URL === "function") ? globalThis.URL : function (input, base) { return new globalThis.URL(input, base); };'
 ].join('\n');
 
 /**

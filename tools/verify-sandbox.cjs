@@ -368,7 +368,15 @@ function hostHasTeeth(host) {
     'performance',
     'requestAnimationFrame',
     'cancelAnimationFrame',
-    'MouseEvent'
+    'MouseEvent',
+    // `URL`（2026-09-24 加）—— 它和前七个的**装的时机不同**：前七个是构建期
+    // 词法垫片（`output.intro` 里的 `var X = …`），`URL` 是运行期 `env/url.ts`
+    // 用 `safeAssign` 装到 `globalThis` 上的。但**判据要问的是同一件事**：
+    // 「pixi 那条裸读路径通不通」。产物里它是裸 `new URL(...)`，而且真的会执行
+    // （`autoDetectRenderer` 调链上的 `__vitePreload` 第三实参）——
+    // 所以它必须在这份名单里，否则「白名单沙箱里裸标识符读不到」这个坑
+    // （见 docs/wechat-minigame.md §9.3）会在 `URL` 上原样重演一次。
+    'URL'
   ];
   const bad = !map
     ? must
@@ -377,7 +385,7 @@ function hostHasTeeth(host) {
         return v === 'undefined' || v === 'ReferenceError' || v == null;
       });
   check(
-    '白名单沙箱里七个词法垫片都真的接上了（在产物内部量的裸标识符视图）',
+    '白名单沙箱里八个词法垫片都真的接上了（在产物内部量的裸标识符视图）',
     !!(map && bad.length === 0),
     !map
       ? '拿不到 __motaEnvBare —— env.ts 的自查没跑起来'

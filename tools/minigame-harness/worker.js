@@ -47,6 +47,17 @@ for (const level of ['log', 'warn', 'error', 'info']) {
   };
 }
 function safeStr(v) {
+  // ⚠️ Error 走 JSON.stringify 会变成 `{}` —— 报错原因当场丢失。
+  //    「启动失败： {}」这种日志比没有日志更坏：它看起来像有信息。
+  //    这里显式取 name/message（鸭子类型判断，跨 realm 的 Error 也能认出来）。
+  if (v && typeof v === 'object') {
+    const e = v;
+    if (typeof e.message === 'string' && (typeof e.stack === 'string' || typeof e.name === 'string')) {
+      const head = `${e.name || 'Error'}: ${e.message}`;
+      const frames = typeof e.stack === 'string' ? e.stack.split('\n').slice(1, 4).join('\n') : '';
+      return frames ? `${head}\n${frames}` : head;
+    }
+  }
   try {
     return JSON.stringify(v);
   } catch {
@@ -191,7 +202,7 @@ addEventListener('unhandledrejection', (e) => fail(`[unhandledrejection] ${e.rea
     // 而 Pixi 恰好在**模块求值期**读它的裸标识符（esbuild 降级把
     // `typeof Intl?.Segmenter` 变成了 `Intl == null ? ...`）。
     // 不删掉它，这条路径就永远只有进了 IDE 才会暴露。
-    ['fetch', 'createImageBitmap', 'XMLHttpRequest', 'navigator', 'caches', 'WebGLRenderingContext', 'Intl'].forEach(kill);
+    ['fetch', 'createImageBitmap', 'XMLHttpRequest', 'navigator', 'caches', 'WebGLRenderingContext', 'Intl', 'URL', 'location'].forEach(kill);
     step(`已抹掉 Worker 有、小游戏没有的全局：${report.killed.join(', ')}`);
 
     // Pixi 里环境探测有两套写法，必须分开对待：
@@ -229,6 +240,26 @@ addEventListener('unhandledrejection', (e) => fail(`[unhandledrejection] ${e.rea
     report.intlGone = !('Intl' in g);
     if (!report.intlGone) {
       fail("Intl 仍在全局上（置成 undefined 也算）：裸标识符 ReferenceError 只在 Intl 不存在时复现，此判据已失效");
+      return;
+    }
+
+    // `URL` / `location` 同一条规矩（2026-09-24 加）。
+    //
+    // 真机小游戏没有这两个 —— 它们是 BOM。而 Worker 两个都有，浏览器也有，
+    // 于是「本地全绿」曾经什么都不说明：产物里的 `new URL(x, document.baseURI)`
+    // （Vite 给动态导入生成的 `__vitePreload` 第三实参，**实参照样求值**）
+    // 在真机上直接 `ReferenceError: URL is not defined`，启动即失败。
+    //
+    // 判据取「能不能用」而不是「在不在于原型链上」：`URL` 在 Worker 里挂在
+    // WorkerGlobalScope 原型上，`'URL' in g` 删完仍可能为真。真正要保证的是
+    // **产物那侧拿不到可用的宿主实现** —— 所以量的是值。
+    report.urlGone = g.URL === undefined;
+    report.locationGone = g.location === undefined;
+    if (!report.urlGone || !report.locationGone) {
+      fail(
+        `URL / location 没能从宿主上抹掉（typeof URL=${typeof g.URL}，typeof location=${typeof g.location}）：` +
+          '小游戏没有这两个全局，抹不掉就等于这条路径没被测到 —— 假绿比不测更糟'
+      );
       return;
     }
 
@@ -664,6 +695,19 @@ addEventListener('unhandledrejection', (e) => fail(`[unhandledrejection] ${e.rea
     // 这一条与 `intlGone` 配对成证据链：删除前有 → 删干净 → 垫片补上 →
     // 于是「无异常 + 启动成功」是真实结论，而不是「宿主本来就有 Intl」的假绿。
     report.intlAfterBoot = typeof Intl !== 'undefined';
+    // `URL` 与 `Intl` 配对，但**必须带行为**：只看「存不存在」分不清「宿主本来就有的」
+    // 与「我们的垫片补上的」—— 而后者才是要证明的事。
+    // 探针串故意带一段 `..`：一次同时验到 merge、remove_dot_segments、recompose 三段，
+    // 比只拼一条路径严格得多（自检在 url.ts 里跑的是同一个用例）。
+    // 用属性路径 `g.URL` 而非裸标识符：这一处要读的是**产物装在 globalThis 上的那份**。
+    report.urlAfterBoot = typeof g.URL !== 'undefined';
+    report.urlProbe = (() => {
+      try {
+        return new g.URL('a/../b.png', 'wxgame://code-package/dir/').href;
+      } catch (err) {
+        return `ERR: ${err && err.message}`;
+      }
+    })();
     // 禁令有没有在启动过程中被换掉 —— 若产物（或某个依赖）自己给 globalThis.Function
     // 赋了新值，那「启动成功」就可能是靠把 eval 要回来换取的，判据必须跟着失效。
     report.evalStillBannedAfterBoot = !!(ban && ban.armed());

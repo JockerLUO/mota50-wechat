@@ -32,9 +32,10 @@
  *   ├── events.ts      三份事件总线 + hookEventTarget
  *   ├── mouse-event.ts MouseEvent 替身（读 displayElement）
  *   ├── navigator.ts   Intl / navigator 补齐       ← assign, system
+ *   ├── url.ts         URL 替身（RFC 3986 解析）   ← assign
  *   ├── canvas.ts      GL 补丁 + 离屏/上屏画布     ← assign, events
  *   ├── document.ts    document 替身               ← assign, canvas, events
- *   ├── globals.ts     installGlobals 装配顺序     ← assign, events, mouse-event, navigator, document
+ *   ├── globals.ts     installGlobals 装配顺序     ← assign, events, mouse-event, navigator, url, document
  *   ├── touch.ts       wx.onTouch* → 总线          ← assign, events, mouse-event
  *   ├── display.ts     上屏画布预订                ← canvas, system
  *   └── bare.ts        裸标识符自查                ← （只读 g）
@@ -73,7 +74,7 @@ export { reserveDisplayCanvas, getReservedCanvas } from './display';
 // 上屏画布也已经被人拿走了。
 //
 // 顺序本身也是有语义的，四项各管一段，详见各自文件头：
-//   installGlobals        —— 全局垫片（Intl / navigator / document / MouseEvent / rAF）
+//   installGlobals        —— 全局垫片（URL / Intl / navigator / document / MouseEvent / rAF）
 //   installTouchBridge    —— wx.onTouch* → 三份总线（必须有 wx，没有则内部直接返回）
 //   reserveDisplayCanvas  —— **抢下** wx.createCanvas() 的第一次调用
 //   reportBareReachability—— 量一遍裸标识符，挂 __motaEnvBare 给探针

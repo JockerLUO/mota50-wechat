@@ -47,6 +47,7 @@ src/minigame/
     events.ts       三份事件总线 + hookEventTarget
     mouse-event.ts  MiniMouseEvent
     navigator.ts    Intl / navigator 补齐
+    url.ts          URL 替身（RFC 3986 相对解析自实现，见 §9.15）
     canvas.ts       getContext 补丁 + 离屏 / 上屏画布
     document.ts     document 替身
     globals.ts      installGlobals 的装配顺序 + assertInstalled
@@ -389,10 +390,11 @@ touchstart 时**先**补一个 `mousemove`：网页上指针本来就会先移�
 ## 6. 验证：两种宿主，两套判据
 
 ```bash
-npm run verify:minigame   # 无 DOM 宿主（Web Worker），32 项常驻判据
-                          #   （取证构建 build:minigame:beacon 下另加 6 项 = 38）
-npm run verify:dom        # 有原生 DOM 宿主（IDE 模拟器同类），19 项判据
-npm run verify:all        # 以上两者 + verify:sandbox + verify:visual，共 87 条
+npm run verify:minigame   # 无 DOM 宿主（Web Worker），34 项常驻判据
+                          #   （取证构建 build:minigame:beacon 下另加 6 项 = 40）
+npm run verify:dom        # 有原生 DOM 宿主（IDE 模拟器同类），21 项判据
+npm run verify:url-shim   # URL 垫片 vs 原生对拍，2 条 —— 唯一直接测源码模块的一套
+npm run verify:all        # 以上三者 + verify:sandbox + verify:visual，共 93 条
 ```
 
 **小游戏产物要跑在两类差异极大的宿主上，两类路径都必须测。**
@@ -446,6 +448,8 @@ TypeError: Cannot destructure property 'userAgent' of
 ✅ appid 没被写成小程序游客号
 ✅ game.js / boot.js 语法都不高于 es2015（云端检查器的地板）  ← 逐文件查，§7
 ✅ 宿主本来有 Intl 且已真删（证明「无异常」不是假绿）  ✅ Intl 缺失时由垫片补上
+✅ 宿主已抹掉小游戏没有的 BOM 全局（URL / location）  ← 2026-09-24 新增，§9.15
+✅ URL 缺失时由垫片补上，且相对解析结果正确（行为判据）
 ✅ 宿主已禁 unsafe-eval（new Function 抛 EvalError）  ✅ 启动后禁令仍有效 / Function 未被替换
 ✅ 禁的是 eval 而非 Function 本身（真实构造器仍完好）  ← §9.8
 ──── 拆包与数据（2026-09-23 新增，见 §7）────
@@ -595,7 +599,7 @@ module →（env + pixi）→ shim →（host / probe / app 模块）→ hostMod
 ```
 dist-minigame/
   game.js               入口（229 KB）—— 全部业务代码，**能直接读**
-  boot.js               启动层 + 第三方库（1 589 KB）：词法垫片 + env 适配 + pixi.js
+  boot.js               启动层 + 第三方库（1 597 KB）：词法垫片 + env 适配 + pixi.js
   data/*.json           运行时数据 58 个（177 KB）：7 张顶层表 + 51 层地图（每层一个文件）
   game.json             小游戏配置
   project.config.json   开发者工具配置
@@ -1124,8 +1128,12 @@ pixi 默认适配器写的是 `getNavigator: () => navigator`（裸标识符）�
 
 intro 的职责只有一条：**让裸标识符有个落脚点**，并且（对需要行为的那些）
 **选或造出那个落脚对象**，行为仍由 `env/` 在同一个对象上补（`Object.assign` 就地补字段）。
-当前七个：`Intl`、`navigator`、`document`、`performance`、
-`requestAnimationFrame` / `cancelAnimationFrame`、`MouseEvent`。
+当前八个：`Intl`、`navigator`、`document`、`performance`、
+`requestAnimationFrame` / `cancelAnimationFrame`、`MouseEvent`、`URL`。
+
+后两个（⑥ `MouseEvent`、⑦ `URL`）是**懒转发**，形态与前面几个不同：
+真替身住在 `env/` 里、由运行期装到 `globalThis`，intro 只负责让裸标识符
+**在调用那一刻**能取到它（不能把兜底挂到 `globalThis` 上 —— 那就自我递归了，见 §9.15）。
 
 `document` / 事件那一套**不能**只靠 intro 的原因不是「不需要行为」，而是时机与复杂度：
 
@@ -1309,7 +1317,7 @@ intro 选对象的判据改成了「`createElement` 是不是函数」（**可�
 > 不一致就是这个坑；`ReferenceError` 而属性有值，就是它的指纹。
 
 回归判据（`verify:sandbox`，白名单沙箱模型）：把「属性路径有值、裸读死掉」**显式复现一次**
-（否则后面那些判据凭什么算数），再断言产物内部量出来的七个垫片全部可用。
+（否则后面那些判据凭什么算数），再断言产物内部量出来的八个垫片全部可用。
 另外把完整的裸标识符清单打印出来 —— 它一次性回答「这个宿主还有哪些全局是死的」。
 
 ---
@@ -1581,20 +1589,131 @@ dsf=3 的页面**再验一遍，期望值必须是 3。
 
 ---
 
+### 9.15 第十二个错：**「真机启动即失败：`URL is not defined`」** ★同一行代码，两次不同的病因
+
+**症状**：拆包（单文件 `game.js` → `game.js` + `boot.js`）之后，产物在开发者工具 / 真机上
+**启动即挂**，`ReferenceError: URL is not defined`。本地四套判据**全绿**。
+
+**根因**：拆包之后 Vite 会给每个 `await import()` 生成一个预载包装：
+
+```js
+__vitePreload(loader, deps, importerUrl)
+```
+
+第三实参是 Vite 在**构建期**拼出来的一段「这个 chunk 的绝对地址」表达式：
+
+```js
+typeof document === "undefined"
+  ? require("url").pathToFileURL(__filename).href                    // ← Node 分支
+  : _documentCurrentScript && … && _documentCurrentScript.src
+    || new URL("boot.js", document.baseURI).href                      // ← 浏览器分支
+```
+
+三个事实叠在一起就炸了：
+
+1. 它是**实参**，不是函数体 —— **实参照样求值**，哪怕 `__vitePreload` 内部根本没用到它
+   （这份产物里 `deps` 恒为 `void 0`，消费 `importerUrl` 的分支已在 `if (false) {}` 里被消除）。
+2. 真机上 `document` **是存在的**（我们自己垫的），所以走**右支**，也就是 `new URL(...)`。
+3. 真机**没有 `URL`** —— 它是 BOM，小游戏的宿主是 JavaScriptCore / V8 + 一层 `wx` API。
+
+而这段代码在 `autoDetectRenderer` → `getWebGLRenderer()` 的调用链上，是**启动必经之路**。
+
+**⚠️ 为什么四套判据都测不出来 —— 这次的假绿是「两个宿主恰好都有」**
+
+| 宿主 | 有 `URL` 吗 |
+|---|---|
+| Web Worker（`verify:minigame`） | **有**（`WorkerGlobalScope` 自带标准实现） |
+| 真 Chromium（`verify:dom`） | **有** |
+| 真机小游戏 | **没有** ← 只有这一侧会炸 |
+
+⚠️ 单文件 iife 时代 `inlineDynamicImports` 把动态导入全量内联，**这段实参压根不存在** ——
+所以这个问题**是拆包带来的**，不是一直有的。这也解释了为什么「上一轮拆完包、
+本地全绿、看起来没问题」。
+
+**与 §9.12 / 铁律 #28 的关系：同一行代码，两次不同的病因。**
+
+| | 病因 | 报错 |
+|---|---|---|
+| 第一次（单文件 → 拆包当天） | `document` 替身**没有 `baseURI`** | `TypeError: Failed to construct 'URL': Invalid URL` |
+| 这一次 | **`URL` 构造器根本不存在** | `ReferenceError: URL is not defined` |
+
+⇒ **修完一个不等于修了另一个。修完一处要接着问「这条路还依赖什么」。**
+（当时补 `baseURI` 时，判据给出的红是「`Invalid URL`」—— 那是在说「参数不对」，
+它不可能告诉你「构造器不存在」。）
+
+**修法**：
+
+1. `src/minigame/env/url.ts` —— **自实现** RFC 3986 的相对引用解析
+   （`merge` + `remove_dot_segments` + `recompose` + authority 三段拆解）。
+   宿主有原生就**让路**；没有就补上，并**当场自检**（跑一条带 `..` 的用例，算错就抛）。
+   未实现的成员（`searchParams` / `createObjectURL`）**显式报错**，不静默给错值。
+2. **⚠️ 还得在构建期词法垫片里铺一条 `var URL`（懒转发）—— 只做第 1 条，
+   在开发者工具那条路径上等于没修。**
+
+   沙箱里的 `globalThis` 是**作用域链之外的影子对象**，`safeAssign` 装上去的键
+   **裸标识符读不到**（§9.3 那个坑，`Intl` / `navigator` / `document` 都栽过）。
+   这次有实测证据：把 `URL` 加进 `verify-sandbox.cjs` 的裸标识符名单，白名单沙箱里
+   当场给出 `URL=ReferenceError` —— 也就是**第一版修复在这条路径上完全无效**，
+   而那条路径恰恰是用户在开发者工具里跑游戏时走的。
+
+   写法与 `MouseEvent` 那一项同理（`vite.minigame.config.ts` 的 PRELUDE ⑥）：
+   **懒转发**，不能把兜底挂到 `globalThis` 上 —— 挂上去就自我递归。
+   真实现仍只有一份（`env/url.ts`），转发器在调用那一刻才去取 `globalThis.URL`。
+
+   ⇒ `verify-sandbox` 的裸标识符判据由「七个词法垫片」改成「八个」。
+   ⇒ **纪律**：这个项目里每加一个「运行期装到 `globalThis` 的全局」，都要同时问
+   「白名单沙箱里它的**裸路径**通不通」。**两份名单必须一起改** ——
+   PRELUDE 里那个数组，与 `verify-sandbox.cjs` 的 `must` 数组。
+   漏一边的后果不对称：漏改 `must` ⇒ 新成员没人守（白绿）；
+   漏改 PRELUDE ⇒ 判据立刻红（真问题）。所以**先加 `must`、再让判据说话**。
+3. 把 `URL` / `location` 加进宿主的**抹除清单**，让这条路径本地每次都被走到。
+   （`location` 同源：pixi 的 `determineCrossOrigin` 读 `globalThis.location`。
+   Worker 里删得掉；**真 Chromium 里它是 `[LegacyUnforgeable]`，删不掉也遮不住** ——
+   如实打印覆盖边界，不要假装测过。）
+4. `safeStr` 一类日志序列化**必须单独认 Error** —— `JSON.stringify(err)` 得到 `{}`，
+   报出来是「启动失败： {}」。**判据红了却读不出原因 = 白白多一轮来回。**
+
+**⚠️ 自实现解析器必须对拍 —— 「能跑」不等于「算得对」。**
+
+另外四套验的都是「**装上了、能跑**」，它们**证明不了算得对**：一个把 `a/../b` 解成
+`a/b` 的垫片照样能让游戏跑起来，只是资源路径会歪、或跨域判定走错分支，
+然后表现为某种莫名其妙的画面问题（正是本项目最怕的静默降级）。
+
+所以新增 `npm run verify:url-shim` —— 留住原生引用 → 删掉全局 → 装垫片 →
+同一批用例喂两边比 9 个字段。**唯一直接测源码模块的一套**（不加载产物）。
+它上线第一次运行就抓到两处偏差：
+
+| 用例 | 原生 | 垫片（修前） | 病根 |
+|---|---|---|---|
+| `new URL('//g', 'http://a/b/c/d;p?q')` | `http://g/` | `http://g` | special scheme 的空 path 要补 `/` |
+| `new URL('file:///tmp/a/b')` | origin `"null"` | origin `file://` | `file:` 的 origin 是**不透明**的 |
+
+修法：`normalize()` 放在**解析出口**（`href` / `pathname` / `toString()` 三个出口
+因此天然一致，不用各补一遍）；`origin` 单独处理 `file:`。修后 25 个用例 × 9 个字段全一致。
+
+**新增判据**：`verify:minigame` +2（宿主已抹掉 `URL`/`location`；垫片补上且
+**相对解析结果正确** —— 行为判据，不只看「存不存在」）、`verify:dom` +2（同上）、
+`verify:url-shim` 2 条。
+
+---
+
 ## 10. 复现命令
 
 ```bash
 npm run build:minigame    # 构建产物（含 tsc --noEmit）；产物 = game.js + boot.js + data/*.json
-npm run verify:sandbox    # 干净 V8（node:vm）宿主实测，14 条判据（含裸标识符视图 ×7、拆包边界 ×4）
+npm run verify:sandbox    # 干净 V8（node:vm）宿主实测，14 条判据（含裸标识符视图 ×8、拆包边界 ×4）
 npm run verify:visual     # 渲染层回归，22 条判据（A1–A20，含版面/位面/道具栏/手绘怪物、
                           #   脚下无标记 / 浏览出口 / 攻击动画 / 对话折行 / 上下楼梯 /
                           #   像素密度 / 文字分辨率 / 手绘墙 / 待机呼吸）
-npm run verify:minigame   # 无 DOM 环境实测，32 条常驻判据（含禁 unsafe-eval ×3、图集逐字节一致、
-                          #   包结构 ×6、语法地板 ×2、触摸端到端）
-                          #   取证构建（build:minigame:beacon）下另加 6 条 = 38
-npm run verify:dom        # 有原生 DOM 宿主实测，19 条判据（含触摸端到端 ×4、图集 ×1）
+npm run verify:minigame   # 无 DOM 环境实测，34 条常驻判据（含禁 unsafe-eval ×3、图集逐字节一致、
+                          #   包结构 ×6、语法地板 ×2、宿主缺失全局 URL/location ×2、触摸端到端）
+                          #   取证构建（build:minigame:beacon）下另加 6 条 = 40
+npm run verify:dom        # 有原生 DOM 宿主实测，21 条判据（含触摸端到端 ×4、图集 ×1、
+                          #   宿主缺 URL ×2）
                           #   注：驱动 UI 的点击必须模拟真实节奏，见 §9.13
-npm run verify:all        # 以上四套，共 87 条判据（14 + 22 + 32 + 19）
+npm run verify:url-shim   # URL 垫片 vs 原生 URL 对拍，2 条判据（25 用例 × 9 字段）
+                          #   唯一**直接测源码模块**的一套（不加载产物），见 §9.14
+npm run verify:all        # 以上五套，共 93 条判据（14 + 22 + 34 + 21 + 2）
 ```
 
 另有两个不在四套之列的取证工具 —— 它们读的都是**工具自己落盘的状态**，

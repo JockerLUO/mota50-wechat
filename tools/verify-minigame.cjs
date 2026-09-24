@@ -308,6 +308,41 @@ const server = http.createServer((req, res) => {
     `启动后 typeof Intl = ${report.intlAfterBoot ? 'object（垫片）' : 'undefined'}`
   );
 
+  // ── 宿主缺失的全局：`URL` / `location`（同一类假绿的第二例）─────────────
+  //
+  // 这是 2026-09-24「小游戏里启动即失败」的对症判据。成因与 Intl 同一个形状，
+  // 但**更难发现**，因为两个本地宿主恰好都有 `URL`：
+  //
+  //   Web Worker（本页） 有 `URL` —— `WorkerGlobalScope` 自带标准实现
+  //   真 Chromium（verify:dom）有 `URL`
+  //   真机小游戏         **没有**（它是 BOM）  ← 只有这一侧会炸
+  //
+  // 炸点是拆包之后才出现的：Vite 给每个 `await import()` 生成
+  // `__vitePreload(loader, deps, importerUrl)`，第三实参在**实参位置**求值
+  // （哪怕函数体里根本用不到它），形态是 `new URL("boot.js", document.baseURI).href`。
+  // 它位于 `autoDetectRenderer` 的调用链上 —— 启动必经之路。
+  // 单文件 iife 时代 `inlineDynamicImports` 把动态导入全内联，这段实参压根不存在，
+  // 所以这个问题是**拆包带来的**，不是一直有的。
+  //
+  // 于是本页现在与真机对齐：抹掉 `URL` 与 `location`。这两条判据的作用是
+  // **让抹除本身可被检查** —— 有人把 `URL` 从抹除列表里删掉时（假绿回归），
+  // 第一条会红；垫片被改坏时，第二条会红。
+  add(
+    '宿主已抹掉小游戏没有的 BOM 全局（URL / location）',
+    report.urlGone === true && report.locationGone === true,
+    `装载前 typeof URL / location = ${report.urlGone ? 'undefined' : '(仍在)'} / ${report.locationGone ? 'undefined' : '(仍在)'}` +
+      (report.urlGone && report.locationGone ? '' : ' —— 抹不掉就等于这条路径没被测到，假绿比不测更糟')
+  );
+  // 与上一条配对：抹掉之后**必须由垫片补上，而且算得对**。
+  // 只看「存不存在」不够 —— 宿主本来就有的实现同样「存在」，那正是要排除的假绿。
+  // 探针串带 `..`：一次验到 merge / remove_dot_segments / recompose 三段。
+  add(
+    'URL 缺失时由垫片补上，且相对解析结果正确',
+    report.urlAfterBoot === true && report.urlProbe === 'wxgame://code-package/dir/b.png',
+    `启动后 new URL('a/../b.png', 'wxgame://code-package/dir/') = ${report.urlProbe}` +
+      (report.urlAfterBoot ? '' : '（垫片没装上）')
+  );
+
   // ── 禁用 unsafe-eval：`pixi.js/unsafe-eval` 有没有真的接管 ──────────────
   //
   // 这一组是 2026-09-21 IDE 第四轮报错的对症判据。当时 pad 好 Intl/navigator 之后
