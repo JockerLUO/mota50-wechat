@@ -63,6 +63,11 @@
  */
 
 import { defineConfig, type Plugin } from 'vite';
+// 词法垫片的名单 —— 单一来源。写成 `.json` 是因为它有**两种模块系统的消费者**：
+// TS 侧（本文件、`bare.ts` 的约定）与 Node CJS 侧（三个 `tools/*.cjs`，直接 `require`）。
+// `.json` 两边都原生支持，不必为它引入 `require(esm)` 这类版本假设。
+// 为什么需要单一来源，见本文件里那条构建期断言的注释。
+import lexicalShims from './src/minigame/env/lexical-shims.json';
 
 /**
  * 小游戏端的数据源实现（运行期读代码包内文件）。
@@ -279,6 +284,55 @@ const PRELUDE = [
   //    调用它们，而真机上它们本来也不可用（`MiniUrl` 那两个方法就是显式抛错）。
   'var URL = (typeof globalThis === "object" && globalThis && typeof globalThis.URL === "function") ? globalThis.URL : function (input, base) { return new globalThis.URL(input, base); };'
 ].join('\n');
+
+/**
+ * 构建期断言：`PRELUDE` 里的 `var X = …` 与 `lexical-shims.json` 的 `names` **必须一一对应**。
+ *
+ * ## 为什么这条断言值得单独存在
+ *
+ * 这份名单以前在四处各写一份（PRELUDE / verify-sandbox / verify-minigame /
+ * read-ide-storage），四处的注释都写着「必须一一对应」—— **但没有一处是机器检查的**。
+ * 2026-09-24 给 PRELUDE 加第 ⑧ 条 `var URL` 时的实测后果：
+ *
+ *   - `verify-sandbox` 红了（加它的动因就是它先红），被顺手补上；
+ *   - `verify-minigame` **没红** —— 它那份名单里根本没写 `URL`，问不到就不报错；
+ *   - `read-ide-storage` 同样没红。
+ *
+ * 也就是说，漏掉的名字**不会变红，只会变成一片安静的绿**。这正是本项目反复吃的那类亏
+ * （「问不到」与「通过了」长得一样），所以这里把它变成一句会在 `vite build` 当场抛的断言。
+ * 现在名单只有一个来源（`src/minigame/env/lexical-shims.json`），这条断言负责堵住
+ * 「`PRELUDE` 与名单脱节」这个唯一还能出错的接口。
+ *
+ * 两个方向都查：
+ *   - PRELUDE 里有、名单里没有 → 判据漏查了这一项（上面那种静默绿）；
+ *   - 名单里有、PRELUDE 里没有 → 名单是旧的，判据在问一个不存在的垫片（恒红或恒绿）。
+ *
+ * 一次把**所有**差异报全（不是遇到第一个就抛）：一次只报一个的话，要改三轮才对齐。
+ */
+{
+  // 用 `[ \t]` 而不是 `\s`：`\s` 会跨行，可能把上一行末尾与下一行开头凑成一个假匹配。
+  const inPrelude = new Set(
+    [...PRELUDE.matchAll(/^[ \t]*var[ \t]+([A-Za-z_$][\w$]*)[ \t]*=/gm)].map((m) => m[1])
+  );
+  const inList = new Set(lexicalShims.names);
+
+  const missingFromList = [...inPrelude].filter((n) => !inList.has(n));
+  const missingFromPrelude = [...inList].filter((n) => !inPrelude.has(n));
+
+  if (missingFromList.length || missingFromPrelude.length) {
+    throw new Error(
+      '[minigame] PRELUDE 与 src/minigame/env/lexical-shims.json 的 names 不一致：\n' +
+        (missingFromList.length
+          ? `  PRELUDE 里有、名单里没有：${missingFromList.join(', ')}\n` +
+            `  → 判据不会查它们，漏了也**不会红**（静默绿）。请把它们加进 lexical-shims.json。\n`
+          : '') +
+        (missingFromPrelude.length
+          ? `  名单里有、PRELUDE 里没有：${missingFromPrelude.join(', ')}\n` +
+            `  → 判据在问一个不存在的垫片。请补进 PRELUDE，或从 lexical-shims.json 删掉。\n`
+          : '')
+    );
+  }
+}
 
 /**
  * 把 `assets/atlas/*.png` 的 import 换成包内相对路径字面量。

@@ -29,6 +29,18 @@
  * 判读方式：把结果与探针 `module` 阶段那栏 `env`（**属性路径** `typeof g.X`）对照。
  * **两者不一致 = 这个宿主的两条路径分叉**，那就照 `Intl` / `navigator` / `document`
  * 的做法补一个词法垫片（见 `vite.minigame.config.ts` 的 `PRELUDE`）。
+ *
+ * ## 分两段是有语义的，而且**有一个隐式契约**
+ *
+ *   - 上半段 = 名单里的名字（`src/minigame/env/lexical-shims.json`，与 `PRELUDE` 一一对应），
+ *     判据要问的是「垫片有没有真的接上裸路径」→ **必须可用**；
+ *   - 下半段 = 没垫过的，判据只是**列出来**，不要求可用。
+ *
+ * ⚠️ **名单里出现的每个名字，这里都必须有一项。** 漏一项不会报错，但探针里就没有这个键，
+ * 判据侧读到的 `bareMap[k]` 是 `undefined` → **会红**。这条链是刻意留的：
+ * 名单与判据都在别的文件里，只有让「漏掉」表现为红色，它才不会被当成「不用查」。
+ * （2026-09-24 的教训正是反面：`URL` 只加进了 `PRELUDE`，判据那两份名单里没有它，
+ * 于是**两个套件都安静地绿着**。）
  */
 import { g } from './state';
 
@@ -43,15 +55,19 @@ export function reportBareReachability(): void {
   };
 
   const out: Record<string, string> = {
-    // ── 已垫过词法垫片的三个：这里量的是「垫片有没有真的接上」──
+    // ── 已垫过词法垫片的八个：这里量的是「垫片有没有真的接上」──
     Intl: read(() => Intl),
     navigator: read(() => navigator),
     document: read(() => document),
-    // ── 其余：量的是「宿主的作用域链给不给」，用来**一次列出全部缺口** ──
     performance: read(() => performance),
     requestAnimationFrame: read(() => requestAnimationFrame),
     cancelAnimationFrame: read(() => cancelAnimationFrame),
     MouseEvent: read(() => MouseEvent),
+    // `URL`（2026-09-24 加）—— 与上面七个的**装的时机不同**：上面七个是 intro 里直接赋值，
+    // 它是 intro 里的**懒转发**（真实现由 `env/url.ts` 在运行期装到 `globalThis`）。
+    // 但判据要问的是同一件事 ——「pixi 那条裸读路径通不通」—— 所以它在这半段里。
+    URL: read(() => URL),
+    // ── 其余：量的是「宿主的作用域链给不给」，用来**一次列出全部缺口** ──
     TouchEvent: read(() => TouchEvent),
     addEventListener: read(() => addEventListener),
     removeEventListener: read(() => removeEventListener),
@@ -71,7 +87,6 @@ export function reportBareReachability(): void {
     queueMicrotask: read(() => queueMicrotask),
     TextDecoder: read(() => TextDecoder),
     TextEncoder: read(() => TextEncoder),
-    URL: read(() => URL),
     ResizeObserver: read(() => ResizeObserver),
     AbortController: read(() => AbortController),
     OffscreenCanvas: read(() => OffscreenCanvas),

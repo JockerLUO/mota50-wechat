@@ -27,6 +27,11 @@ const { createHash } = require('node:crypto');
 const { pathToFileURL } = require('node:url');
 const { chromium, findChromium } = require('./lib/chromium.cjs');
 const { inlineAsJs, collectJsSources, collectDataFiles } = require('./lib/package-tables.cjs');
+// 词法垫片名单（构建期 `PRELUDE` 覆盖的全局）—— **单一来源**，由 `vite.minigame.config.ts`
+// 的构建期断言与 `PRELUDE` 对齐。写成 `.json` 就是为了这里能同步 `require`：ESM 在
+// `.cjs` 里只能动态 import，而「判据名单」不该依赖某个 await 时机。
+// 之前它在这里是写死的一份拷贝，加 `URL` 时**没红** —— 见使用点的注释。
+const { names: lexicalShimNames } = require('../src/minigame/env/lexical-shims.json');
 
 const ROOT = path.resolve(__dirname, '..');
 const DIST = path.join(ROOT, 'dist-minigame');
@@ -794,12 +799,21 @@ const server = http.createServer((req, res) => {
     const shimRec = Array.isArray(timeline) ? timeline.find((r) => r.stage === 'shim') : null;
     const bareMap = shimRec && shimRec.data ? shimRec.data.bare : null;
     if (bareMap) {
-      const must = ['Intl', 'navigator', 'document', 'performance', 'requestAnimationFrame', 'MouseEvent'];
+      // 名单**不在这里另抄一份**：从 `src/minigame/env/lexical-shims.json` 现读。
+      // 它是单一来源，`PRELUDE`（构建期断言）、`bare.ts` 的读取项、以及三个 tools 全按它办事。
+      //
+      // ⚠️ 为什么值得多读一个文件：这个数组原先在这里是写死的 **6 项**，而 PRELUDE
+      //    2026-09-24 加第 ⑧ 条 `var URL` 之后，**它没红** —— 名单里没写 `URL`，
+      //    于是「问不到」被当成了「通过」。漏掉的名字不会变红，只会变成一片安静的绿。
+      //    （同一次改动里 `verify-sandbox` 是红的、`read-ide-storage` 也没红。）
+      const must = lexicalShimNames;
       const broke = must.filter((k) => bareMap[k] === 'undefined' || bareMap[k] === 'ReferenceError');
       add(
         '取证：已垫词法垫片的全局在裸路径上都可用（本宿主）',
         broke.length === 0,
-        broke.length ? broke.map((k) => `${k}=${bareMap[k]}`).join(' ') : must.map((k) => `${k}=${bareMap[k]}`).join(' ')
+        broke.length
+          ? broke.map((k) => `${k}=${bareMap[k]}`).join(' ')
+          : must.map((k) => `${k}=${bareMap[k]}`).join(' ')
       );
       const dead = Object.entries(bareMap).filter(([, v]) => v === 'ReferenceError');
       console.log(

@@ -358,26 +358,15 @@ function hostHasTeeth(host) {
   host.prepare();
   loadEntry(host);
   const map = host.evalIn('__scope.globalThis.__motaEnvBare');
-  // 这份名单与 `vite.minigame.config.ts` 的 `PRELUDE` **必须一一对应**：
-  // 每一个都是「pixi 会裸读、且那条裸读真的会执行」的全局，各自对应一次真实的
-  // `xxx is not defined` 黑屏（见 `docs/wechat-minigame.md` §9）。
-  const must = [
-    'Intl',
-    'navigator',
-    'document',
-    'performance',
-    'requestAnimationFrame',
-    'cancelAnimationFrame',
-    'MouseEvent',
-    // `URL`（2026-09-24 加）—— 它和前七个的**装的时机不同**：前七个是构建期
-    // 词法垫片（`output.intro` 里的 `var X = …`），`URL` 是运行期 `env/url.ts`
-    // 用 `safeAssign` 装到 `globalThis` 上的。但**判据要问的是同一件事**：
-    // 「pixi 那条裸读路径通不通」。产物里它是裸 `new URL(...)`，而且真的会执行
-    // （`autoDetectRenderer` 调链上的 `__vitePreload` 第三实参）——
-    // 所以它必须在这份名单里，否则「白名单沙箱里裸标识符读不到」这个坑
-    // （见 docs/wechat-minigame.md §9.3）会在 `URL` 上原样重演一次。
-    'URL'
-  ];
+  // 这份名单**不在这里另抄一份**：从 `src/minigame/env/lexical-shims.json` 现读。
+  // 它是单一来源，`PRELUDE`（构建期断言）、`bare.ts` 的读取项、以及三个 tools 全按它办事。
+  //
+  // ⚠️ 为什么值得多读一次文件：这里原先写死 8 项，而且**恰好是对的** —— 因为 2026-09-24
+  //    加 `URL` 的动因就是这一套先红了。但同一次改动里 `verify-minigame` 与
+  //    `read-ide-storage` 那两份拷贝都没红（名单里没写 `URL`，问不到就不报错）。
+  //    ⇒ 漏掉的名字不会变红，只会变成一片安静的绿。名单收敛成一份、并由构建期断言
+  //    与 `PRELUDE` 对齐，才是那个洞的正解。
+  const must = require('../src/minigame/env/lexical-shims.json').names;
   const bad = !map
     ? must
     : must.filter((k) => {
@@ -385,7 +374,7 @@ function hostHasTeeth(host) {
         return v === 'undefined' || v === 'ReferenceError' || v == null;
       });
   check(
-    '白名单沙箱里八个词法垫片都真的接上了（在产物内部量的裸标识符视图）',
+    `白名单沙箱里${must.length}个词法垫片都真的接上了（在产物内部量的裸标识符视图）`,
     !!(map && bad.length === 0),
     !map
       ? '拿不到 __motaEnvBare —— env.ts 的自查没跑起来'

@@ -1,0 +1,22 @@
+{
+  "__doc": [
+    "构建期词法垫片（vite.minigame.config.ts 的 PRELUDE）覆盖的全局名单 —— 单一来源。",
+    "消费者：vite.minigame.config.ts（构建期断言与 PRELUDE 一一对应）、",
+    "tools/verify-sandbox.cjs、tools/verify-minigame.cjs、tools/read-ide-storage.cjs。",
+    "另有一条由判据侧兜住的隐式契约：每个名字都必须是 src/minigame/env/bare.ts 的 READERS 里的键",
+    "（否则探针读不到它，verify 侧会以 bareMap[k] === undefined 报红）。",
+    "为什么是 .json：CJS 可以 require、TS 可以静态 import，两边都没有互操作假设。",
+    "为什么需要它：2026-09-24 给 PRELUDE 加第 8 条 var URL 时，四处拷贝里有两处没红 ——",
+    "名单里没写 URL，问不到就不报错，于是漏掉的名字变成了一片安静的绿。"
+  ],
+  "names": [
+    "Intl",
+    "navigator",
+    "document",
+    "performance",
+    "requestAnimationFrame",
+    "cancelAnimationFrame",
+    "MouseEvent",
+    "URL"
+  ]
+}

@@ -54,6 +54,7 @@ src/minigame/
     touch.ts        wx.onTouch* → 总线
     display.ts      上屏画布预订
     bare.ts         裸标识符可达性自查（**必须裸读**，见 §11）
+    lexical-shims.json  构建期词法垫片的名单 —— **跨语言单一来源**（见 §9.7）
     index.ts        门面 + 副作用（安装顺序即依赖顺序）
   pixi-adapter.ts 替换 DOMAdapter 为小游戏实现（第一个 import pixi 的模块）
   probe.ts        WebGL2 能力探针（真编译一段 #version 300 es 着色器）
@@ -1180,6 +1181,40 @@ intro 的职责只有一条：**让裸标识符有个落脚点**，并且（对�
 换句话说：**intro 是「让裸标识符有个落脚点」的兜底，不是垫片的替代品。**
 真机路径仍然完全由 `env/` 承担；intro 存在的唯一理由是那些
 `globalThis` 与作用域链分叉的宿主。
+
+#### 这份名单**只有一个来源**，而且有构建期断言
+
+上表那八个名字，以前在**四处**各写一份：`PRELUDE` 自己、`verify-sandbox.cjs`、
+`verify-minigame.cjs`（取证探针那条判据）、`read-ide-storage.cjs`（读 IDE 落盘的取证 JSON）。
+四处的注释都写着「必须与 `PRELUDE` 一一对应」——**但没有一处是机器检查的**。
+
+2026-09-24 给 `PRELUDE` 加第 ⑧ 条 `var URL` 时，实测后果是：
+
+| 那份拷贝 | 结果 |
+|---|---|
+| `verify-sandbox.cjs` | **红了** —— 加 `URL` 的动因就是它先红（白名单沙箱里裸 `URL` 当场 `ReferenceError`），于是被顺手补上 |
+| `verify-minigame.cjs` | **没红** —— 它那份名单里写的是 6 项，**根本没有 `URL`**，问不到就不报错 |
+| `read-ide-storage.cjs` | **没红**，同理（写的是 7 项，也没有 `URL`） |
+
+⇒ 漏掉的名字**不会变红，只会变成一片安静的绿**。「问不到」与「通过了」长得一样 ——
+这是本项目反复吃的那一类亏（同 §11「反向断言必须带探针」是同一种病）。
+
+**收敛后的形态（三条，缺一不可）：**
+
+1. 名单住在一个文件里：`src/minigame/env/lexical-shims.json` 的 `names`。
+   写成 `.json` 是因为消费者横跨两种模块系统 —— TS 侧（`vite.minigame.config.ts` 静态 import）
+   与 Node CJS 侧（三个 `tools/*.cjs` 直接 `require`）。`.json` 两边都原生支持，
+   不必为一份常量引入 `require(esm)` 这类 Node 版本假设。
+2. **构建期断言**（写在 `vite.minigame.config.ts`，config 求值时就跑）：
+   用正则从 `PRELUDE` 里抠出所有 `var X =`，与名单**双向**比对，不一致就抛。
+   两个方向的含义不同，报错原文里直接写明：「PRELUDE 有、名单没有」= 判据漏查（静默绿）；
+   「名单有、PRELUDE 没有」= 判据在问一个不存在的垫片。
+   **两个方向都实测验证过会红**（不做这一步就等于又加了一条不会红的判据）。
+3. **判据侧兜住最后一段**：名单里的每个名字都必须是 `bare.ts` 输出里的一个键。
+   漏了不会报错，但探针里就没这个键，判据读到的 `bareMap[k]` 是 `undefined` → **红**。
+
+第 3 条之所以必要：名单与 `bare.ts` 的读取项仍是两份，而「名单加了、读取项没加」
+同属「漏了不会红」那一类 —— 所以刻意让它以 `undefined` 的形式暴露出来。
 
 ### 9.8 第三个错：`unsafe-eval` —— 垫片修完之后**才**轮得到它
 

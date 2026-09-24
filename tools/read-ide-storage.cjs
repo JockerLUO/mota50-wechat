@@ -177,22 +177,15 @@ function printShim(data) {
       groups.missing.join('  ') || '（无）'
     }`
   );
-  // 本项目的 7 个垫片是「按判据筛出来的最小集」，它们的名字写死在这里，
-  // 是为了让「垫片有没有接上裸路径」变成一条一眼可核的断言，而不是靠人肉比对。
-  const SHIMMED = [
-    'Intl',
-    'navigator',
-    'document',
-    'performance',
-    'requestAnimationFrame',
-    'cancelAnimationFrame',
-    'MouseEvent'
-  ];
+  // 垫片名单**不在这里另抄一份**：从 `src/minigame/env/lexical-shims.json` 现读
+  // （与 `PRELUDE` 由构建期断言对齐）。写死的那一版 2026-09-24 漏了 `URL` 而**没报错** ——
+  // 名单里没有的名字，这里问不到，于是「漏查」表现为一片安静的绿。
+  const SHIMMED = require('../src/minigame/env/lexical-shims.json').names;
   const notReachable = SHIMMED.filter((k) => !(k in bare) || bare[k] === 'ReferenceError' || bare[k] === 'undefined');
   console.log(
     notReachable.length
-      ? `  ⛔ 已垫的 7 项里有 ${notReachable.length} 项在裸路径上仍不可用：${notReachable.join(', ')}   ← 垫片没接上`
-      : `  ✅ 已垫的 7 项在裸路径上全部可用（Intl / navigator / document / performance / rAF / cAF / MouseEvent）`
+      ? `  ⛔ 已垫的 ${SHIMMED.length} 项里有 ${notReachable.length} 项在裸路径上仍不可用：${notReachable.join(', ')}   ← 垫片没接上`
+      : `  ✅ 已垫的 ${SHIMMED.length} 项在裸路径上全部可用（${SHIMMED.join(' / ')}）`
   );
 }
 
