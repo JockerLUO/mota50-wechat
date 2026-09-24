@@ -390,12 +390,24 @@ touchstart 时**先**补一个 `mousemove`：网页上指针本来就会先移�
 ## 6. 验证：两种宿主，两套判据
 
 ```bash
-npm run verify:minigame   # 无 DOM 宿主（Web Worker），34 项常驻判据
-                          #   （取证构建 build:minigame:beacon 下另加 6 项 = 40）
-npm run verify:dom        # 有原生 DOM 宿主（IDE 模拟器同类），21 项判据
+npm run verify:minigame   # 无 DOM 宿主（Web Worker），37 项常驻判据
+                          #   （取证构建 build:minigame:beacon 下另加 6 项 = 43）
+npm run verify:dom        # 有原生 DOM 宿主（IDE 模拟器同类），20 项判据
+                          #   含「重现 IDE 处境」：宿主 baseURI 改成 about:blank → 垫片补齐
 npm run verify:url-shim   # URL 垫片 vs 原生对拍，2 条 —— 唯一直接测源码模块的一套
-npm run verify:all        # 以上三者 + verify:sandbox + verify:visual，共 93 条
+npm run verify:all        # 以上三者 + verify:sandbox + verify:visual，共 95 条
 ```
+
+**⚠️ 两类宿主的分工是「正交维度」，不是「各测一半」（2026-09-24 修正，理由见 §9.15(b)）：**
+
+| 维度 | 真机小游戏 | 开发者工具模拟器 | 谁负责测 |
+|---|---|---|---|
+| A 有没有 `URL` 构造器 | **没有** | 有 | **Worker 宿主**（`URL` 删得掉） |
+| B `document.baseURI` 能不能当基准 | —— | **不能** | **有 DOM 宿主**（刻意**保留** `URL`） |
+
+一个宿主**同时**改这两个条件，会得到一个世界上**不存在**的环境，而且会**反向掩盖** bug
+（删掉原生 `URL` 后，`usableAsBase()` 改用我们宽松的 `MiniUrl`，坏 base 被判成「可用」）。
+所以两边各放一条**正向守卫**。
 
 **小游戏产物要跑在两类差异极大的宿主上，两类路径都必须测。**
 
@@ -668,39 +680,62 @@ wx.getFileSystemManager().readFileSync('data/floors/floor-00.json', 'utf8')
 清单是单一来源：`src/data/runtime-files.mjs`（写成 `.mjs` 让 TS 侧与 Node ESM 脚本都能直接
 import），游戏代码与拷贝脚本共用，因此不可能出现「网页端能跑、小游戏端读不到」。
 
-### ⚠️ 拆包之后才出现的坑：`__vitePreload` 的第三实参（**只有无 DOM 宿主抓得到**）
+### ⚠️ 拆包之后才出现的坑：`__vitePreload` 的第三实参（**同一行代码，三次不同的病因**）
 
-拆成 CJS 多文件后，`autoDetectRenderer` 里会抛一条看不出所以然的：
+拆成 CJS 多文件后，`autoDetectRenderer` 里会抛一条看不出所以然的错：
 
 ```
-TypeError: Failed to construct 'URL': Invalid URL
+TypeError: Failed to construct 'URL': Invalid URL      ← ① 和 ③
+ReferenceError: URL is not defined                     ← ②
 ```
 
 根因在 `boot.js` 里由 Vite 生成的动态导入辅助：
 
 ```js
-typeof document === 'undefined'
-  ? require('url').pathToFileURL(__filename).href              // ← Node 分支（cjs 格式下 rollup 生成的）
-  : _documentCurrentScript && … || new URL('boot.js', document.baseURI).href
+typeof document === "undefined"
+  ? require("url").pathToFileURL(__filename).href               // ← Node 分支
+  : _documentCurrentScript && … || new URL("boot.js", document.baseURI).href
+                                                                // ← 浏览器分支
 ```
 
 `__vitePreload(loader, deps, importerUrl)` 的**第三实参**就是这个 `new URL(...)`。
 它在这一份产物里**根本不会被用到**（`deps` 是 `void 0`，消费 `importerUrl` 的分支在
-`if (false) { … }` 里被消除了）—— **但实参照样要求值**。而 `env/document.ts` 的 `document`
-替身当时没有 `baseURI` → `new URL('boot.js', undefined)` 抛。
+`if (false) { … }` 里被消除了）—— **但实参照样要求值**。
 
-**修法是给替身补一个绝对基准**（`doc.baseURI = 'wxgame://code-package/'`）。
-必须是绝对的：`new URL(x, '')` 与 `new URL(x, '/')` 都会抛。
+于是同一行以三种病因各炸了一次，而**每一种的修法都治不了另外两种**：
 
-三件事值得记住：
+| # | 谁炸的 | 病因 | 报错 |
+|---|---|---|---|
+| ① | 无 DOM 宿主 | 替身**没有 `baseURI`** → base 是 `undefined` | `Invalid URL` |
+| ② | 真机小游戏 | **没有 `URL` 构造器**（BOM） | `URL is not defined` |
+| ③ | 开发者工具模拟器 | 走的**让路分支**：宿主 `document`「能建元素、却不能当基准」 | `Invalid URL` |
 
-1. **`modulePreload: false` 拦不住它**（实测确认）：开关关掉的是 preload 提示，
-   而 `__vitePreload` 这个包装本身照样生成，`require('url')` 也照样在。
-2. **这个坑只有无 DOM 宿主抓得到**：有 DOM 时 `document.baseURI` 有真值，一切正常；
-   单文件 IIFE 时代 `inlineDynamicImports: true` 把动态导入全内联了，Vite 压根不生成
-   `__vitePreload`。
+**最终修法（三层，缺一不可）**：
+
+1. **构建期把那个死实参整个剥掉** —— `vite.minigame.config.ts` 的 `mota:strip-importer-url`，
+   `void 0` 顶掉那一整坨。这是**真正的收敛点**：它是死代码，剥掉零语义损失，
+   而且顺带清掉 `require("url")` / `__filename` 两个 Node 残留。
+   ⚠️ 必须写在 **`generateBundle`** 而不是 `renderChunk`（完整理由见 §9.15(a)）。
+2. **运行期兜底 `document.baseURI`** —— `env/document.ts` 的 `ensureUsableBaseUri()`。
+   剥不掉 pixi 里**活**的那两处 `new URL(url, document.baseURI)`
+   （`determineCrossOrigin` / `getBaseUrl`），它们仍要用这个值。
+3. **构建期词法垫片 `var URL`**（PRELUDE ⑦）—— 治 ②，且必须覆盖白名单沙箱那条裸标识符路径。
+
+验证摊在两套宿主上（这本身就是一条结论，见 §9.15(b)）：
+`verify:minigame` 断言**产物里没有 `pathToFileURL`**（与宿主保真度无关，
+所以钩子选错层也拦得住）；`verify:dom` 则**刻意保留**原生 `URL`、
+只把 `Node.prototype.baseURI` 换成 `about:blank`，重现 ③。
+
+另外三件事值得记住：
+
+1. **`modulePreload: false` 拦不住它**（实测确认）：那个开关关掉的是 preload 提示，
+   而 `__vitePreload` 这个包装本身照样生成，`require("url")` 也照样在。
+2. **这个坑只有无 DOM 宿主抓得到**（②那一支）：有 DOM 时 `document.baseURI` 有真值；
+   单文件 IIFE 时代 `inlineDynamicImports: true` 把动态导入全内联了，
+   Vite 压根不生成 `__vitePreload`。⇒ **它是拆包带来的。**
 3. 它是「构建工具为**浏览器 / Node** 生成的胶水代码，在**第三种环境**里炸」的典型样本 ——
    与 §3 那六个坑同一族，只是这一族的触发条件多了「产物形态」这一维。
+   而且这一族**补垫片补不完**：那行代码同时依赖两样东西，宿主对这两样的缺法两两不同。
 
 `vite.minigame.config.ts` 要点：
 
@@ -1105,7 +1140,7 @@ pixi 默认适配器写的是 `getNavigator: () => navigator`（裸标识符）�
 | 普通宿主 + 缺 `Intl`：不因 Intl 倒下 | 垫片路径（全局可扩展，`env/` 够用） |
 | 白名单沙箱（缺 `Intl`/`navigator`，且**两条路径分叉**）：不因这两个全局倒下 | 只有词法垫片能救的那条路径 |
 | **对照**：同一沙箱里「属性路径装好值、裸读仍死」必须复现 | 证明上一类判据不是想象出来的场景（它每一次都有真实报错对应） |
-| **裸标识符视图**：产物内部量出的 7 个垫片全部可用 | 「垫了却没接上」与「还有别的全局是死的」 |
+| **裸标识符视图**：产物内部量出的 8 个垫片全部可用 | 「垫了却没接上」与「还有别的全局是死的」 |
 | **反证 ×2**：分别摘掉 `Intl` / `navigator` 的垫片，同一宿主必须炸出对应的 `X is not defined` | 证明上一条不是空转（宿主模型有牙齿）。⚠️ 现在摘的是 **`boot.js`** 里那一行 |
 | 宿主原有的 `Intl` 未被顶掉 | 词法绑定是否真的落在包装内（否则就是全局污染） |
 | 垫片位置：在包装内、早于第一处 `Intl` 读取 | 位置被改坏的绊线。**每个 chunk 各查一遍**，入口那一条要容忍「本文件里没有读取点」 |
@@ -1589,10 +1624,11 @@ dsf=3 的页面**再验一遍，期望值必须是 3。
 
 ---
 
-### 9.15 第十二个错：**「真机启动即失败：`URL is not defined`」** ★同一行代码，两次不同的病因
+### 9.15 第十二、十三个错：**「启动失败」——同一行代码，三次不同的病因** ★补垫片治不完
 
 **症状**：拆包（单文件 `game.js` → `game.js` + `boot.js`）之后，产物在开发者工具 / 真机上
-**启动即挂**，`ReferenceError: URL is not defined`。本地四套判据**全绿**。
+**启动即挂**，弹出的标题是 `启动失败`，正文分别是 `ReferenceError: URL is not defined`
+与 `TypeError: Failed to construct 'URL': Invalid URL`。本地四套判据**全绿**。
 
 **根因**：拆包之后 Vite 会给每个 `await import()` 生成一个预载包装：
 
@@ -1630,16 +1666,23 @@ typeof document === "undefined"
 所以这个问题**是拆包带来的**，不是一直有的。这也解释了为什么「上一轮拆完包、
 本地全绿、看起来没问题」。
 
-**与 §9.12 / 铁律 #28 的关系：同一行代码，两次不同的病因。**
+**与 §9.12 / 铁律 #28 的关系：同一行代码，三次不同的病因，而每一次的修法都只治了其中一种。**
 
-| | 病因 | 报错 |
-|---|---|---|
-| 第一次（单文件 → 拆包当天） | `document` 替身**没有 `baseURI`** | `TypeError: Failed to construct 'URL': Invalid URL` |
-| 这一次 | **`URL` 构造器根本不存在** | `ReferenceError: URL is not defined` |
+| # | 症状出现的位置 | 病因 | 报错 | 本地为什么是绿的 |
+|---|---|---|---|---|
+| ① | 无 DOM 宿主（拆包当天） | `document` 替身**没有 `baseURI`** | `Invalid URL` | —— 第一次就是在宿主里抓到的 |
+| ② | 真机小游戏 | **`URL` 构造器根本不存在**（BOM） | `URL is not defined` | 两个本地宿主**都有** `URL` |
+| ③ | 开发者工具模拟器 | 宿主 `document` **能建元素、却不能当基准** | `Invalid URL` | 两个本地宿主的 `baseURI` **都能当基准** |
 
 ⇒ **修完一个不等于修了另一个。修完一处要接着问「这条路还依赖什么」。**
-（当时补 `baseURI` 时，判据给出的红是「`Invalid URL`」—— 那是在说「参数不对」，
-它不可能告诉你「构造器不存在」。）
+（补 `baseURI` 时判据给的词是 `Invalid URL`——那是在说「参数不对」，
+它不可能告诉你「构造器不存在」；反过来，补 `URL` 垫片更不可能告诉你
+「即使构造器在了，base 还是不合法」。）
+
+**而这三次的共同点更值得记：那一行代码同时依赖两样东西**（一个 `URL` 构造器 + 一个能当基准的
+`document.baseURI`），四种宿主对这两样的缺法两两不同 —— 于是**「给宿主补上缺的那个全局」
+这条路本身就没有终点**，永远会有下一种组合。
+⇒ 真正的收敛点是把那一行**从产物里拿掉**（见修法 5）。
 
 **修法**：
 
@@ -1672,6 +1715,61 @@ typeof document === "undefined"
    如实打印覆盖边界，不要假装测过。）
 4. `safeStr` 一类日志序列化**必须单独认 Error** —— `JSON.stringify(err)` 得到 `{}`，
    报出来是「启动失败： {}」。**判据红了却读不出原因 = 白白多一轮来回。**
+5. **★ 构建期把那个死实参整个剥掉**（`vite.minigame.config.ts` 的
+   `mota:strip-importer-url`）：`__vitePreload(loader, deps, <那一大坨>)` → `void 0`。
+   它是**死代码**（helper 体整块在 `if (false)` 里），剥掉零语义损失，而且顺带把
+   `require("url")` / `__filename` 这两个 Node 残留一起清了 —— 否则哪天真走到
+   `typeof document === "undefined"` 的左支，就会去 require 一个**小游戏里不存在的模块**
+   （那是同一类隐患的第四次）。
+6. 运行期仍然要兜底 `document.baseURI`（`env/document.ts` 的 `ensureUsableBaseUri()`），
+   因为 pixi 里还有**活**的 `new URL(url, document.baseURI)`
+   （`determineCrossOrigin` / `getBaseUrl`）—— 那两处剥不掉，也不该剥。
+   ⚠️ 它必须挂在 `installDocument()` 的**让路分支**上：IDE 走的正是那条分支，
+   而前两轮补的 `baseURI` 都在**替身**里 —— 在 IDE 上一句都没生效。
+   判据用「拿宿主**当前那个**构造器试一次」（`usableAsBase()`），不是「长得像不像 URL」：
+   真机是我们装的 `MiniUrl`（宽松），IDE 是原生（严格），固定规则必然猜错一边。
+
+**★ 两个只有实测才会撞到的钩子/宿主细节（都值得单独记一笔）**
+
+**(a) 剥离必须写在 `generateBundle`，不能写 `renderChunk`。**
+`renderChunk`（哪怕带 `enforce: 'post'`）拿到的是**中间形态**，Vite 自己的 post 插件
+还在它之后跑，会把 `__VITE_IS_MODERN__` 换成 `false`、把 `require('u' + 'rl')`
+常量折叠成 `require("url")`、把引号统一。按最终形态写的正则在那一刻**一处也匹配不上**：
+
+| 时刻 | `typeof document ===` 的写法 | `require` 的写法 |
+|---|---|---|
+| `renderChunk` 期 | `'undefined'`（单引号） | `require('u' + 'rl')` |
+| 最终产物 / `generateBundle` 期 | `"undefined"`（双引号） | `require("url")` |
+
+⇒ 症状：**「残留即报错」的保险当场炸掉构建**（这是我第一版的形态），
+而报错里打印的「现场」恰好是**最终形态**的写法 —— 一眼看上去像「正则写错了」，
+其实病根在**钩子选错了**。而且这个错误是**不对称**的：若当时没写那道保险，
+就是静默放过 ⇒ 假绿 ⇒ 又一次「本地全绿、设备上炸」。
+（判据侧的对策：`verify:minigame` 直接断言**产物**里 `pathToFileURL` 为 0 处 ——
+盯产物，不盯构建过程，于是与钩子选哪一层无关。）
+
+**(b) 一个宿主**同时**改两个正交条件，得到的是一个世界上不存在的环境。**
+本轮真机/IDE 两个故障其实是两个**正交**维度：
+
+| 维度 | 真机 | 开发者工具模拟器 | 浏览器/Worker |
+|---|---|---|---|
+| A 有没有 `URL` 构造器 | **没有** | 有 | 有 |
+| B `document.baseURI` 能不能当基准 | —— （走不到） | **不能** | 能 |
+
+上一版我把 `URL` 也加进**有 DOM 宿主**的抹除清单（想顺手多测一条），结果两个维度
+在那个宿主上叠成了「有 DOM + 没有 `URL` + 坏 `baseURI`」—— 一个**不存在的**环境。
+更糟的是它**反向掩盖**了 bug：`usableAsBase()` 会拿「当前那个构造器」去试，
+而删掉原生 `URL` 后当前那个变成了我们**宽松**的 `MiniUrl` —— `about:blank` 在它眼里
+「可用」，于是「补齐 `baseURI`」整条逻辑**不触发**，IDE 那条判据永远是绿的。
+
+⇒ 现在的分工：**Worker 宿主负责维度 A**（删得掉 `URL`、替身 `baseURI` 由我们给），
+**有 DOM 宿主负责维度 B**（**刻意保留**原生 `URL`，只把 `Node.prototype.baseURI`
+的 getter 改成 `about:blank`）。两边的判据里都放了**正向守卫**，谁把维度混回去谁红。
+（`about:blank` 不是随手挑的：`new URL('x', 'about:blank')` 在 Chromium 里**必抛**，
+而这条「必抛」由页面当场 `try/catch` 验一遍 —— 没有这个探针，重现就是空转。
+顺带一句旁证：用户拿到的 `Failed to construct 'URL': Invalid URL` 是**原生** Web IDL
+实现的话术，我们的 `MiniUrl` 抛的是 `Invalid URL: …（缺 base 时 input 必须是绝对 URL）`——
+所以 IDE 侧确实**有**原生 `URL`，维度 A 的划分由此得到实证。）
 
 **⚠️ 自实现解析器必须对拍 —— 「能跑」不等于「算得对」。**
 
@@ -1691,9 +1789,18 @@ typeof document === "undefined"
 修法：`normalize()` 放在**解析出口**（`href` / `pathname` / `toString()` 三个出口
 因此天然一致，不用各补一遍）；`origin` 单独处理 `file:`。修后 25 个用例 × 9 个字段全一致。
 
-**新增判据**：`verify:minigame` +2（宿主已抹掉 `URL`/`location`；垫片补上且
-**相对解析结果正确** —— 行为判据，不只看「存不存在」）、`verify:dom` +2（同上）、
-`verify:url-shim` 2 条。
+**新增判据**（本轮）：
+
+| 套 | 数量 | 判的是 |
+|---|---|---|
+| `verify:minigame` | 3 | 宿主已抹掉 `URL` / `location`（**维度 A** 到位）；`URL` 缺失时垫片补上且**相对解析结果正确**；无 DOM 宿主的 `document.baseURI` 能当基准（绝对 URL × 可用性） |
+| `verify:minigame` | 2 | **产物级**（与宿主保真度无关）：没有 Vite 的 Node 分支；`__vitePreload` 的死实参已剥成 `void 0` |
+| `verify:dom` | 2 | **刻意保留**原生 `URL`（**维度 B** 的正向守卫）；宿主 `baseURI` 不能当基准时由垫片补齐（**重现开发者工具模拟器的处境**） |
+| `verify:sandbox` | 1 | 裸标识符名单由 7 扩到 8（含 `URL`）—— 白名单沙箱那条路径 |
+| `verify:url-shim` | 2 | 垫片 vs 原生逐用例对拍（唯一**直接测源码模块**、不加载产物的一套） |
+
+⚠️ 这组判据里有两条是**反向**的（「宿主必须**保留** `URL`」、「产物里必须**没有**
+`pathToFileURL`」）—— 反向断言在老项目里最容易退化成恒真，所以都配了探针或配对的正面判据。
 
 ---
 
@@ -1705,15 +1812,17 @@ npm run verify:sandbox    # 干净 V8（node:vm）宿主实测，14 条判据（
 npm run verify:visual     # 渲染层回归，22 条判据（A1–A20，含版面/位面/道具栏/手绘怪物、
                           #   脚下无标记 / 浏览出口 / 攻击动画 / 对话折行 / 上下楼梯 /
                           #   像素密度 / 文字分辨率 / 手绘墙 / 待机呼吸）
-npm run verify:minigame   # 无 DOM 环境实测，34 条常驻判据（含禁 unsafe-eval ×3、图集逐字节一致、
-                          #   包结构 ×6、语法地板 ×2、宿主缺失全局 URL/location ×2、触摸端到端）
-                          #   取证构建（build:minigame:beacon）下另加 6 条 = 40
-npm run verify:dom        # 有原生 DOM 宿主实测，21 条判据（含触摸端到端 ×4、图集 ×1、
-                          #   宿主缺 URL ×2）
+npm run verify:minigame   # 无 DOM 环境实测，37 条常驻判据（含禁 unsafe-eval ×3、图集逐字节一致、
+                          #   包结构 ×6、语法地板 ×2、宿主缺失全局 URL/location ×2、
+                          #   document.baseURI 能当基准 ×1、产物级「无 Node 分支 / 死实参已剥」×2、
+                          #   触摸端到端）
+                          #   取证构建（build:minigame:beacon）下另加 6 条 = 43
+npm run verify:dom        # 有原生 DOM 宿主实测，20 条判据（含触摸端到端 ×4、图集 ×1、
+                          #   保留原生 URL 的守卫 ×1、重现 IDE 处境 ×1）
                           #   注：驱动 UI 的点击必须模拟真实节奏，见 §9.13
 npm run verify:url-shim   # URL 垫片 vs 原生 URL 对拍，2 条判据（25 用例 × 9 字段）
-                          #   唯一**直接测源码模块**的一套（不加载产物），见 §9.14
-npm run verify:all        # 以上五套，共 93 条判据（14 + 22 + 34 + 21 + 2）
+                          #   唯一**直接测源码模块**的一套（不加载产物），见 §9.15
+npm run verify:all        # 以上五套，共 95 条判据（14 + 22 + 37 + 20 + 2）
 ```
 
 另有两个不在四套之列的取证工具 —— 它们读的都是**工具自己落盘的状态**，

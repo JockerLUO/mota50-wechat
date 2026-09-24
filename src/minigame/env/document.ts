@@ -13,6 +13,36 @@ import { documentBus } from './events';
 import { g, wxApi, type Any } from './state';
 
 /**
+ * 相对 URL 的兜底基准。
+ *
+ * 取值只影响「相对路径会被解析成什么」，而本项目的资源加载**不走这条 URL 路径**
+ * ——图集由 `wx.createImage()` 直接吃相对路径（`assets/terrain.png`），
+ * 守这一点的是 verify:minigame 的「图集走包内相对路径」判据。
+ * 用一个一眼看得出「不是真实网络地址」的 scheme，是为了避免将来有人拿它去 fetch。
+ */
+const FALLBACK_BASE = 'wxgame://code-package/';
+
+/**
+ * 一个值能不能当 `new URL(相对, base)` 的基准。判据是**试一次**，不是「长得像不像 URL」。
+ *
+ * ⚠️ 用**宿主当前那个**构造器试，这一点是必须的：真机上是我们装的 `MiniUrl`，
+ * 开发者工具里是原生 `URL`，两者对「什么样的 base 能用」的接受度并不相同
+ * （原生对非层级 base 直接抛，我们那份宽松得多）。拿一套固定规则去猜，
+ * 只会猜出「本地绿、设备红」或者反过来 —— 那正是这一轮的原样。
+ */
+function usableAsBase(value: unknown): boolean {
+  if (typeof value !== 'string' || value === '') return false;
+  const U = (g as Any).URL;
+  if (typeof U !== 'function') return false;
+  try {
+    new U('base-probe', value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * 通用元素替身：只有「被读到 / 被调到时不会炸」这一条设计目标，不具备任何真实 DOM 行为。
  *
  * `remove` / `parentNode` / `contains` 这三项不是凑数补的 —— 它们来自
@@ -151,33 +181,17 @@ function createElement(tag: string): Any {
 
 const doc = {
   /**
-   * 相对 URL 的解析基准。
+   * 相对 URL 的解析基准（替身用的那份）。
    *
-   * ⚠️ 这个字段**不是装饰**，是 pixi 在**构造期**真的会读的东西：
+   * ⚠️ 这个字段**不是装饰**：产物与 pixi 都会拿它当 `new URL(x, document.baseURI)`
+   * 的 base。所以它必须是**绝对** URL（`new URL(x, '')` / `new URL(x, '/')` 都会抛）。
    *
-   *   - `autoDetectRenderer` 里有 `new URL("boot.js", document.baseURI)` ——
-   *     它是 Vite 给动态导入生成的 `__vitePreload(loader, deps, importerUrl)`
-   *     的**第三个实参**。那个参数在这份产物里**根本不会被用到**
-   *     （`deps` 是 `void 0`，helper 里消费它的分支被 `if (false)` 消除掉了），
-   *     但**实参照样要求值** —— base 是 `undefined` 就抛
-   *     `TypeError: Failed to construct 'URL': Invalid URL`，而它发生在
-   *     渲染器构造期，后果是整局起不来。
-   *   - pixi 的 loader 里还有一处 `new URL(url, document.baseURI)`（跨域判定）。
-   *
-   * 所以它必须是个**绝对** URL：`new URL(x, '')` / `new URL(x, '/')` 都会抛。
-   *
-   * 具体取值只影响「相对路径会被解析成什么」，而本项目的资源加载**不走这条 URL
-   * 路径** —— 图集由 `wx.createImage()` 直接吃相对路径（`assets/terrain.png`），
-   * 守这一点的是 verify:minigame 的「图集走包内相对路径」判据。
-   * 用一个一眼看得出「不是真实网络地址」的 scheme，是为了避免将来有人拿它去 fetch。
-   *
-   * ⚠️ 这个坑是**产物拆成 CJS 多文件之后才出现的**，而且**只有无 DOM 宿主抓得到**：
-   *   - iife 单文件时代动态导入被 `inlineDynamicImports` 全部内联，
-   *     Vite 不生成 `__vitePreload`，这段实参压根不存在；
-   *   - 有 DOM 的宿主里 `document.baseURI` 有真值，右支走得通，看起来一切正常。
-   * 记在这里是因为它太容易在「换个打包格式」的时候再犯一次。
+   * ⚠️ 但**装上它并不够** —— 宿主那份 `document` 可用时我们会让路，那一支压根不经过
+   * 这个对象；而微信开发者工具的模拟器正是那一支，且它的 `baseURI` 不能当基准。
+   * 所以「让路」之前必须再走一遍 `ensureUsableBaseUri()`，理由见该函数的注释
+   *（那里记着同一句报错的三次不同病因 —— 前两轮只治了替身这一侧，所以第三轮又红了一次）。
    */
-  baseURI: 'wxgame://code-package/',
+  baseURI: FALLBACK_BASE,
   addEventListener: (type: string, fn: (ev: Any) => void) => documentBus.addEventListener(type, fn),
   removeEventListener: (type: string, fn: (ev: Any) => void) => documentBus.removeEventListener(type, fn),
   dispatchEvent: (ev: Any) => documentBus.dispatchEvent(ev),
@@ -187,6 +201,59 @@ const doc = {
   head: makeStubElement('head'),
   documentElement: makeStubElement('html')
 };
+
+/**
+ * 保证 `document.baseURI` 能当基准用 —— **即使用的是宿主那份 document**。
+ *
+ * ## 为什么非得管「让路」的那一支
+ *
+ * `installDocument()` 的第一条规则是「宿主那份 document 可用就让路」。这条规则对
+ * `createElement` / `addEventListener` 成立（原生确实更完整），但 `baseURI` **不成立** ——
+ * 它只有「能用 / 不能用」两种状态，没有「更丰富」的中间态。
+ *
+ * 微信开发者工具的模拟器给的 `document` 就正好卡在这个缝里：它有 `createElement`
+ * （于是判「可用」→ 让路），而它的 `baseURI` **不能用来解析相对地址**。表现是
+ * `Failed to construct 'URL': Invalid URL` + 「启动失败」弹窗。
+ *
+ * ⚠️ 这一条是**同一句报错的第三种病因**，前两轮都没治到这里：
+ *   ① 无 DOM 宿主：我们的替身**当时没有** `baseURI` → base 是 `undefined`；
+ *   ② 真机小游戏：**没有 `URL` 构造器**（BOM）→ `ReferenceError`；
+ *   ③ 开发者工具模拟器：走的是**让路分支**，压根没用我们的替身
+ *      —— 所以前两轮给替身补的 `baseURI` 在这一支上**一点用都没有**。
+ *
+ * ⇒ 三次都在同一行，因为那行同时依赖两样东西（构造器 + 基准），而四种宿主两两缺得不同。
+ *    收敛点有两个，缺一不可：
+ *      - **构建期**：`vite.minigame.config.ts` 的 `mota:strip-importer-url`
+ *        把那个**死实参**整个剥掉（死代码，剥掉零损失，且不再依赖两样东西）；
+ *      - **运行期**：本函数 —— 因为 pixi 里还有**活**的
+ *        `new URL(url, document.baseURI)`（跨域判定）与 `getBaseUrl()`，
+ *        它们仍是在用宿主这个值。
+ */
+export function ensureUsableBaseUri(target?: Any): void {
+  const d = (target as Any) || (g.document as Any);
+  if (!d) return;
+  if (usableAsBase(d.baseURI)) return;
+
+  const before = d.baseURI;
+  try {
+    // 定义成**自有数据属性**：真 DOM 里 `baseURI` 是 `Node.prototype` 上的访问器，
+    // 摆在实例上正好把它遮住（DOM 对象都可扩展，实测有效）。
+    Object.defineProperty(d, 'baseURI', { value: FALLBACK_BASE, configurable: true, writable: true });
+  } catch {
+    try {
+      d.baseURI = FALLBACK_BASE;
+    } catch {
+      // 只读且不可定义 —— 认了。但必须让这件事**可见**：
+      // 否则下一个「Invalid URL」又要从「哪个宿主、哪一行」重新查一遍。
+      console.warn(
+        `[minigame] document.baseURI = ${String(before)}（不能当相对 URL 的基准）且改不动；` +
+          `产物里仍有 new URL(x, document.baseURI) 的调用点`
+      );
+      return;
+    }
+  }
+  console.log(`[minigame] document.baseURI ${JSON.stringify(String(before))} 不能当基准，已改为 ${JSON.stringify(FALLBACK_BASE)}`);
+}
 
 /**
  * 装 `document` —— 但**就地补字段**，不整对象替换。
@@ -219,17 +286,27 @@ export function installDocument(): void {
   // 宿主那份**可用** → 让路。真 DOM 比垫片完整，硬装上去反而更糟：
   // `document.addEventListener` 会收进我们的 documentBus，而原生事件永远不派发到那里
   // →「画面有了但点不动」（理由详见 `assign.ts` 的 `nativeDom`）。
-  if (!!existing && typeof existing.createElement === 'function') return;
+  if (!!existing && typeof existing.createElement === 'function') {
+    // ⚠️ 但**让路之前必须把基准 URL 校验一遍**。`createElement` 可用 ≠ 整个 document 可用：
+    //    微信开发者工具的模拟器就是「能建元素、但 baseURI 不能当基准」。
+    //    这一句漏掉的代价是「启动失败」弹窗 —— 见 `ensureUsableBaseUri()` 的注释。
+    ensureUsableBaseUri(existing);
+    return;
+  }
 
   const target = (g.__motaDocumentShim as Any) || existing;
   if (target && typeof target === 'object') {
     // intro 选中的那个对象 —— 就地补，保住「一个对象、两处引用」。
     try {
       Object.assign(target, doc);
+      // 宿主对象若**自带**一个不能当基准的 `baseURI`，上面的 assign 可能被它挡住
+      // （只读访问器），所以这里再核一遍，与让路分支同一条纪律。
+      ensureUsableBaseUri(target);
       return;
     } catch {
       /* 宿主对象不可写，退回整体安装 */
     }
   }
   safeAssign('document', doc);
+  ensureUsableBaseUri(doc);
 }

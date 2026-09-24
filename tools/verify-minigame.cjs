@@ -343,6 +343,29 @@ const server = http.createServer((req, res) => {
       (report.urlAfterBoot ? '' : '（垫片没装上）')
   );
 
+  // ★ `document.baseURI` 必须能当基准 —— 同一句 `Invalid URL` 的**第三种病因**的守门判据
+  //
+  // 产物里 pixi 的**活**代码有 `new URL(url, document.baseURI)`（`determineCrossOrigin` /
+  // `getBaseUrl`），而 base 为 `undefined` / 相对串时必抛。本页（无 DOM）是病因①：
+  // 替身当初根本没有 `baseURI`。
+  //
+  // 拆成两条**互补**判据，刻意都不省：
+  //   - `Absolute`：**与实现无关**的必要条件（必须是绝对 URL）。谁在提供 `URL` 都成立，
+  //     连「宿主压根没有 URL 构造器」时也能判 —— 那是固定规则的唯一价值。
+  //   - `Usable`：用**当前那个**构造器真试一次（充分性）。本页此刻的 `URL` 是我们装的
+  //     `MiniUrl`（比原生宽松），所以它单独**不能**证明「在原生 URL 下也可用」；
+  //     那一半由 verify:dom 覆盖（那边刻意保留原生 `URL` + 坏 baseURI）。
+  //
+  // （教训记在这里：这个坑前两轮都只治了「替身这一侧」，而 IDE 走的是**让路**那一侧 ——
+  //   所以「本地全绿」曾经两次都不说明任何问题。）
+  add(
+    '无 DOM 宿主的 document.baseURI 能当相对 URL 的基准',
+    report.docBaseUriAbsolute === true && report.docBaseUriUsable === true,
+    `现值 ${JSON.stringify(report.docBaseUri)}  绝对=${report.docBaseUriAbsolute} 可用=${report.docBaseUriUsable}` +
+      (report.docBaseUriAbsolute ? '' : ' —— 不是绝对 URL：任何构造器都拿它当不了 base（必然 Invalid URL）') +
+      (report.docBaseUriAbsolute && !report.docBaseUriUsable ? ' —— 是绝对 URL 却当不了 base，检查是否被宿主那份遮住了' : '')
+  );
+
   // ── 禁用 unsafe-eval：`pixi.js/unsafe-eval` 有没有真的接管 ──────────────
   //
   // 这一组是 2026-09-21 IDE 第四轮报错的对症判据。当时 pad 好 Intl/navigator 之后
@@ -478,6 +501,65 @@ const server = http.createServer((req, res) => {
           : `${(raw.length / 1024).toFixed(0)}KB 复算无差异；${PATTERNS.join(' / ')} 计数不变`
       );
     }
+  }
+
+  // ── 产物里不该有 Vite 的 Node/DOM 分支 ──────────────────────────────
+  //
+  // 拆成 CJS 多文件之后，Vite 给动态导入生成的 `__vitePreload(loader, deps, importerUrl)`
+  // 的**第三实参**在产物里展开成一颗同时依赖两样东西的三元表达式：
+  //
+  //   typeof document === "undefined"
+  //     ? require("url").pathToFileURL(__filename).href                   // Node 分支
+  //     : _documentCurrentScript && … || new URL("boot.js", document.baseURI).href
+  //                                                                       // DOM 分支
+  //
+  // 而 helper 体整块是 `if (false) { … }` —— 那个实参**永远不会被消费**，
+  // 但**实参照样求值**。于是同一句 `Failed to construct 'URL': Invalid URL`
+  // 在三种宿主上以三种病因各炸了一次：
+  //   ① 无 DOM 宿主：替身当时还没有 `baseURI` → base 是 `undefined`
+  //   ② 真机小游戏：**没有 `URL` 构造器**（BOM）→ `ReferenceError`
+  //   ③ 开发者工具模拟器：宿主 `document`「能建元素、不能当基准」→ 原生 `URL` 抛
+  //
+  // 收敛点是**构建期**把整个死实参剥成 `void 0`（`vite.minigame.config.ts` 的
+  // `mota:strip-importer-url`）。这条判据盯的是**产物**，与宿主保真度无关 ——
+  // 前两轮之所以反复，正是因为两次修法都只是「给某个宿主补上某个全局」，
+  // 而没有任何一条判据能表达「这行代码本身就不该存在」。
+  {
+    const nPath = [];
+    const nLiteralBase = [];
+    const nVoid = [];
+    for (const file of ['game.js', 'boot.js']) {
+      const abs = path.join(DIST, file);
+      if (!fs.existsSync(abs)) continue;
+      const raw = fs.readFileSync(abs, 'utf8');
+      const path_ = (raw.match(/pathToFileURL/g) || []).length;
+      // ⚠️ 只数「以**字符串字面量**为第一实参」的那种 —— 那是被剥掉的死实参。
+      //    pixi 的 `determineCrossOrigin` 里还有一处 `new URL(url, document.baseURI)`
+      //    （第一实参是**变量**），那是**活**代码，剥不掉也不用剥：
+      //    它的 base 由 `env/document.ts` 的 `ensureUsableBaseUri()` 兜底，
+      //    并由 verify:dom 的「宿主 baseURI 不能当基准」实验守着。
+      const literalBase = (raw.match(/new URL\("[^"]*", document\.baseURI\)/g) || []).length;
+      const void2 = (raw.match(/void 0, void 0\)/g) || []).length;
+      if (path_) nPath.push(`${file} ×${path_}`);
+      if (literalBase) nLiteralBase.push(`${file} ×${literalBase}`);
+      if (void2) nVoid.push(`${file} ×${void2}`);
+    }
+
+    add(
+      `产物里没有 Vite 的 Node 分支（require("url") / pathToFileURL）`,
+      nPath.length === 0,
+      nPath.length
+        ? `${nPath.join('、')} —— 那个分支只有在「没有 document」的宿主里才会走到，` +
+            `而真机小游戏没有 \`url\` 模块，走到就是第四次同源故障`
+        : `包内两个 js 合计 0 处（剥离前是 boot.js ×6）`
+    );
+
+    add(
+      `__vitePreload 的死实参已剥成 void 0（不再对 document.baseURI 求值）`,
+      nVoid.length > 0 && nLiteralBase.length === 0,
+      `${nVoid.join('、') || '（一处都没剥到 —— 插件可能没生效）'}；` +
+        `仍以字符串字面量作 base 的 new URL(…, document.baseURI) = ${nLiteralBase.length ? nLiteralBase.join('、') : '0 处'}`
+    );
   }
 
   // ── 包结构：拆包边界 +「数据是运行期读的，不是构建期内联的」──────────────

@@ -96,25 +96,46 @@ function main() {
     process.exit(1);
   }
 
+  // ⚠️ **先把模块加载完**再动全局。
+  //
+  // `require` 内部会读文件，而**本机沙箱的 `fs` 垫片自己也用裸 `URL`**
+  // （WorkBuddy CLI 的 `node-brokered-fs-shim.cjs`，`toAbsPath` 里 `new URL(...)`）。
+  // 所以「删掉 `URL`」这一步必须放在 `require` **之后** —— 踩过一次，现象是：
+  //
+  //   ❌ 垫片装上了（宿主没有 URL 时 installUrl 生效）—— 装的时候抛了：URL is not defined
+  //
+  // 而栈**全在 `node-brokered-fs-shim.cjs` 里**，看起来像 `url.ts` 有 bug，
+  // 其实是**验证工具自己的时序问题**（`delete globalThis.URL` 把宿主 fs 垫片一起废了）。
+  // 这条记在这里，因为「判据红了先怀疑期望值 / 先怀疑工具」在本项目是省时间的一条纪律。
+  const mod = require(OUT);
+
   // ⚠️ 顺序不能反：**先把原生引用留住**，再删全局。
   //    删全局是为了模拟小游戏（`installUrl` 只在宿主没有 URL 时才装垫片），
   //    而留住引用才能在同一个进程里做对拍 —— 否则连基准都没了。
   const NativeURL = globalThis.URL;
-  delete globalThis.URL;
-
+  let ShimURL;
   let installErr = '';
+  delete globalThis.URL;
   try {
-    require(OUT).installUrl();
+    mod.installUrl();
+    ShimURL = globalThis.URL;
   } catch (err) {
     installErr = err && err.message ? err.message : String(err);
+  } finally {
+    // ★ **立刻把全局还回去**，把「没有 `URL`」的窗口压到最小。
+    //   上面的 fs 垫片教训说明：只要这个窗口跨过一次文件读取，就会炸在**别人**的代码里。
+    //   所以策略不是「记得别在窗口里读文件」（那要靠人记），而是**把窗口关小**：
+    //   只有 `installUrl()` 这一小段。后面所有比较都改用「窗口里抓下来的 `ShimURL`」，
+    //   不再依赖全局状态 —— 顺带让对拍本身也不受全局被谁改过的影响。
+    globalThis.URL = NativeURL;
   }
 
   const results = [];
   results.push(
     add(
       '垫片装上了（宿主没有 URL 时 installUrl 生效）',
-      !installErr && typeof globalThis.URL === 'function',
-      installErr ? `装的时候抛了：${installErr}` : `globalThis.URL = ${globalThis.URL && globalThis.URL.name}`
+      !installErr && typeof ShimURL === 'function',
+      installErr ? `装的时候抛了：${installErr}` : `ShimURL = ${ShimURL && ShimURL.name}（窗口内抓到，全局已还原）`
     )
   );
 
@@ -129,7 +150,7 @@ function main() {
       n = { __err: `${err.name}: ${err.message}` };
     }
     try {
-      s = new globalThis.URL(...c.args);
+      s = new ShimURL(...c.args);
     } catch (err) {
       s = { __err: `${err.name}: ${err.message}` };
     }

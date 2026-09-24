@@ -708,6 +708,35 @@ addEventListener('unhandledrejection', (e) => fail(`[unhandledrejection] ${e.rea
         return `ERR: ${err && err.message}`;
       }
     })();
+    // ★ `document.baseURI` 必须是一个**能当基准**的绝对 URL（2026-09-24 第三轮）。
+    //
+    // 为什么在这里也要查一遍：产物里 pixi 的活代码仍然有 `new URL(url, document.baseURI)`
+    // （`determineCrossOrigin` / `getBaseUrl`），而**同一个报错在三种宿主上三种病因**。
+    // 本页（无 DOM）是病因①：替身当初**根本没有** `baseURI` ⇒ base 是 `undefined` ⇒ 抛。
+    //
+    // 两条互补的判据，刻意都留：
+    //   - `docBaseUriAbsolute`：**与实现无关**的**必要**条件（必须是绝对 URL）。
+    //     它不依赖「谁在提供 URL」，所以在「宿主里压根没有 URL 构造器」时也照样能判。
+    //   - `docBaseUriUsable`：用**当前那个**构造器真试一次 —— 充分性判定。
+    //     注意本页此刻的 `URL` 是我们装的 `MiniUrl`（比原生宽松），所以它单独**不能**
+    //     证明「在原生 URL 下也可用」；那一半由 verify:dom 的宿主负责（那边保留原生 URL）。
+    //     两者合起来才覆盖「四种宿主两两缺法不同」这件事。
+    report.docBaseUri = (() => {
+      try {
+        return String(g.document && g.document.baseURI);
+      } catch (err) {
+        return `#throw: ${err && err.message}`;
+      }
+    })();
+    report.docBaseUriAbsolute = /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(report.docBaseUri);
+    report.docBaseUriUsable = (() => {
+      try {
+        new g.URL('base-probe', report.docBaseUri);
+        return true;
+      } catch (err) {
+        return false;
+      }
+    })();
     // 禁令有没有在启动过程中被换掉 —— 若产物（或某个依赖）自己给 globalThis.Function
     // 赋了新值，那「启动成功」就可能是靠把 eval 要回来换取的，判据必须跟着失效。
     report.evalStillBannedAfterBoot = !!(ban && ban.armed());

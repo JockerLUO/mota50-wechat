@@ -63,6 +63,7 @@ export { MiniMouseEvent } from './mouse-event';
 export { patchGetContext, createOffscreenCanvas, patchDisplayCanvas } from './canvas';
 export { nativeDom } from './assign';
 export { installGlobals, assertInstalled } from './globals';
+export { installDocument, ensureUsableBaseUri } from './document';
 export { installTouchBridge } from './touch';
 export { reserveDisplayCanvas, getReservedCanvas } from './display';
 

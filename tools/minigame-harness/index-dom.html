@@ -39,6 +39,58 @@
     -->
     <script src="/wx-stub.js"></script>
     <!--
+      ★ 重现微信开发者工具模拟器的一个关键条件：**基准 URL 不能用来解析相对地址**。
+
+      为什么必须在这一页重现它：这一页是「有原生 DOM」的宿主，而 IDE 模拟器也属于
+      这一类 —— 产物在那一侧的代码路径与 Worker 侧完全不同（`installDocument()` 会
+      **让路**，用宿主那份 document）。所以在这一页只验证「能启动」是不够的：
+      真 Chromium 的 `document.baseURI` 是 `http://127.0.0.1:PORT/…`，**能**当基准，
+      于是「宿主那份 baseURI 不能当基准」这条路径在本页**永远不会被走到** ——
+      实测代价：`Failed to construct 'URL': Invalid URL` 在 IDE 里连报两轮，本地全绿。
+
+      `about:blank` 是刻意的取值：它是非层级 URL，`new URL('x', 'about:blank')`
+      在 Chromium 里必抛（本页下面那句自检会当场证明它真的抛，见 `__hostBaseUriUnusable`）
+      —— 那个「必抛」正是探针，没有它这条重现就是空转。
+
+      ⚠️ 为什么是改 `Node.prototype.baseURI` 的 getter，而不是别的做法：
+        HTML 解析器解析相对 URL 用的是**内部**的 document base URL，不走这个 getter，
+        所以「改 getter」只影响**产物脚本读到的那个值** —— 正是我们要重现的那一面，
+        页面自己的资源加载（`<script src="/…">`）不受影响。
+    -->
+    <script>
+      (function () {
+        window.__hostBaseUriKind = 'unset';
+        try {
+          Object.defineProperty(Node.prototype, 'baseURI', {
+            configurable: true,
+            get: function () {
+              return 'about:blank';
+            }
+          });
+          window.__hostBaseUriKind = 'about:blank';
+        } catch (e) {
+          window.__hostBaseUriKind = 'override-failed: ' + (e && e.message);
+        }
+        window.__hostBaseUri = (function () {
+          try {
+            return String(document.baseURI);
+          } catch (e) {
+            return '#throw: ' + (e && e.message);
+          }
+        })();
+        // 探针：这个基准**真的**不能用来解析相对地址吗？
+        // 没有这一句，「宿主基准不可用」就只是我们的一句话，而不是一个被验证过的事实。
+        window.__hostBaseUriUnusable = (function () {
+          try {
+            new URL('probe/child.js', window.__hostBaseUri);
+            return false;
+          } catch (e) {
+            return true;
+          }
+        })();
+      })();
+    </script>
+    <!--
       源码表 + CommonJS 装载器 —— 产物是「入口 + 它 require 的 chunk」两个文件，
       不能再用一个 `<script src="/game.js">` 装。
 

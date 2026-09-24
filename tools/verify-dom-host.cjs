@@ -265,7 +265,35 @@ function analyzePixels(rec) {
       evalBannedAtStart: g.__evalBannedAtStart === true,
       evalStillBannedAfterBoot: !!(g.__unsafeEvalBan && g.__unsafeEvalBan.armed()),
       realCtorIntact: !!(g.__unsafeEvalBan && g.__unsafeEvalBan.realCtorIntact()),
-      functionWasSwapped: !!(g.__unsafeEvalBan && !g.__unsafeEvalBan.stillInstalled())
+      functionWasSwapped: !!(g.__unsafeEvalBan && !g.__unsafeEvalBan.stillInstalled()),
+      // ★ 宿主基准 URL 的「敌意条件」—— 由 index-dom.html 顶部那段脚本设好（见那里的说明）。
+      //   `hostBaseUriUnusable` 是**探针**：证明这一页的 base 真的不能解析相对地址，
+      //   否则下面那条「垫片补齐 baseURI」在别的环境里会永远是绿的（测了个寂寞）。
+      hostBaseUriKind: String(g.__hostBaseUriKind || ''),
+      hostBaseUri: (() => {
+        try {
+          return String(g.__hostBaseUri);
+        } catch (e) {
+          return '#throw';
+        }
+      })(),
+      hostBaseUriUnusable: g.__hostBaseUriUnusable === true,
+      // 启动之后 `document.baseURI` 能不能当基准 —— 用**原生** URL 试（本页是浏览器）。
+      baseUriAfterBoot: (() => {
+        try {
+          return String(document.baseURI);
+        } catch (e) {
+          return '#throw: ' + (e && e.message);
+        }
+      })(),
+      baseUriUsableAfterBoot: (() => {
+        try {
+          new URL('probe/child.js', document.baseURI);
+          return true;
+        } catch (e) {
+          return false;
+        }
+      })()
     };
   });
 
@@ -276,21 +304,41 @@ function analyzePixels(rec) {
   console.log(`  UA: ${state.ua || '（拿不到）'}`);
   console.log(`  画布: ${state.canvases.map((c) => `${c.w}×${c.h}`).join(', ') || '（一块都没有）'}\n`);
 
-  add(
-    '宿主确实有原生 DOM（这一条是前置条件，不成立说明页面搭错了）',
-    state.docNative && state.docHasRealBody && state.docIsWindowDoc,
-    `createElement=${state.docNative} body.appendChild=${state.docHasRealBody} document===window.document=${state.docIsWindowDoc}`
-  );
-
-  // ★ 核心判据一：`document` —— 宿主有可用实现时，垫片必须**让路**
+  // ★ 核心判据一：`document` —— 宿主有**可用**实现时，垫片必须**让路**
+  //
+  // ⚠️ 这一条同时是**前置条件**：不成立说明页面搭错了，后面几条就没意义。
+  //    （原先这里写了两条判据、条件一模一样 —— 那是同一个事实数两遍，已合并。）
   //
   // 硬覆盖会抛（`document` 在 window 上是 `[LegacyUnforgeable]` 只读自有属性），
   // 而且它排在 `installGlobals()` 前面，一抛就把后面的 rAF 兜底与
   // 「抢上屏画布」全部连坐 → **纯黑屏，且窗口里一条报错都没有**。
   add(
-    'document 让路：宿主原生实现未被替换',
+    '宿主确实有原生 DOM，且 document 未被替换（让路生效）—— 本组判据的前置条件',
     state.docNative && state.docIsWindowDoc && state.docHasRealBody,
-    `document===window.document=${state.docIsWindowDoc} body.appendChild=${state.docHasRealBody}`
+    `createElement=${state.docNative} body.appendChild=${state.docHasRealBody} document===window.document=${state.docIsWindowDoc}`
+  );
+
+  // ★ 核心判据三：`document.baseURI` —— 宿主那份「能建元素、却不能当基准」时必须补齐
+  //
+  // 这是 `Failed to construct 'URL': Invalid URL` 的**第三种病因**，也是前两轮都没治到的一支：
+  // 产物里 `new URL("boot.js", document.baseURI)`（Vite 给动态导入生成的死实参）在
+  // 开发者工具模拟器里抛，而**同一个报错本地永远是绿的** —— 因为两个本地宿主的
+  // `baseURI` 恰好都能当基准（Worker 侧是我们替身的绝对 URL，本页是 `http://127.0.0.1:…`）。
+  //
+  // 根因是「让路」这条规则本身：`installDocument()` 见宿主 document 有 `createElement`
+  // 就让路，而微信开发者工具模拟器给的正是「能建元素、但 baseURI 不能解析相对地址」的对象
+  // —— 于是我们**替身**里那个可用的 `baseURI` 在 IDE 里从未生效。
+  //
+  // 两个条件缺一不可，且第一个是**探针**：
+  //   ① 这一页的基准 URL **真的**不能解析相对地址（`__hostBaseUriUnusable`，
+  //      由 index-dom.html 当场 `try { new URL('probe/child.js', base) } catch` 验出来）；
+  //      没有它，这条判据在任何「baseURI 恰好可用」的环境里都会绿，等于什么都没测；
+  //   ② 启动之后它能用了 —— 垫片确已接管。
+  add(
+    '宿主 baseURI 不能当基准时由垫片补齐（重现开发者工具模拟器的处境）',
+    state.hostBaseUriUnusable === true && state.baseUriUsableAfterBoot === true,
+    `宿主 base=${JSON.stringify(state.hostBaseUri)} 不可用=${state.hostBaseUriUnusable}` +
+      ` → 启动后可用=${state.baseUriUsableAfterBoot}（现值 ${JSON.stringify(state.baseUriAfterBoot)}）`
   );
 
   // ★ 核心判据二：`navigator` —— 宿主**没有/不可用**时，垫片必须**补上**
@@ -346,29 +394,32 @@ function analyzePixels(rec) {
     `启动后 typeof Intl = ${state.intlAfterBoot ? 'object（垫片）' : 'undefined —— 那 pixi 早该抛了'}`
   );
 
-  // ★ 宿主缺失的全局 `URL` —— 与 Intl 同一条规矩，但成因不同（2026-09-24）
+  // ★ `URL` 构造器 —— 本页**刻意保留原生实现**，与开发者工具模拟器同侧（2026-09-24）
   //
-  // 这次**两个本地宿主都恰好有** `URL`（本页是真 Chromium，另一页是 Web Worker），
-  // 而真机小游戏没有（`URL` 是 BOM）—— 于是「两侧全绿」曾经什么都不说明：
-  // 拆包后 Vite 给动态导入生成的 `__vitePreload(loader, deps, importerUrl)`
-  // 第三实参是 `new URL("boot.js", document.baseURI).href`，**实参照样求值**，
-  // 位于 `autoDetectRenderer` 的调用链上 ⇒ 真机启动即失败。
+  // 上一版在这一页把 `URL` 也删了，那是把**两个正交的维度混成了一个**，代价是
+  // 本页真正的故障（IDE 模拟器）反而测不出来。两个维度是：
   //
-  // 判据结构与 Intl 那条一致（宿主本来有 ⇒ 删除有意义；真删掉 ⇒ 复现到位），
-  // 但**追加行为探针**：只看「存不存在」分不清「宿主原生」与「我们的垫片」，
-  // 而后者才是要证明的事。探针串带一段 `..`，一次验到 merge /
-  // remove_dot_segments / recompose 三段。
+  //   A「宿主有没有 `URL` 构造器」  真机没有（BOM）／IDE 与浏览器有   → 由 verify:minigame 覆盖
+  //   B「`document.baseURI` 能不能当基准」  IDE 不行／其余都行        → 本页覆盖（见上一条判据）
+  //
+  // 混起来的具体后果：`env/document.ts` 的 `usableAsBase()` 会拿**当前宿主的**构造器去试，
+  // 而我们的 `MiniUrl` 比原生宽松得多 —— `about:blank` 在它眼里「可用」，于是
+  // 「补齐 baseURI」整条逻辑不触发，判据永远绿。**一个宿主同时改两个正交条件，
+  // 得到的是一个世界上不存在的环境。**
+  //
+  // 真实报错侧的旁证：用户拿到的是 `Failed to construct 'URL': Invalid URL` ——
+  // 那是**原生** Web IDL 实现的话术（我们的 `MiniUrl` 抛的是
+  // `Invalid URL: …（缺 base 时 input 必须是绝对 URL）`），所以 IDE 侧确实有原生 `URL`。
+  //
+  // 所以这条判据是**正向守卫**（不是「已抹掉」）：它红了就说明有人把维度又混回去了，
+  // 而下面那条 baseURI 判据会跟着变成永远绿。
   add(
-    '宿主本来有 URL，且已抹掉（复现真机小游戏的处境）',
-    state.hostHadUrl === true && state.urlGone === true,
+    '本页保留原生 URL（与开发者工具模拟器同侧）—— 「缺 URL」那条路径由 verify:minigame 覆盖',
+    state.hostHadUrl === true && state.urlGone === false,
     `hostHadUrl=${state.hostHadUrl} urlGone=${state.urlGone}` +
-      (state.urlGone === false ? ' —— 没抹掉，这条路径没被真正测到' : '')
-  );
-  add(
-    'URL 缺失时由垫片补上，且相对解析结果正确',
-    state.urlUsableAfterBoot === true && state.urlProbe === 'wxgame://code-package/dir/b.png',
-    `启动后 new URL('a/../b.png', 'wxgame://code-package/dir/') = ${state.urlProbe}` +
-      (state.urlUsableAfterBoot ? '' : '（垫片没装上）')
+      (state.urlGone
+        ? ' —— URL 被抹掉了：`usableAsBase()` 会改用我们宽松的 MiniUrl，baseURI 判据整条失效'
+        : '')
   );
   // `location` 在真 Chromium 里是 `[LegacyUnforgeable]` 只读属性，**删不掉也遮不住** ——
   // 所以本页不假装测过它，只如实报出这一侧的覆盖边界。

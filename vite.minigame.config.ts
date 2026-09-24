@@ -299,10 +299,113 @@ function atlasPlainUrl(): Plugin {
   };
 }
 
+/**
+ * 剥掉 Vite 给动态导入生成的 `__vitePreload(loader, deps, importerUrl)` 的**第三实参**。
+ *
+ * ## 为什么要剥：那是一个「永远不会被用到、却永远会求值」的表达式
+ *
+ * `importerUrl` 的唯一消费者在 helper 体内部，而那里整块是 `if (false) { … }`
+ * （`deps` 是 `void 0`，Vite 把 `deps` 处理分支常量消除了）。实测：helper 的函数体
+ * 一行都不执行。但**实参不受 `if (false)` 保护** —— 它在调用点求值。
+ *
+ * 而 `cjs` 格式下 Rollup 为它生成的表达式是这样的：
+ *
+ *     typeof document === "undefined"
+ *       ? require("url").pathToFileURL(__filename).href            // 左支：Node 分支
+ *       : _documentCurrentScript && … || new URL("boot.js", document.baseURI).href
+ *                                                                  // 右支：DOM 分支
+ *
+ * 两支在小游戏里**都不可用**，而且这一行同时依赖两样东西（`URL` 构造器 + 一个能当
+ * 基准的 `document.baseURI`）—— 四种宿主的缺法两两不同，于是同一个
+ * `Failed to construct 'URL': Invalid URL` 报错出现了**三次、三个不同病因**：
+ *
+ *   ① 无 DOM 宿主：我们造的 `document` 替身还没有 `baseURI` → base 是 `undefined`
+ *   ② 真机小游戏：**没有 `URL` 构造器**（BOM）→ `ReferenceError`
+ *   ③ 开发者工具模拟器：走「让路」分支，用宿主那个**能建元素、却不能当基准**的
+ *      `document` → 原生 `URL` 拿到坏 base 就抛
+ *
+ * ⇒ 前两轮都是在「补垫片」，但垫片治的是「宿主缺什么」，治不了「这行代码同时依赖两样东西」。
+ *    真正的收敛点是**让这行不再存在**：它本来是死代码，剥掉零语义损失，
+ *    顺带把 `require("url")` / `__filename` 这两个 Node 残留也从产物里清掉
+ *    （若哪天 `typeof document` 真为 `undefined`，左支会去 require 一个
+ *     小游戏里不存在的模块 —— 那是同一类隐患的第四次）。
+ *
+ * `enforce: 'post'` 保证跑在其他用户插件之后；**但真正要防的是 Vite 自己的 `post` 插件**
+ * —— 所以钩子用的是 `generateBundle` 而不是 `renderChunk`（理由见下）。
+ *
+ * ⚠️ 形态一旦对不上就**必须炸**，不能静默跳过：这段代码在真机上会抛，
+ *    而「构建期静默不生效 + 运行期在设备上炸」正是本项目反复踩的那类假绿。
+ */
+function stripImporterUrl(): Plugin {
+  /**
+   * 匹配那行 `importerUrl` 实参（一个三元表达式）。
+   *
+   * ⚠️ **同一个东西有不止一种写法，正则必须钉在稳定的锚点上：**
+   *
+   *   `renderChunk` 期（我第一版在这里写，**一处也匹配不上**）：
+   *     typeof document === 'undefined' ? require('u' + 'rl').pathToFileURL(__filename).href …
+   *   `generateBundle` 期 / 最终产物：
+   *     typeof document === "undefined" ? require("url").pathToFileURL(__filename).href …
+   *
+   * 差异是 Vite 自己的 post 插件造成的：`__VITE_IS_MODERN__` → `false`、
+   * `'u' + 'rl'` 被 esbuild 常量折叠成 `"url"`、引号被统一。
+   * 所以这里对**引号**与 **`require` 的写法**都容错，只钉三个稳定锚点：
+   *   `typeof document === <q>undefined<q>` → `.pathToFileURL(__filename).href` → `document.baseURI).href`
+   *
+   * 中间那段用**有界**非贪婪（`[\s\S]{0,400}?`）：容得下 `_documentCurrentScript`
+   * 那一串判断，又不会跨过别的代码跑飞（`document.baseURI` 在 pixi 里另有一处，
+   * 靠前缀锚点把它排除在外）。
+   */
+  const TERNARY =
+    /typeof document === (['"])undefined\1 \? require\((?:['"]url['"]|['"]u['"]\s*\+\s*['"]rl['"])\)\.pathToFileURL\(__filename\)\.href : [\s\S]{0,400}?document\.baseURI\)\.href/g;
+
+  return {
+    name: 'mota:strip-importer-url',
+    enforce: 'post',
+    /**
+     * ⚠️ **必须用 `generateBundle`，不能用 `renderChunk`。**
+     *
+     * 实测：`renderChunk`（哪怕带 `enforce: 'post'`）拿到的是**中间形态** ——
+     * Vite 自己的 `post` 插件还在它之后跑，会做上面说的那三处改写。
+     * 在 `renderChunk` 里按最终形态写正则 ⇒ 一处不中 ⇒ 要么静默放过（假绿），
+     * 要么被「残留即报错」的保险炸掉（我第一版就是后者，两轮才定位到是钩子选错了）。
+     *
+     * `generateBundle` 在所有 `renderChunk` 之后、写盘之前跑，改的就是最终那一份。
+     */
+    generateBundle(_options, bundle) {
+      for (const [file, item] of Object.entries(bundle)) {
+        if (item.type !== 'chunk') continue;
+        const code = item.code;
+        const hits = code.match(TERNARY);
+
+        if (!hits) {
+          // 没有动态导入的 chunk（game.js）本来就不该有它 —— 但**残留**就意味着形态变了。
+          if (code.includes('pathToFileURL')) {
+            const at = code.indexOf('pathToFileURL');
+            this.error(
+              `[minigame] ${file} 里还有 pathToFileURL，却没匹配上已知的 importerUrl 形态。\n` +
+                `  Vite/Rollup 换了生成形态：请更新 mota:strip-importer-url 的正则。\n` +
+                `  不要放过它 —— 这段在真机上会抛，构建期不红就等于把问题推到设备上。\n` +
+                `  现场：…${code.slice(Math.max(0, at - 200), at + 260)}…`
+            );
+          }
+          continue;
+        }
+
+        item.code = code.replace(TERNARY, 'void 0');
+        if (item.code.includes('pathToFileURL')) {
+          this.error(`[minigame] ${file} 剥离 importerUrl 后仍残留 pathToFileURL（形态可能不止一种）`);
+        }
+        this.warn(`[minigame] ${file}：已剥离 ${hits.length} 处 importerUrl 实参（Vite 的 Node/DOM 分支死代码）`);
+      }
+    }
+  };
+}
+
 export default defineConfig(({ mode }) => ({
   // 小游戏里没有「base URL」概念；留空让 Rollup 不生成相对 URL 辅助代码
   base: '',
-  plugins: [atlasPlainUrl()],
+  plugins: [atlasPlainUrl(), stripImporterUrl()],
 
   resolve: {
     alias: {
@@ -376,19 +479,10 @@ export default defineConfig(({ mode }) => ({
      * 小游戏里没有 `<link rel="modulepreload">` 这回事，这个 polyfill 没有意义。
      *
      * ⚠️ **它拦不住 `__vitePreload` 包装本身**（实测确认）：产物里仍然有
-     * `__vitePreload(loader, void 0, <import.meta.url 的展开式>)`。
-     * 而那句展开式在无 DOM 宿主里会抛 —— 真正的修法在 `src/minigame/env/document.ts`
-     * 的 `doc.baseURI`（给相对 URL 一个绝对基准），这里只是把没用的 polyfill 摘掉。
-     *
-     * 展开式的形态（`cjs` 格式下由 Rollup 生成，两个分支小游戏都用不了）：
-     *
-     *   typeof document === "undefined"
-     *     ? require("url").pathToFileURL(__filename).href          // 左支：小游戏没有 url 模块
-     *     : _documentCurrentScript && … || new URL("boot.js", document.baseURI).href
-     *                                                              // 右支：baseURI 必须有效
-     *
-     * 左支取不到（我们的 `document` 是词法绑定，`typeof` 永不为 `undefined`），
-     * 所以只要 baseURI 有效就不会抛。
+     * `__vitePreload(loader, void 0, <一个再也用不到的表达式>)`。
+     * 真正的收敛点是上面 `mota:strip-importer-url` 把那个第三实参整个剥掉
+     * （见那个插件的注释：同一个报错出现三次、三个不同病因，补垫片治不完）。
+     * 这里只是把没用的 polyfill 摘掉。
      */
     modulePreload: false,
     rollupOptions: {
