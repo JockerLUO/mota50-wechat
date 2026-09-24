@@ -104,7 +104,9 @@ export function applyEffects(state: GameState, data: GameData, effects: ItemEffe
           if (!m) continue;
           if (ex.roleIdAtLeast !== undefined && m.roleId >= ex.roleIdAtLeast) continue;
           if (ex.roleIds?.includes(m.roleId)) continue;
-          state.removed.add(entityKey(ctx.floor, x, y, 'monster', ent.id));
+          // key 必须用**实体自己**的坐标：BOSS 的占位块有 3×3 格，被炸的那一格
+          // 通常不是它自己那一格，用 (x, y) 拼出来的 key 移除不掉任何东西
+          state.removed.add(entityKey(ctx.floor, ent.x, ent.y, 'monster', ent.id));
           n++;
         }
         lines.push(n ? `炸掉相邻 ${n} 只怪物` : '相邻没有可炸的怪物');

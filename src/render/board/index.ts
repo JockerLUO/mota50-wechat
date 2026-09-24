@@ -32,8 +32,9 @@
  */
 
 import { Container, Graphics, Rectangle, Sprite, Texture, TilingSprite } from 'pixi.js';
-import type { GameData } from '../../data';
-import { tileAt, type GameState } from '../../game/state';
+import type { FloorEntity, GameData } from '../../data';
+import { entityFootprint, tileAt, type GameState } from '../../game/state';
+import { singleFootprint } from '../../game/footprint';
 import { atlas, fitSize, isWallChar, terrainKeyFor, variantIndex } from '../atlas';
 import {
   drawHero,
@@ -528,6 +529,15 @@ export class Board extends Container {
       v.node?.destroy({ children: true });
       this.entityViews = this.entityViews.filter((s) => s !== v);
     }
+    // BOSS 重新挂到最后 —— 它是唯一会**盖住同格其它实体**的东西。
+    //
+    // 参考源把镐（第 15 层）与雪花（第 35 层）放在 BOSS **那一格**：先打后捡的
+    // 顺序由 `entityAt` 保证（数据里怪排在道具之前），但绘制顺序是另一回事 ——
+    // 道具若不先画，就会浮在 BOSS 的胸前。重新 `addChild` 即把它移到末尾
+    // （Pixi 的 `addChild` 对已在树上的对象是「移动到末尾」）。
+    for (const v of this.entityViews) {
+      if (v.boss && v.node) this.entityLayer.addChild(v.node);
+    }
     // 相位错开，别让满屏怪物同步呼吸（NPC 同理 —— 两个智者一起点头很出戏）。
     // 相位由 **key 散列**决定而不是数组下标 —— 理由见 bobPhase 的说明。
     this.entityViews.forEach((v) => {
@@ -547,12 +557,30 @@ export class Board extends Container {
   ): EntityView {
     const view: EntityView = { key, node: null, x, y };
     const c = new Container();
-    c.x = x * this.cellPx;
-    c.y = y * this.cellPx;
     const S = this.cellPx;
-    const cx = S / 2;
-    const cy = S / 2;
-    const r = S * 0.34;
+
+    // ── 占位块：容器**从占位块的左上角起算**，局部坐标一律以块为单位 ────────
+    //
+    // 杂兵 / 道具 / NPC 的占位块是 1×1，所以 `fx0 = x`、`fw = 1` ——
+    // 整段与改动前逐字等价。BOSS 是 `footprintTiles`（当前 3）见方，
+    // 容器就挪到块的左上角、局部尺寸放大到 3 格。
+    //
+    // 为什么不「容器仍在怪物那一格、只把精灵往左上拉 1.5 格」：那样
+    // 局部坐标会带半格小数，而 `restY`（呼吸基准）是**像素**值 ——
+    // 半格 = 16px 的偏移一旦参与取整，呼吸就会抖动（本项目在像素坐标上
+    // 已经栽过一次，见 `bob.ts` 里「位移必须是整数像素」那一段）。
+    const fp = type === 'monster' ? entityFootprint(data, { type, id, x, y } as FloorEntity) : singleFootprint(x, y);
+    const fw = fp.x1 - fp.x0 + 1;
+    c.x = fp.x0 * S;
+    c.y = fp.y0 * S;
+    if (fw > 1) {
+      view.footprint = fp;
+      view.boss = true;
+    }
+
+    const cx = (fw * S) / 2;
+    const cy = (fw * S) / 2;
+    const r = S * 0.34 * fw;
 
     if (type === 'monster') {
       const mon = data.monsters[id];
@@ -560,7 +588,7 @@ export class Board extends Container {
       const pal = monsterPalette(id);
       view.monsterId = id;
 
-      // 怪物**脚踩在格子下沿**（`standY = S`）。
+      // 怪物**脚踩在占位块的下沿**（`standY = fw * S`）。
       //
       // 这里原本把精灵整体抬高 10px（`standY = S - plateH - 1`，即 22），
       // 为的是在脚下腾出「战斗评级指示灯」的位置。2026-09-23 玩家要求
@@ -573,7 +601,13 @@ export class Board extends Container {
       // 抬 1px 只是在一段空白里动，看不出呼吸）。
       //
       // 评级信息没有丢：它在 HUD 的战斗面板里（hud/ 用同一份 GRADE_STYLE）。
-      const standY = S;
+      //
+      // BOSS 同理：`standY` 是**占位块的**下沿，精灵 96px 恰好盖住 3 行 ——
+      // 于是「它占哪几格」在画面上就是字面可见的，而这也是不额外需要
+      // 「BOSS 画在其它实体之上」的原因：精灵不越出占位块，就不会与
+      // 相邻格里的其它实体叠在一起（唯一的例外是参考源把镐 / 雪花放在了
+      // BOSS 那一格 —— 那两件道具在 BOSS 死后才该被看见，见下面的绘制顺序）。
+      const standY = fw * S;
 
       const tex = atlas.ready ? atlas.monster(id, 'idle', 0) : null;
       if (tex) {
@@ -589,7 +623,7 @@ export class Board extends Container {
         c.addChild(sp);
       } else {
         const g = new Graphics();
-        // 兜底图形与精灵同底（都是 standY = 格底），两条渲染路径的落点必须一致，
+        // 兜底图形与精灵同底（都是占位块下沿），两条渲染路径的落点必须一致，
         // 否则「有图集」和「没图集」两种情况的怪物高度对不上
         drawMonsterBody(g, id, cx, cy, r * 0.92, pal.body);
         c.addChild(g);
@@ -604,14 +638,13 @@ export class Board extends Container {
         // BOSS 的记号是**脚下的一圈椭圆光环**，不是腰上的圆环。
         //
         // 原来是以格中心为圆心的 `circle(…, S * 0.44)`。BOSS 从 48px 长到
-        // 64px（`tools/assetlib/config.py` 的 `BIG_SCALE`，经 MANIFEST 的 `drawScale`
-        // 传下来）之后，格中心落在它**腰**上，
+        // 96px（3 格）之后，格中心落在它**腰**上，
         // 落屏后读成「腰里套了个金箍」，而不是「这是个打不过的大块头」。
-        // 光环属于**地面**：压住格底、横向铺开、纵向压扁（俯视透视）。
-        // 宽高都按格子算，不随精灵高度漂 —— 换素材不会让它跑位。
-        const rw = S * 0.9;
+        // 光环属于**地面**：压住占位块底边、横向铺开、纵向压扁（俯视透视）。
+        // 宽度按**占位块**算（`fw * S`），所以它同时是「这 3 格都是它的」
+        // 在画面上的唯一提示 —— 换素材、改 footprintTiles 都不会让它跑位。
         const rh = Math.max(5, S * 0.24);
-        over.ellipse(cx, S - rh / 2, rw / 2, rh / 2)
+        over.ellipse(cx, fw * S - rh / 2, (fw * S * 0.9) / 2, rh / 2)
           .stroke({ width: 2, color: T.gold, alpha: 0.9 });
       }
       c.addChild(over);

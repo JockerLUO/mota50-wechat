@@ -150,6 +150,19 @@ export interface RegionDef {
 
 export interface GameConstants {
   hero: HeroConstants;
+  /**
+   * BOSS 的棋盘占位 —— **本项目自有规则**，不是原版的（原版 BOSS 与杂兵同为 1 格）。
+   *
+   * 它是三方共用的单一来源：素材侧据此算绘制网格（格子 × footprintTiles），
+   * 渲染层据此算落屏尺寸，引擎据此算阻挡。改这一个数会同时改掉三方，
+   * 构建期有一条断言钉住「素材网格 == 格子 × 本值」。
+   */
+  boss: {
+    footprintTiles: number;
+    note?: string;
+    singleSourceNote?: string;
+    deviatesFromSource?: string;
+  };
   progression: { hasExperience: boolean; hasLevel: boolean; note: string };
   combat: Record<string, unknown>;
   shop: {

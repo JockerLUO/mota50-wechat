@@ -98,12 +98,52 @@ if (problems.length) {
   process.exit(1);
 }
 
+// ── 人工偏离表 ──────────────────────────────────────────────────
+//
+// 目前只有一条，而且它是**玩法逼出来的**，不是审美：BOSS 在本项目里占 3×3 格
+// （`data/constants.json` 的 `boss.footprintTiles`），撞上占位格即开战。
+//
+// 参考数据的第 50 层王座间是 5×5 外框（16 面墙）+ 3×3 内间，魔王站在正中心
+// (5,5) —— 3×3 占位会把**整个内间占满**，玩家连落脚格都没有，更够不着它。
+// 所以把外框扩到 7×7、内间扩到 5×5：占位仍是 3×3，外圈留出一整环落脚格。
+//
+// 这是本项目对参考地图的**唯一一处地形偏离**。判定它是「必要」的理由：
+// 不改则第 50 层结构上无法通关（不再是数值难，而是够不着）。
+const TERRAIN_OVERRIDES = {
+  50: [
+    {
+      x: 2, y: 2, w: 7, h: 7,
+      why: '王座间外框 5×5 → 7×7（内间 3×3 → 5×5），让 3×3 占位的魔王仍可被攻击',
+      // 改之前这块长这样（含四周的星际空间）—— 对不上就说明参考数据变了
+      expect: [
+        '*******',
+        '*#####*',
+        '*#...#*',
+        '*#...#*',
+        '*#...#*',
+        '*#####*',
+        '*******',
+      ],
+      rows: [
+        '#######',
+        '#.....#',
+        '#.....#',
+        '#.....#',
+        '#.....#',
+        '#.....#',
+        '#######',
+      ],
+    },
+  ],
+};
+
 // ── 逐层转换 ────────────────────────────────────────────────────
 const floors = [];
 const placement = new Map();   // monsterId → [floorIndex...]
 const terrainUsage = new Map(); // terrain code → 总出现次数
 const unknownEntities = [];
 const guardPairs = [];          // BOSS 与道具同格的「守护」组合
+const appliedPatches = [];      // 实际生效的人工偏离（末尾汇报）
 
 for (const idx of indices) {
   const terrain = terrainLayer.get(idx);
@@ -121,22 +161,59 @@ for (const idx of indices) {
         line += '?';
       } else {
         line += ch;
-        terrainUsage.set(code, (terrainUsage.get(code) || 0) + 1);
       }
     }
     rows.push(line);
+  }
+
+  // ── 人工偏离：本项目**有意**与参考数据不同的那些格子 ────────────
+  //
+  // ## 为什么偏离必须写在导入器里，而不是直接改 data/floors/*.json
+  //
+  // 楼层文件是**本脚本生成的**（见文件末尾那句「已写出 N 个楼层文件」）。
+  // 直接手改 floor-50.json 的后果是：谁哪天重跑一次导入器，改动就被无声回滚，
+  // 而 `npm run validate` 只会看到「数据又变回参考版了」—— 这正是本项目
+  // 反复吃过的那类亏（改动不在生成它的那条链上）。
+  //
+  // 所以偏离写在这里，而且**带 `expect`**：先核对「改之前这块长这样」，
+  // 不符就抛。参考数据将来若变了，这里会当场报错，而不是照着旧假设
+  // 打一块对不上的补丁（那会产出一种既不是参考版也不是本意版的地图）。
+  const patches = TERRAIN_OVERRIDES[idx] ?? [];
+  for (const p of patches) {
+    const before = [];
+    for (let y = p.y; y < p.y + p.h; y++) before.push(rows[y].slice(p.x, p.x + p.w));
+    if (p.expect && before.join('|') !== p.expect.join('|')) {
+      problems.push(
+        `第 ${idx} 层的人工偏离补丁 (${p.x},${p.y},${p.w}×${p.h}) 与参考数据对不上：\n` +
+          `      期望 ${p.expect.join('|')}\n      实际 ${before.join('|')}\n` +
+          `      → 参考数据变了。请重新核对「${p.why}」这条偏离还成不成立，再更新 expect。`
+      );
+      continue;
+    }
+    p.rows.forEach((line, i) => {
+      if (line.length !== p.w) {
+        problems.push(`第 ${idx} 层补丁第 ${i} 行长度 ${line.length} ≠ 宽度 ${p.w}`);
+        return;
+      }
+      rows[p.y + i] = rows[p.y + i].slice(0, p.x) + line + rows[p.y + i].slice(p.x + p.w);
+    });
+    appliedPatches.push(`第 ${idx} 层 (${p.x},${p.y}) ${p.w}×${p.h}：${p.why}`);
   }
 
   const entities = [];
   const stairs = { up: [], down: [] };
   const doorCount = { yellow: 0, blue: 0, red: 0 };
 
-  // 楼梯位置从地形层推导，不另存数据
+  // 楼梯 / 门 / 地形使用统计一律**从补丁之后的字符画推导**（不是从原始编码
+  // 数组）—— 否则补丁新增或删掉的东西不会体现出来，两份真值当场分叉。
+  // 这也解释了上面那个 rows 循环为什么不顺手统计：那时的 rows 还没打补丁。
   for (let y = 0; y < ROWS; y++) {
     for (let x = 0; x < COLS; x++) {
-      const code = terrain[y * COLS + x];
-      const def = terrainByCode.get(code);
+      const ch = rows[y][x];
+      const def = terrainByChar.get(ch);
       if (def?.stairs) stairs[def.stairs].push({ x, y });
+      const code = terrainCodeByChar.get(ch);
+      if (code !== undefined) terrainUsage.set(code, (terrainUsage.get(code) || 0) + 1);
       if (code === 7) doorCount.yellow++;
       if (code === 8) doorCount.blue++;
       if (code === 9) doorCount.red++;
@@ -383,6 +460,12 @@ if (exitGaps.length) {
   console.log();
 } else {
   console.log('✓ 所有非顶层楼层都有向上出口：或走上楼梯，或已在 floor-notes.json 中注明依赖剧情/传送道具');
+  console.log();
+}
+
+if (appliedPatches.length) {
+  console.log('人工偏离（本项目有意不改回参考数据的格子）');
+  appliedPatches.forEach((p) => console.log('  ' + p));
   console.log();
 }
 

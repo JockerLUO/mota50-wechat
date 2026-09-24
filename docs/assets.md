@@ -107,7 +107,7 @@ tools/build-assets.py            入口（薄）—— 只做 sys.path + 调 ass
               ├── hero.py        勇者（H_* 常量表 + 造型 + 断言）
               ├── npc.py         六个 NPC（造型 / 职能色 / 比例断言）
               ├── monsters.py    35 只怪物（13 种形状 + 规模断言）
-              ├── bosses.py      BOSS（64 网格体系 + 剪影/密度断言）
+              ├── bosses/        BOSS（**一只一个文件** + common.py：96 网格体系 / 剪影 / 密度断言）
               └── main.py        唯一有副作用的模块：装配图集、写 MANIFEST
                     │
                     ├──▶ assets/atlas/*.png        运行时图集
@@ -144,13 +144,13 @@ python3 tools/preview-board.py    # 目视核对用的对照图
 | 某只怪物叫什么 / 用哪张底图 / 什么色相 | `assetlib/data.py` 的 `MONSTERS`（Boss 另有 `BOSS_IDS` / `OVERSIZE_BOSSES`） |
 | 某件道具的图标形状 | `assetlib/items.py` |
 | 地板 / 墙壁 / 上下楼的样子 | `assetlib/terrain.py` |
-| 勇者 / 某只怪 / 某个 NPC 的造型 | 对应 `hero.py` / `monsters.py` / `bosses.py` / `npc.py`，**动的是文件里的常量行号表**，不是绘制函数里的裸数字 |
+| 勇者 / 某只怪 / 某个 NPC 的造型 | 对应 `hero.py` / `monsters.py` / `bosses/`（每只一个文件）/ `npc.py`，**动的是文件里的常量行号表**，不是绘制函数里的裸数字 |
 | 全局配色（皮肤、金属三阶、描边墨色） | `assetlib/palette.py` |
 | 输出尺寸 / 超采样次数 / 图集格子 | `assetlib/config.py` |
 
 **断言跟着它的对象走。** 每条素材的尺寸/比例/密度断言与它的绘制函数放在同一个文件里
 （`hero.py` 的 `verify_hero_art`、`npc.py` 的 `verify_npc_scale`、`monsters.py` 的
-`verify_monster_fit`、`bosses.py` 的 `verify_boss_art`、`terrain.py` 的 `verify_terrain`）——
+`verify_monster_fit`、`bosses/common.py` 的 `verify_boss_art`、`terrain.py` 的 `verify_terrain`）——
 改造型时会看到同一文件里的判据，不会出现「改了画法、忘了还有个断言在别处」。
 
 ---
@@ -180,12 +180,13 @@ python3 tools/preview-board.py    # 目视核对用的对照图
 | 地形 | 统一放大到 **64 网格**（`terrain_raster`） | 地形一律占一格、落屏 = cell |
 | 角色 / 道具 | **源 ×SS**（`supersample`） | 落屏尺寸各不相同，统一到 64 会把小道具放大一倍 |
 | 怪物（手绘 9 种形状，27 只） | **手绘 32 网格 → Scale2x 一遍到 64**（`_mon_out`） | 直接画在 32 网格（`MON_W`，细节 = 旧 16 网格的 4×），与地形同理是真·手绘细节；落屏仍由 `drawScale` 决定 |
-| **BOSS（8 只）** | **画在 64 网格 → 1:1 落屏**（不经任何换算） | 绘制网格 = 出图网格，落屏 64px（两格）。见 §13.11 |
+| **BOSS（8 只）** | **画在 96 网格 → 1:1 落屏**（不经任何换算） | 绘制网格 = 出图网格，落屏 96px = **3 格**。网格按**占位格数**算出来（`CELL × footprintTiles`）。见 §13.14 |
 
 「大家伙」（旧的 48px / 1.5 格档）现在**已无怪物使用** —— 原来是
-`dragon / kraken / demonKing / demonKingTrue` 四只，它们全部并入了 64px 的
-BOSS 体系（§13.11）。判据 `A17` 仍放行 1.5 格是为了兼容手工试验，
-但实际取值只剩「一格 32」与「BOSS 两格 64」两档。
+`dragon / kraken / demonKing / demonKingTrue` 四只，它们先并入了 64px 的
+BOSS 体系（§13.11），再随全体 BOSS 一起长到 96px（§13.14）。
+判据 `A17` 仍放行 1.5 格是为了兼容手工试验，但实际取值只剩
+「一格 32」与「BOSS 三格 96」两档。
 
 ### 6.2 怪物靠「调色板变体」成族，而不是逐个重画
 
@@ -252,11 +253,11 @@ orc / orcWarrior ·  bat / bigBat / vampireBat ·  knight / knightCaptain / dark
 > 角色 / 怪物 / 道具按「源 ×SS」。门的源本来就 32×32，按 ×SS 会到 128，
 > 落屏 64px —— 一扇门顶两格宽（本轮实际踩到）。详见 §6.1 的表。
 
-> ⚠️ **BOSS 是第三条规则：画在 64 网格、1:1 落屏，两条换算都不走。**
-> 见 §13.11 —— 它们的绘制网格**就是**出图网格（`BOS_W = BOS_H = 64`），
-> `BOSS_DRAW_SCALE = 1.0`，落屏 64px（两格）。别把它们套进上面那条
-> 「32 网格 → Scale2x 到 64 出图」：那会把一只已经在 64 网格上的 BOSS
-> 再放大一遍（`_mon_out` 对已是 64 的帧是空操作，**但语义是错的**，
+> ⚠️ **BOSS 是第三条规则：画在 96 网格、1:1 落屏，两条换算都不走。**
+> 见 §13.14 —— 它们的绘制网格**就是**出图网格（`BOS_W = BOS_H = CELL × BOSS_TILES = 96`），
+> `BOSS_DRAW_SCALE = 1.0`，落屏 96px（三格）。别把它们套进上面那条
+> 「32 网格 → Scale2x 到 64 出图」：那会把一只已经在 96 网格上的 BOSS
+> 再放大一遍（`_mon_out` 对已是 96 的帧是空操作，**但语义是错的**，
 > 而下一个人读代码时会以为它还在 32 网格上）。
 
 ---
@@ -389,7 +390,7 @@ orc / orcWarrior ·  bat / bigBat / vampireBat ·  knight / knightCaptain / dark
 ```jsonc
 {
   "meta": { "baseTile": 16, "rasterTile": 64, "supersample": 4, "cell": 32,
-            "drawScale": 0.5, "bigScale": 3, "atlases": { … } },
+            "drawScale": 0.5, "atlases": { … } },
   // rasterTile = baseTile × supersample；drawScale = cell / rasterTile
 
   "terrain": {
@@ -1016,7 +1017,9 @@ ASCII 廓形 + 逐行宽度序列**，对着**宽度序列**判断，而不是�
 | 内部 4×4 均价（腐蚀 2px） | 1.61 ~ 2.13 | **1.97 ~ 2.28** | 1.8（改前 6/8 只报红） |
 
 > **判据升级的验收方式是「拿旧素材喂新判据」**：把 `git show HEAD:tools/build-assets.py`
-> （拆分前是单文件；拆后同一批函数住在 `HEAD:tools/assetlib/bosses.py`）
+> （拆分前是单文件；拆后同一批函数住在 `HEAD:tools/assetlib/bosses.py`，
+> 现在冻结在 `reference/bosses/bosses-64grid-baseline.py`，复现入口
+> `tools/measure-bosses-thresholds.py`）
 > 载进同一个进程，用它的 `boss_art_frames()` 生成帧、喂给新代码的
 > `verify_boss_art()` —— 实测报红 8 条（4 只内部细节 + vampire 密度 +
 > dragon/demonKingTrue 头部不对称），而新素材 0 条。阈值定在「改前必红」
@@ -1096,6 +1099,101 @@ demonKingTrue 15.1%。
 demonKingTrue, kraken)`，只对这四只量头部对称度。名单**写死不全局量**，因为
 骷髅队长持盾、骑士队长持大剑、法师抱法杖、吸血鬼刻意不对称（竖领一高一低、
 斗篷偏披）—— 全局量会把它们全部误杀。实测改后最大 2.3%（dragon 2.2%）。
+
+### 13.14 BOSS 重绘 + 尺寸三倍 + **棋盘占 3×3**（2026-09-24）
+
+玩家原话：「把 boss 的模型重新起一个文件另放，重绘 boss 模型更精致更逼真、
+尺寸扩大三倍；boss 在游戏中所占的位置变大，阻挡玩家通过」。
+
+这一轮与前面几轮最大的不同：**尺寸不再是素材自己的事**。它同时改了玩法
+（占 3×3 格、挡住去路），而那意味着「绘制网格」这个数字有了第二个来源。
+
+| | 改前 | 改后 |
+|---|---|---|
+| 绘制网格 | 64 | **96**（= `CELL × BOSS_TILES` = 32 × 3） |
+| 落屏 | 64px（2 格） | **96px（3 格）** |
+| 棋盘占位 | 自己那 1 格 | **3×3 格，九格都不可走进** |
+| 代码组织 | 一个 `bosses.py`（927 行） | **`bosses/` 包，一只一个文件** |
+
+**① 网格从哪来 —— 单一来源，三方共读。**
+
+`data/constants.json` 的 `boss.footprintTiles = 3` 是唯一真值：
+
+```
+素材（bosses/common.py）   BOS_W = CELL × BOSS_TILES = 96   → 绘制网格
+渲染（board/index.ts）     精灵落屏 = CELL × BOSS_TILES      → 96px
+引擎（game/footprint.ts）  哪九格走不进去
+```
+
+构建期有一条断言钉住「素材绘制网格 == 格子 × 占位格数」（`verify_boss_art` 判据 0），
+所以这个数字**不存在只改一处的可能**。要再放大，改 `footprintTiles` 一个数，
+重跑三步流水线即可 —— 不要动 `MONSTERS` 表里的 `drawScale` 那一列（对 BOSS 它
+统一写 1，是刻意的「误导不了的写法」，有断言兜底）。
+
+**② 八只都重画了一遍，四只在判据上原本是「同分」的。**
+
+改前的四只大 BOSS（dragon / kraken / demonKing / demonKingTrue）已经拿到过
+密度判据的 4.00 分，所以**光按旧画法铺到 96 网格，密度会原地不动** ——
+「重绘」在判据眼里等于没发生。八只各自要补的东西：
+
+| 只 | 改动要点 |
+|---|---|
+| skeletonCaptain | 肋骨四对 → 六对、齿缝四道 → 六道（96 网格给得出行数了） |
+| vampire | 褶从「只铺下摆 30 行」改成**铺满整件斗篷**，下摆补亮线；内衬走 `bar_sym` |
+| kraken | 新增第四阶配色 `ridge`（旧画法的 `dark→light` 是硬边）；纵向肌理 / 色素斑 / 鳍辐条 / 腕筋 / 吸盘成排 |
+| archmage | 袍面绗缝 + 宝珠高光阶 |
+| dragon | 正面朝向（上一轮）之后的楔形吻 + 颊鳍在 96 网格上重排 |
+| demonKing | 角环纹改为**沿分段自动推算**（手写会漏节，留一整块纯骨色）；头腔补眉弓/颧影 |
+| knightCaptain | 披风纵褶 + 盾徽三阶 |
+| demonKingTrue | 与魔王共用骨架，靠角数/披风/甲色区分 |
+
+**③ 门槛重新量过，并把「改前必红」做成了可复现的入口。**
+
+`verify_boss_art` 的四条门槛原本是**装饰性的**：旧值（密度 3.0 / 内部 1.80 /
+头不对称 12% / 剪影 1100）在改前**一条都不红** —— 也就是说它们全绿时并没有
+在保护任何东西。现在改成：
+
+| 判据 | 旧值 | 新值 | 改前（64 网格）读数 | 改后（96 网格）读数 |
+|---|---|---|---|---|
+| 细节密度（中位颜色数） | 3.0 | **3.5** | 3.00 ~ 4.00 | 4.00 ~ 5.00 |
+| 内部细节（腐蚀后均价） | 1.80 | **2.40** | 1.97 ~ 2.28 | 2.47 ~ 2.92 |
+| 头部不对称（正面朝向的 4 只） | 12% | **2%** | 最大 2.3% | 最大 0.0% |
+| 剪影两两差异 | 1100 | **1500** | 最小的 28 对全红 | 最小 1726 |
+
+> ⚠️ 诚实说明：**密度是「整数中位数」，分辨率就是 1** —— 所以「门槛 3.5」与
+> 「门槛 4.0」行为等价；而且有 3 只在旧版就已经是 4.00，这条判据对它们
+> **没有区分力**，它们由「内部细节」那条守着。留 3.5 是为了让这个数字
+> 明确地落在旧分布之上，而不是为了精度。
+
+旧素材（64 网格那一版）被**冻结**成 `reference/bosses/bosses-64grid-baseline.py`，
+测量入口是 `tools/measure-bosses-thresholds.py`（唯一入口，含探针：拿改前素材
+× 现役门槛跑一遍，逐条列出会红在哪；如果一条都不红，它 **return 1 并打印
+「门槛失效」**）。实测逐只 **8/8 红**、剪影 **28/28 对红**。
+
+**④ 顺手修掉一条「静默空转」的旧断言。**
+
+`main.py` 里有一条「大家伙落屏尺寸必须一致（防体型层级倒挂）」的判据，
+它的筛法原本是 `node["drawScale"] == BIG_SCALE (3)`。BOSS 改成 drawScale = 1.0
+之后**没有任何怪还等于 3** —— 集合恒为空，这条断言当场变成空转，而且怎么改都绿。
+现在改成按**落屏尺寸**筛（`frame.w × drawScale > CELL`），并补一条
+「至少得有一个大家伙」的存在性探针。`BIG_SCALE` 与 `meta.bigScale` 一并删除
+（后者的消费者是 0，留着只会让人以为还有「3 倍大家伙」这一档）。
+
+两条分支都实测过会红：
+
+```
+# 阈值放到 0 → 连杂兵也算大家伙
+- 画得比一格大的怪落屏尺寸不一致，体型层级会倒挂：32px → bat, bigBat, …
+  （27 只）；96px → archmage, demonKing, …（8 只）
+# 阈值放到天上 → 集合必空
+- 没有任何怪物画得比一格（32px）大 —— 「体型层级」这条断言失去意义。
+  BOSS 应当占 32 × 3 格 = 96px，请检查 BOSS 是不是还画在 96 网格上、
+  drawScale 是不是 1.0
+```
+
+**⑤ 目视核对**：`tools/preview-bosses.py` → `assets/preview/bosses.png`
+（8 只 × 2 遍，932×460）。八只都读得出来：骷髅铠 + 圆盾、骑士白银甲红披风、
+吸血鬼斗篷纵褶、大法师金袍宝珠、乌贼巨眼纵纹、魔龙楔形吻、魔王双形态。
 
 ---
 

@@ -3,14 +3,18 @@
  *
  * 图集帧 = 原始素材 × supersample，drawScale 同比缩小 ——
  * 量「落屏尺寸」才是要保护的不变量，量帧尺寸会随 SS 一起变、等于没测。
- * 怪物落屏允许三档：一格 32 / 大家伙 48 / BOSS 的两格 64。
+ * 怪物落屏分两种样本（2026-09-24 起 BOSS 从「64px 两格」改成「占 3×3 格」）：
+ *   · 非 BOSS —— 帧在 rasterTile 网格上，落屏一格（或旧的「大家伙」1.5 格）；
+ *   · BOSS   —— 帧就是 `格子 × 占位格数`（= 96 网格），1:1 落屏 96px。
+ *     **不再允许 BOSS 落屏 64px**：那正是这次改动要消掉的旧版尺寸，
+ *     而旧版判据把它当合法档放行（见下面那一段注释）。
  *
  * 代码逐字符取自拆分前的 tools/verify-visual.cjs（只做了缩进平移），
  * 所以这里的行号/注释都与那版同源，改断言时不必再回头对旧文件。
  */
 
 async function run(ctx) {
-  const { page, check, MANIFEST, terrainPng, ROOT, DIST, fs, path } = ctx;
+  const { page, check, MANIFEST, terrainPng, ROOT, DIST, fs, path, BOSS_IDS, BOSS_TILES } = ctx;
 
   // ── A17 像素密度：网格翻倍，但落屏尺寸一点不变 ──
   //
@@ -54,25 +58,45 @@ async function run(ctx) {
         `应当是 ${rasterTile} 网格 × ${wantScale}`
     );
   }
-  // 怪物：帧一律 = rasterTile 网格；落屏要么一格、要么「大家伙」1.5 格、
-  // 要么 BOSS 的两格。三段尺寸各有出处，不是拍脑袋放行：
-  //   · 一格(32)    —— 普通怪，必须装进格子（格子边界决定「走进哪格打谁」）；
-  //   · 1.5 格(48)  —— 旧的「大家伙」档（现已无怪使用，留着兼容手工试验）；
-  //   · 两格(64)    —— BOSS：画在 64 网格、1:1 落屏（`BOSS_DRAW_SCALE = 1.0`）。
-  //     ⚠️ BOSS 从 48px 长到 64px 时，这条判据是**唯一报红的**（它硬编码了
-  //     「大家伙 = 1.5 格」）。放行 64 不会放过杂兵：谁允许画大由 A6 单独把关
-  //     （「画得比一格大的必须都是玩法 BOSS」），两条判据是互补的。
+  // 怪物：帧与落屏尺寸按「是不是 BOSS」分两套，两边都不是拍脑袋放行 ——
+  //   · 非 BOSS：帧 = rasterTile 网格（超采样的产物），落屏一格(32)或 1.5 格(48)。
+  //     1.5 格那一档是旧的「大家伙」尺寸，现已无怪使用（留着兼容手工试验）。
+  //   · BOSS：帧 = `格子 × 占位格数`（96）、落屏 **1:1** 等于它占的那几格。
+  //
+  // ⚠️ 这一条曾经硬编码「BOSS 的两格(64)」。BOSS 从 64px 长到 96px 时它是
+  //    **唯一报红的**判据 —— 也就是说，旧版把它写成「合法档」之后，
+  //    「BOSS 悄悄缩回两格」就再没有判据管了（A6 只看「有没有比一格大」，
+  //    64px 当然比 32px 大，会通过）。所以现在改成从
+  //    `data/constants.json` 的 `boss.footprintTiles` 推：素材网格、落屏尺寸、
+  //    棋盘占位三方必须是同一个数字，谁掉队这里就报谁。
+  //    这里量的是 MANIFEST（构建期自述），A5a 量的是真正落屏的包围盒 ——
+  //    两边都对上了，「画出来的范围 == 走不进去的范围」才算成立。
+  const bossFrame = cell * BOSS_TILES;
   const monBad = [];
   for (const [id, node] of Object.entries(MANIFEST.monsters)) {
     if (!node) continue;
+    const isBoss = BOSS_IDS.includes(id);
     const onScreen = node.frame.w * node.drawScale;
-    if (node.frame.w !== rasterTile) {
+    if (isBoss) {
+      if (node.frame.w !== bossFrame) {
+        monBad.push(`${id} 帧 ${node.frame.w} 不是 ${bossFrame}（= 格子 ${cell} × 占位 ${BOSS_TILES} 格）`);
+      } else if (node.frame.w !== node.frame.h) {
+        monBad.push(
+          `${id} 帧 ${node.frame.w}×${node.frame.h} 不是正方形 —— 占位块是 ` +
+            `${BOSS_TILES}×${BOSS_TILES}，精灵比它高或矮都会捅出去`
+        );
+      } else if (!near(onScreen, bossFrame)) {
+        monBad.push(
+          `${id} 落屏 ${onScreen} ≠ 占位块 ${bossFrame} —— BOSS 必须 1:1 盖住它占的 ` +
+            `${BOSS_TILES}×${BOSS_TILES} 格（改大之后它同时是「这 ${BOSS_TILES} 格都是它的」的唯一提示）`
+        );
+      }
+    } else if (node.frame.w !== rasterTile) {
       monBad.push(`${id} 帧 ${node.frame.w} 不是 ${rasterTile} 网格`);
-    } else if (
-      !near(onScreen, cell) && !near(onScreen, cell * 1.5) && !near(onScreen, cell * 2)
-    ) {
+    } else if (!near(onScreen, cell) && !near(onScreen, cell * 1.5)) {
       monBad.push(
-        `${id} 落屏 ${onScreen} 既不是一格(${cell})、大家伙(${cell * 1.5})，也不是 BOSS 的两格(${cell * 2})`
+        `${id} 落屏 ${onScreen} 既不是一格(${cell})也不是大家伙(${cell * 1.5}) —— ` +
+          `非 BOSS 不许画得比一格大（谁允许画大另有 A6 把关）`
       );
     }
   }
@@ -116,6 +140,7 @@ async function run(ctx) {
 
   check(
     `A17 像素密度：图集 ${rasterTile} 网格（原始 ${meta.baseTile} ×${ss}）、drawScale=${meta.drawScale}，` +
+      `BOSS ${bossFrame} 网格 = 占位 ${BOSS_TILES} 格、1:1 落屏；` +
       `落屏勇者仍 ${heroNow ? `${Math.round(heroNow.size.w)}×${Math.round(heroNow.size.h)}` : '?'}`,
     densBad.length === 0,
     densBad.slice(0, 3).join(' | ') ||

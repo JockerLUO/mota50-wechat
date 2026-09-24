@@ -20,8 +20,9 @@
  *   A2 假墙不泄漏：`w` 格必须与「同位置真墙」走同一条规则（隐藏通路设计的命门）
  *   A3 无空键：不许出现 `?字符` 这种「没映射」的兜底态
  *   A4 变体是活的：地面/墙身键在棋盘上确实用到了多个变体（防止变体路径被绕过）
- *   A5 怪物布局：非 BOSS 精灵装得进一格，且脚下**干净**（精灵之外只留 BOSS 圈；
- *      曾经画在脚下的评级色点在 2026-09-23 被要求移除，A5b 现在就守着这条）
+ *   A5 怪物布局：非 BOSS 精灵装得进一格；BOSS 精灵与它**宣称占的那几格**逐边重合
+ *      （占位块从 `constants.json` 的 `boss.footprintTiles` 推），且脚下**干净**
+ *      （精灵之外只留 BOSS 圈；曾经画在脚下的评级色点在 2026-09-23 被要求移除）
  *   A6 BOSS 与倍数：画得比一格大的必须是玩法上的 BOSS（不许有「巨大的杂兵」）
  *   A7 面板版式：每块面板的标题落在同一套坐标上（见「统一版式」）
  *   A8 版面：模块间隙相等，棋盘没被挤小，棋盘盒与面板同栏
@@ -35,11 +36,13 @@
  *   A15 对话折行：台词折行不超卡片内宽、不以收尾标点开头（中文行首禁则）
  *   A16 上下楼梯：两张瓦片既不逐像素相同、也不互为上下翻转，且形体走向各就各位
  *   A17 像素密度：图集帧升到出图网格（原始素材 ×supersample）、drawScale 同比缩小，落屏尺寸不变
- *             （怪物落屏允许三档：一格 32 / 大家伙 48 / BOSS 的两格 64）
+ *             （非 BOSS 一格 32 / 旧的「大家伙」48；BOSS 帧 = 格子 × 占位格数、1:1 落屏）
  *   A18 文字光栅化分辨率跟随设备像素比（dsf=3 时必须是 3，写死 2 会挂）
  *   A19 墙是手绘错缝砌法（调色板 ≥5 色、相邻砌层竖缝错开半块），不是第三方位图的超采样
  *   A20 待机呼吸是渲染层的刚体位移：贴图/帧高全程不变，只在原位上抬 1px
  *       （素材层再做「上半身位移 + 接缝补偿」会立刻被这条抓住）
+ *   A21 BOSS 占位块：九格都走不进、撞上去即开战且一步不走、击败后整块恢复通行、
+ *       领域伤害贴的是占位块而不是坐标（A5a 量画面，这条量规则）
  *
  * 用法：node tools/verify-visual.cjs [--verbose]（先 npm run build）
  *
@@ -47,7 +50,7 @@
  * 本文件是**入口，不是实现**。实现分三处：
  *   `tools/verify/harness.cjs`   静态服务 + 浏览器会话 + 结果收集（唯一碰浏览器的地方）
  *   `tools/verify/expect.cjs`    Node 侧独立重实现的期望值（与 atlas.ts 手工同步）
- *   `tools/verify/checks/*.cjs`  20 条断言，一条一个文件（文件名就是断言编号）
+ *   `tools/verify/checks/*.cjs`  断言，一条一个文件（文件名就是断言编号）
  */
 
 const { runAll, server } = require('./verify/harness.cjs');
@@ -55,8 +58,9 @@ const { runAll, server } = require('./verify/harness.cjs');
 /**
  * 断例清单 —— **顺序即依赖**。
  *
- * A1..A20 的编号顺序就是它们历史上的执行顺序：A13 开头那句 `press('r')`
- * 假定 A1..A12 已经把全塔跑过一遍（那会留下「巫师领域」之类的状态）。
+ * A1..A21 的编号顺序就是它们历史上的执行顺序：A13 开头那句 `press('r')`
+ * 假定 A1..A12 已经把全塔跑过一遍（那会留下「巫师领域」之类的状态），
+ * 而 A21 开头也按一次 `r`（它要「攻击 10 < 骷髅队长防御 15」这个干净局面）。
  * 新增断言请追加在末尾；要插在中间的话，先确认后面那些断例的隐含前置条件。
  */
 const CHECKS = [
@@ -75,7 +79,8 @@ const CHECKS = [
   require('./verify/checks/a17-pixel-density.cjs'),
   require('./verify/checks/a18-text-resolution.cjs'),
   require('./verify/checks/a19-wall-masonry.cjs'),
-  require('./verify/checks/a20-idle-bob.cjs')
+  require('./verify/checks/a20-idle-bob.cjs'),
+  require('./verify/checks/a21-boss-footprint.cjs')
 ];
 
 runAll(CHECKS).catch((err) => {

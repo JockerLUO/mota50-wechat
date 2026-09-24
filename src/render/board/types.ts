@@ -9,6 +9,7 @@
 
 import type { Container, Sprite } from 'pixi.js';
 import type { Dir } from '../../game/state';
+import type { Footprint } from '../../game/footprint';
 
 /**
  * 勇者朝向名，与 MANIFEST 的 dirOrder 一致。
@@ -54,6 +55,16 @@ export interface EntityView {
    * 只在渲染层做刚体位移 —— 见 `bob.ts` 的说明。
    */
   restY?: number;
+  /**
+   * 占位块（棋盘格坐标，闭区间）。**只有 BOSS 有**（3×3），
+   * 杂兵 / 道具 / NPC 是 1×1，为了不制造一个「永远等于自己那格」的字段而留空。
+   *
+   * 断言要靠它把「精灵盖住了它宣称占的那几格」量出来 ——
+   * 光量精灵边长是不够的：精灵 96px 摆在 1×1 的容器里同样量得出 96px。
+   */
+  footprint?: Footprint;
+  /** 有值且为真表示这是 BOSS（占位块不止一格）。断言用它筛样本。 */
+  boss?: boolean;
 }
 
 export interface BoardHooks {

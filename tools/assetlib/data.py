@@ -41,7 +41,8 @@ BOSS_IDS = (
 # 「一半的 BOSS 和杂兵一样大」正是「不够大」的一半来源，而且是**前中期**那一半：
 # 玩家在第 10 层遇到骷髅队长时，它看起来就是一只杂兵。
 #
-# 现在 8 只全部走 64 网格（`PROC_BOSSES`）、1:1 落屏 64px。
+# 现在 8 只全部走 **96 网格**（`tools/assetlib/bosses/` 包，每只一个文件）、
+# 1:1 落屏 96px —— 正好占 3×3 格，与棋盘上的占位块（`boss.footprintTiles`）同源。
 # 于是这里和 `BOSS_IDS` **恰好相等** —— 但两者刻意都留着：
 # 一个管「素材画多大」，一个管「玩法上是不是 BOSS」，
 # 相等是此时此刻的事实，不是可以合并的理由（A6 就是靠这两者的**差集**工作的）。
@@ -74,10 +75,12 @@ OVERSIZE_BOSSES = set(BOSS_IDS)
 # 两边必须严格一一对应，有断言拦（见 verify_mon_art）。
 # 现在唯一还取自 0x72 的是 ice_zombie（备用图，本作暂未用，名字与形象相符）。
 #
-# ⚠️ **第三列（绘制倍数）对 8 只 BOSS 已不再生效**：它们全部搬到 64 网格的
-# 独立体系（见 PROC_BOSSES / boss_art_frames），落屏规则只有一条 —— 64 网格
-# 1:1，即 drawScale 恒为 1.0（BOSS_DRAW_SCALE）。这一列对它们统一写 1，
-# 是**故意留着误导不了的写法**：写 3 会让人以为改这里能放大 BOSS。
+# ⚠️ **第三列（绘制倍数）对 8 只 BOSS 已不再生效**：它们全部搬到 96 网格的
+# 独立体系（见 `tools/assetlib/bosses/` 包 / `boss_art_frames`），落屏规则只有一条
+# —— 绘制网格 1:1 落屏，即 drawScale 恒为 1.0（`BOSS_DRAW_SCALE`）。这一列对它们
+# 统一写 1，是**故意留着误导不了的写法**：写 3 会让人以为改这里能放大 BOSS，
+# 而真正的放大途径是把 **`data/constants.json` 的 `boss.footprintTiles` 从 3 调到 4**
+# （画布尺寸由它算出，`verify_boss_art` 的判据 0 会把两处钉在一起）。
 # 这条也有断言兜底（verify_monster_fit 会核对 BOSS 的 drawScale 必须是 1.0）。
 #
 # ⚠️ 对**非 BOSS**，倍数一律 2 —— 这条有断言（见 verify_monster_fit）。
@@ -87,17 +90,20 @@ OVERSIZE_BOSSES = set(BOSS_IDS)
 # 而魔塔是靠「走进哪一格」来打怪的，格子边界不是审美问题。
 # BOSS 超出格子是刻意的（大块头本身是层级信号），而且实测 BOSS 都落在 y≥3，
 # 越出的是自己头顶那一格，不会捅出棋盘外框。
+# **2026-09-24 起 BOSS 不止「超出格子」，而是有正式的 3×3 占位块** ——
+# 那不归这条断言管（这条只管素材内部的布局），归 `verify:visual` 的 A 系与
+# 引擎侧的 `footprint` 判定管（见 `src/game/engine/step.ts`）。
 
 MONSTERS = {
     # ── 骷髅三阶：骨 → 铁甲 → 金甲（等级 = 护甲覆盖度，剪影骨架不变）──
     "skeleton":        ("gen",           None,                              2, "手绘·骷髅：裸骨 + 锈剑"),
     "skeletonSoldier": ("gen",           None,                              2, "手绘·骷髅兵：铁盔铁甲 + 铁剑"),
-    "skeletonCaptain": ("gen",           None,                              1, "手绘·骷髅队长（64 网格 BOSS）：金盔金甲 + 圆盾 + 骨剑"),
+    "skeletonCaptain": ("gen",           None,                              1, "手绘·骷髅队长（96 网格 BOSS / 占 3×3 格）：金盔金甲 + 圆盾 + 骨剑"),
 
     # ── 亡灵族 ──────────────────────────────────────────────────
     "ghostWarrior":    ("gen",           None,                              2, "手绘·幽魂武士：兜帽飘尾 + 幽光剑，青白"),
     "phantom":         ("gen",           None,                              2, "手绘·幻影：同幽魂换紫 + 半透明"),
-    "vampire":         ("gen",           None,                              1, "手绘·吸血鬼伯爵（64 网格 BOSS）：高领斗篷 + 尖牙 + 红眼"),
+    "vampire":         ("gen",           None,                              1, "手绘·吸血鬼伯爵（96 网格 BOSS / 占 3×3 格）：高领斗篷 + 尖牙 + 红眼"),
     "ice_zombie":      ("ice_zombie",    None,                              2, "原样（备用图，本作暂未用）"),
 
     # ── 蝙蝠族：手绘（0x72 没有蝙蝠，旧版用 imp 小恶魔顶替）──────
@@ -117,7 +123,7 @@ MONSTERS = {
     "seniorMage":      ("gen",           None,                              2, "手绘·法师：紫袍高帽 + 紫宝珠，白须"),
     "juniorWizard":    ("gen",           None,                              2, "手绘·女法师学徒：蓝袍短帽 + 长发"),
     "seniorWizard":    ("gen",           None,                              2, "手绘·女法师：紫袍高帽 + 长发"),
-    "archmage":        ("gen",           None,                              1, "手绘·大法师（64 网格 BOSS）：金袍高帽 + 金宝珠 + 长白须"),
+    "archmage":        ("gen",           None,                              1, "手绘·大法师（96 网格 BOSS / 占 3×3 格）：金袍高帽 + 金宝珠 + 长白须"),
     "magicGuard":      ("gen",           None,                              2, "手绘·魔卫：青袍兜帽（无檐）+ 绿宝珠杖"),
 
     # ── 兽人族：木棒 → 铁肩甲战斧 → 矮身短匕 ────────────────────
@@ -134,15 +140,16 @@ MONSTERS = {
     "swordsman":       ("gen",           None,                              2, "手绘·剑士：露脸红发带 + 细剑（轻装）"),
     "warrior":         ("gen",           None,                              2, "手绘·战士：铁全盔 + 鸢盾"),
     "knight":          ("gen",           None,                              2, "手绘·骑士：蓝钢甲 + 红盔羽 + 鸢盾"),
-    "knightCaptain":   ("gen",           None,                              1, "手绘·骑士长（64 网格 BOSS）：白银甲金饰 + 红披风金羽"),
+    "knightCaptain":   ("gen",           None,                              1, "手绘·骑士长（96 网格 BOSS / 占 3×3 格）：白银甲金饰 + 红披风金羽"),
     "darkKnight":      ("gen",           None,                              2, "手绘·暗黑骑士：黑甲红目缝 + 黑披风"),
     "stoneGolem":      ("gen",           None,                              2, "手绘：方块躯干 + 砖缝 + 发光眼（旧为 ogre 食人魔）"),
 
-    # ── BOSS：允许 ×3（48px）。层级信号靠尺寸，但**只有 BOSS 有这个特权** ──────
-    "dragon":          ("gen",           None,                              1, "手绘·魔龙（64 网格 BOSS）：巨角 + 长吻 + 展翼 + 卷尾"),
-    "kraken":          ("gen",           None,                              1, "手绘·巨型乌贼（64 网格 BOSS）：圆头 + 侧鳍 + 六条腕"),
-    "demonKing":       ("gen",           None,                              1, "手绘·魔王（64 网格 BOSS）：巨角 + 膜翼 + 发光眼"),
-    "demonKingTrue":   ("gen",           None,                              1, "手绘·魔王真身（64 网格 BOSS）：高举巨翼 + 三段长角 + 金冠"),
+    # ── BOSS：96 网格 / 1:1 落屏 96px（占 3×3 格）。层级信号靠尺寸，但**只有 BOSS 有这个特权** ──
+    # 第三列对它们一律写 1 —— 放大靠 `constants.json` 的 `boss.footprintTiles`，不靠这一列。
+    "dragon":          ("gen",           None,                              1, "手绘·魔龙（96 网格 BOSS / 占 3×3 格）：巨角 + 长吻 + 展翼 + 卷尾"),
+    "kraken":          ("gen",           None,                              1, "手绘·巨型乌贼（96 网格 BOSS / 占 3×3 格）：圆头 + 侧鳍 + 六条腕"),
+    "demonKing":       ("gen",           None,                              1, "手绘·魔王（96 网格 BOSS / 占 3×3 格）：巨角 + 膜翼 + 发光眼"),
+    "demonKingTrue":   ("gen",           None,                              1, "手绘·魔王真身（96 网格 BOSS / 占 3×3 格）：高举巨翼 + 三段长角 + 金冠"),
 }
 
 

@@ -36,6 +36,9 @@ export function step(state: GameState, data: GameData, dir: Dir): StepResult {
   }
 
   const floor = state.floor;
+  // `entityAt` 对 BOSS 是**按占位块**命中的（见 `footprint.ts`）：目标格落在它的
+  // 3×3 里就算「撞上它」，所以「BOSS 挡路」这条规则不需要在这里写任何特判 ——
+  // 下面的 `ent.type === 'monster'` 分支自然把开战接上。
   const ent = entityAt(state, data, floor, nx, ny);
 
   // ① 怪物：先打，打赢才走上去
@@ -61,7 +64,7 @@ export function step(state: GameState, data: GameData, dir: Dir): StepResult {
     // 原版金币即经验：击杀只加金币，不加经验值（progression.hasExperience = false）
     state.gold += gain;
     state.stats.goldEarned += gain;
-    state.removed.add(entityKey(floor, nx, ny, 'monster', ent.id));
+    state.removed.add(entityKey(floor, ent.x, ent.y, 'monster', ent.id));
     const exec = p.execute ? '（一击必杀）' : '';
     const cnt = p.appliedCounters?.length ? '（特攻生效）' : '';
     pushLog(
@@ -79,7 +82,7 @@ export function step(state: GameState, data: GameData, dir: Dir): StepResult {
     if (ent.type === 'item') {
       const item = data.items[ent.id];
       if (!item) return { kind: 'blocked', moved: false, message: `未知道具 ${ent.id}` };
-      state.removed.add(entityKey(floor, nx, ny, 'item', ent.id));
+      state.removed.add(entityKey(floor, ent.x, ent.y, 'item', ent.id));
 
       const got = grantItem(state, data, ent.id, 1, floor);
       const detail = got.length ? `（${got.join('，')}）` : '';

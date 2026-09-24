@@ -66,7 +66,6 @@ interface Manifest {
   meta: {
     cell: number;
     drawScale: number;
-    bigScale: number;
     /** 每个地形键有几张变体（含底图本身）。缺失即视为 1 —— 老 MANIFEST 也能跑 */
     terrainVariants?: Record<string, number>;
   };
@@ -430,7 +429,14 @@ class Atlas {
     return this.cut(n.atlas, f.x, f.y, n.frame.w, n.frame.h);
   }
 
-  /** 怪物落屏尺寸只由 drawScale 决定（图集里所有怪的帧都在 rasterTile 网格上，大家伙落屏 1.5 格） */
+  /**
+   * 怪物落屏尺寸**只由 MANIFEST 的 drawScale 决定** —— 这里不做任何按体型的分支。
+   *
+   * 杂兵的帧在 `rasterTile`（64）网格上、drawScale 0.5 → 落屏一格的 32px；
+   * BOSS 的帧在 96 网格上、drawScale 1.0 → 落屏 96px（正好是它占的 3×3 格，
+   * 见 `game/footprint.ts`）。「谁允许画得比一格大」由 `data/monsters.json`
+   * 的 `boss` 字段与 A6 那道断言把关，不在这里判。
+   */
   monsterScale(id: string): number {
     return MANIFEST.monsters[id]?.drawScale ?? MANIFEST.meta.drawScale;
   }

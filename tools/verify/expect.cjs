@@ -84,6 +84,68 @@ const VARIANT_COUNT = (key) => {
   return n > 1 ? n : 1;
 };
 
+// ── 实体与 BOSS 占位块 ──────────────────────────────────────────────
+//
+// 与 `src/game/footprint.ts` 的 `footprintTiles` **同一套规则**（只允许奇数，
+// 非法回落 1）—— 照样是独立重实现，不 import 渲染层。两边不一致会立刻表现成
+// A5（精灵没盖住它宣称占的那几格）或 A17（帧尺寸与占位格数对不上）红。
+
+const MONSTERS = (() => {
+  const j = JSON.parse(fs.readFileSync(path.join(ROOT, 'data/monsters.json'), 'utf8'));
+  return j.monsters ?? j;
+})();
+
+const CONSTANTS = JSON.parse(fs.readFileSync(path.join(ROOT, 'data/constants.json'), 'utf8'));
+
+/** 玩法 BOSS 的 id —— 「谁的落屏尺寸可以超过一格」由它决定（A6/A17 共用） */
+const BOSS_IDS = Object.keys(MONSTERS).filter((k) => MONSTERS[k] && MONSTERS[k].boss);
+
+/**
+ * BOSS 的占位块边长（格）。
+ *
+ * 这是**玩法 / 渲染 / 素材三方共用的同一个数字**：`data/constants.json` 的
+ * `boss.footprintTiles`。素材侧的 `tools/assetlib/bosses/common.py` 读它算绘制网格
+ * （`CELL × 本值`），渲染层与引擎读它算落屏尺寸与阻挡，构建期有一条断言钉住
+ * 「素材网格 == 格子 × 本值」。所以断言也读同一个数，而不是写死 3。
+ */
+const BOSS_TILES = (() => {
+  const n = CONSTANTS.boss?.footprintTiles;
+  if (typeof n !== 'number' || !Number.isFinite(n) || n < 1) return 1;
+  const k = Math.floor(n);
+  // 偶数边长没有整数中心，居中会引入半格偏移 → 与 footprint.ts 一样退到相邻奇数
+  return k % 2 === 1 ? k : Math.max(1, k - 1);
+})();
+
+/**
+ * 居中的 `n × n` 占位块（靠边放不下时**整体平移**进棋盘，不平缩）。
+ * 与 `footprintAt` 同一套规则 —— 第 40 层的骑士长在 (5,0)，居中会让第一行落到 -1。
+ */
+function bossBlock(x, y, n = BOSS_TILES) {
+  const BOARD = 11;
+  if (n <= 1) return { x0: x, y0: y, x1: x, y1: y };
+  const half = (n - 1) >>> 1;
+  const clamp = (v) => Math.max(0, Math.min(v, BOARD - n));
+  const x0 = clamp(x - half);
+  const y0 = clamp(y - half);
+  return { x0, y0, x1: x0 + n - 1, y1: y0 + n - 1 };
+}
+
+/**
+ * 每层的实体清单。`loadFloors()` 只给地形，而 A5 要数「这层该有几只 BOSS」——
+ * 没有这个数，「BOSS 精灵对齐占位块」那条断言就可能在**没有任何 BOSS 样本**时
+ * 静默通过（label / 字段一改名就永远为空）。
+ */
+function loadFloorEntities() {
+  const dir = path.join(ROOT, 'data/floors');
+  const out = new Map();
+  for (const f of fs.readdirSync(dir).filter((n) => n.endsWith('.json') && n !== 'index.json')) {
+    const j = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
+    if (typeof j.index !== 'number' || !Array.isArray(j.entities)) continue;
+    out.set(j.index, j.entities);
+  }
+  return out;
+}
+
 module.exports = {
   ROOT,
   DIST,
@@ -95,5 +157,11 @@ module.exports = {
   variantIndex,
   loadFloors,
   MANIFEST,
-  VARIANT_COUNT
+  VARIANT_COUNT,
+  MONSTERS,
+  CONSTANTS,
+  BOSS_IDS,
+  BOSS_TILES,
+  bossBlock,
+  loadFloorEntities
 };

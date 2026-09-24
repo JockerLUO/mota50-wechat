@@ -29,6 +29,12 @@
     "hasLevel": false,
     "note": "原版50层没有经验值与等级系统。三处独立来源一致：参考源码 player 对象无 exp/level 字段、fight.js 只累加 coin、h5mota 基准数值帖中全部怪物经验值为 0。勇者成长只有三条途径：商店购买、宝石、剑盾。"
   },
+  "boss": {
+    "footprintTiles": 3,
+    "note": "BOSS 在棋盘上占 3×3 格：整块占位区都不可走进（撞上去 = 与这只 BOSS 开战），击败后整块恢复通行。原版的 BOSS 与杂兵同为 1 格，本项目有意改大 —— 大块头是层级信号，而「画得大却能从身上走过去」在俯视格子上读起来是错的。",
+    "singleSourceNote": "这个数字是**单一来源**：素材侧 tools/assetlib/bosses/common.py 读它算出绘制网格（CELL × footprintTiles = 96），渲染层与引擎读它算落屏尺寸与阻挡；构建期有一条断言钉住「素材网格 == 格子 × 本值」，所以改这里会同时改掉三方，不存在只改一处的可能。",
+    "deviatesFromSource": "对 floor-50 王座间的影响见 data/floors/floor-50.json 的 notes.projDeviation —— 参考数据是 5×5 外框（内 3×3），3×3 占位会把内间占满、魔王永远够不着，所以本项目把外框扩到 7×7（内 5×5）。"
+  },
   "combat": {
     "heroStrikesFirst": true,
     "roundsFormula": "ceil(mon.hp / (hero.atk - mon.def))",

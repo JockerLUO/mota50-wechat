@@ -1844,9 +1844,9 @@ typeof document === "undefined"
 ```bash
 npm run build:minigame    # 构建产物（含 tsc --noEmit）；产物 = game.js + boot.js + data/*.json
 npm run verify:sandbox    # 干净 V8（node:vm）宿主实测，14 条判据（含裸标识符视图 ×8、拆包边界 ×4）
-npm run verify:visual     # 渲染层回归，22 条判据（A1–A20，含版面/位面/道具栏/手绘怪物、
+npm run verify:visual     # 渲染层回归，25 条判据（A1–A21，含版面/位面/道具栏/手绘怪物、
                           #   脚下无标记 / 浏览出口 / 攻击动画 / 对话折行 / 上下楼梯 /
-                          #   像素密度 / 文字分辨率 / 手绘墙 / 待机呼吸）
+                          #   像素密度 / 文字分辨率 / 手绘墙 / 待机呼吸 / BOSS 占位块）
 npm run verify:minigame   # 无 DOM 环境实测，37 条常驻判据（含禁 unsafe-eval ×3、图集逐字节一致、
                           #   包结构 ×6、语法地板 ×2、宿主缺失全局 URL/location ×2、
                           #   document.baseURI 能当基准 ×1、产物级「无 Node 分支 / 死实参已剥」×2、
@@ -1857,7 +1857,7 @@ npm run verify:dom        # 有原生 DOM 宿主实测，20 条判据（含触�
                           #   注：驱动 UI 的点击必须模拟真实节奏，见 §9.13
 npm run verify:url-shim   # URL 垫片 vs 原生 URL 对拍，2 条判据（25 用例 × 9 字段）
                           #   唯一**直接测源码模块**的一套（不加载产物），见 §9.15
-npm run verify:all        # 以上五套，共 95 条判据（14 + 22 + 37 + 20 + 2）
+npm run verify:all        # 以上五套，共 98 条判据（14 + 25 + 37 + 20 + 2）
 ```
 
 另有两个不在四套之列的取证工具 —— 它们读的都是**工具自己落盘的状态**，

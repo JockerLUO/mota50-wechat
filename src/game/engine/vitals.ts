@@ -15,7 +15,8 @@ import { simulateBattle, auraStepDamage, grade } from '../../../core/combat.mjs'
 import { countersFromItems, hasAuraImmunity } from '../../../core/shop.mjs';
 import type { GameData, Monster } from '../../data';
 import { tierOf } from '../../data';
-import { hasPassive, isAdjacent, livingMonsters, pushLog, type GameState } from '../state';
+import { hasPassive, livingMonsters, pushLog, type GameState } from '../state';
+import { touchesFootprint } from '../footprint';
 import type { BattlePreview } from './types';
 
 export function heroStats(state: GameState): { hp: number; atk: number; def: number } {
@@ -45,10 +46,15 @@ export function previewBattle(
  *
  * **导出**是因为它有三个调用点分处不同模块（效果里的对称传送、换层落地、
  * 走完一格）。原先是模块私有的，拆文件后必须显式导出。
+ *
+ * ⚠️ 「相邻」用的是 `touchesFootprint`（贴到**占位块**），不是老的
+ * `isAdjacent`（贴到**坐标**）。对杂兵两者逐字等价（占位块就是它那一格）；
+ * 对 BOSS 才有区别 —— 它占 3×3，站在它正上/正下方那一格时，到它**坐标**的
+ * 曼哈顿距离是 2，用老函数会漏掉，读起来就是「站在魔王头顶上不吃领域伤害」。
  */
 export function applyAura(state: GameState, data: GameData): number {
   const monsters = livingMonsters(state, data, state.floor)
-    .filter((m) => isAdjacent(state.pos.x, state.pos.y, m.x, m.y))
+    .filter((m) => touchesFootprint(m.fp, state.pos.x, state.pos.y))
     .map((m) => data.monsters[m.id])
     .filter(Boolean);
   if (monsters.length === 0) return 0;

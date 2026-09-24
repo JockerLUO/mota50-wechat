@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from .pil import Image
-from .config import ATLAS_DIR, BASE_TILE, BIG_SCALE, CELL, DRAW_SCALE, PREVIEW_DIR, RASTER_TILE, ROOT, SS
+from .config import ATLAS_DIR, BASE_TILE, CELL, DRAW_SCALE, PREVIEW_DIR, RASTER_TILE, ROOT, SS
 from .pixel import ramp, recolor_hue
 from .metrics import _art_rows
 from .raster import Shelf, _mon_out, _out_scale, bottom_center, supersample, terrain_raster
@@ -31,7 +31,7 @@ from .items import gen_icon, verify_items
 from .hero import HERO_DIRS, build_actor_sheet, verify_hero_art
 from .npc import NPC_ART, NPC_DIRS, npc_art_frames, verify_npc_art, verify_npc_scale
 from .monsters import MON_SHAPES, PROC_MONSTERS, mon_art_frames, verify_mon_art, verify_monster_fit
-from .bosses import BOSS_DRAW_SCALE, boss_art_frames, verify_boss_art
+from .bosses import BOSS_DRAW_SCALE, BOSS_TILES, boss_art_frames, verify_boss_art
 
 
 
@@ -68,7 +68,6 @@ def main() -> int:
             "supersample": SS,
             "cell": CELL,
             "drawScale": DRAW_SCALE,
-            "bigScale": BIG_SCALE,
             "note": "实体 → 图集坐标的唯一事实来源。改映射请改 tools/assetlib/data.py 后重跑，"
                     "不要直接编辑本文件。",
         },
@@ -244,15 +243,17 @@ def main() -> int:
     # id -> idle 帧列表。现在恒为 1 帧（见 mon_art_frames），
     # 但断言仍按「列表」收 —— 判据「帧数必须为 1」要有东西可量。
     proc_frames: dict[str, list[Image.Image]] = {}
-    # BOSS 单独收（见 PROC_BOSSES）：网格是 64，与杂兵的 32 不同。
-    # 混进 proc_frames 会让所有按 MON_H 量的判据在 BOSS 上静默量错网格。
+    # BOSS 单独收（见 bosses/ 包）：网格是**格子 × 占位格数**（当前 32 × 3 = 96），
+    # 与杂兵的 32 不同。混进 proc_frames 会让所有按 MON_H 量的判据在 BOSS 上
+    # 静默量错网格。
     boss_frames: dict[str, list[Image.Image]] = {}
 
     for mid, (src_name, xf, scale, note) in MONSTERS.items():
-        # BOSS 走 64 网格的独立体系：**两条换算都不能用** ——
-        # `_mon_out` 是「把 32 网格抬到出图 64」，对已经是 64 的帧是空操作但语义错；
+        # BOSS 走自己的网格体系：**两条换算都不能用** ——
+        # `_mon_out` 是「把 32 网格抬到出图 64」，对已经是 96 的帧是空操作但语义错；
         # `_out_scale` 是给「绘制网格 16 → 出图 64」换算倍数的。
-        # BOSS 的落屏规则只有一条：**64 网格 1:1 落屏**，所以 drawScale 常量 1.0。
+        # BOSS 的落屏规则只有一条：**绘制网格 1:1 落屏**（96 网格 → 96px 占 3 格），
+        # 所以 drawScale 常量 1.0。
         if mid in BOSS_IDS:
             frames = boss_art_frames(mid)
             boss_frames[mid] = frames
@@ -262,7 +263,7 @@ def main() -> int:
                     mon_cells.append((f"{mid}.{anim}.{fi}", im))
                     mon_meta.append({
                         "monster": mid, "anim": anim, "frame": fi,
-                        "src": "本仓库手绘（tools/assetlib/bosses.py: PROC_BOSSES，64 网格 1:1 落屏）",
+                        "src": "本仓库手绘（tools/assetlib/bosses/ 包，96 网格 = 32 × 占位 3 格，1:1 落屏）",
                         "note": note, "drawScale": BOSS_DRAW_SCALE,
                         "artH": bot - top + 1, "artPadBottom": im.height - 1 - bot,
                     })
@@ -339,11 +340,11 @@ def main() -> int:
 
     # 手绘杂兵的造型断言：形状互不相同、同形状的变体确有区别、帧底不留白、
     # 且每只怪只有 1 帧 idle（呼吸在渲染层，见 mon_art_frames）。
-    # ⚠️ BOSS **不在** proc_frames 里 —— 它们是 64 网格，判据全都不一样。
+    # ⚠️ BOSS **不在** proc_frames 里 —— 它们是 96 网格，判据全都不一样。
     for p in verify_mon_art(proc_frames):
         missing.append("怪物造型断言失败：" + p)
-    # BOSS 的造型断言：64 网格、底行有像素、单帧、八只剪影互不相同、
-    # 细节密度达标、且与 data/monsters.json 的 boss 字段一一对应
+    # BOSS 的造型断言：网格 == 格子 × 占位格数、底行有像素、单帧、八只剪影互不相同、
+    # 细节密度与内部细节达标、正面朝向的头部对称，且与 data/monsters.json 的 boss 字段一一对应
     for p in verify_boss_art(boss_frames):
         missing.append("BOSS 造型断言失败：" + p)
     monsters_json_boss = {
@@ -364,7 +365,8 @@ def main() -> int:
         missing.append(f"{mid}: PROC_MONSTERS 里有造型，但 MONSTERS 没标 gen，接不上")
     hand = len(proc_used)
     print(f"  手绘怪物 {hand} 只 / {len(MON_SHAPES)} 种形状"
-          f"；BOSS {len(boss_frames)} 只 / 64 网格 1:1 落屏"
+          f"；BOSS {len(boss_frames)} 只 / {CELL * BOSS_TILES} 网格 = {CELL} × 占位 {BOSS_TILES} 格，"
+          f"1:1 落屏"
           f"（其余 {len(MONSTERS) - hand} 只取自 0x72）")
 
     for m in mon_meta:
@@ -385,18 +387,34 @@ def main() -> int:
             manifest["monsters"][mid] = None
             missing.append(f"怪物 {mid} 未映射 → 渲染层将回退程序化图形")
 
-    # 尺寸层级检查：凡按「大家伙」绘制的怪，落屏后必须真的一样大。
+    # 尺寸层级检查：凡**落屏画得比一格大**的怪，落屏尺寸必须彼此一致 ——
+    # 一个大块头比另一个矮，读起来就是「体型层级倒挂」。
+    #
     # 这条断言来自一个真实的翻车：0x72 的 big_demon 是 32×32，若按 1:1 绘制
     # 屏幕上只有 32px，而 16×16 放大 3 倍的巨龙有 48px —— 结果魔王比小龙还小。
+    #
+    # ⚠️ 判据原本写的是「`drawScale == BIG_SCALE`（3）」。2026-09-24 BOSS 改成
+    #    96 网格 / 1:1 落屏之后 drawScale 变成 1.0，**没有任何怪还等于 3** ——
+    #    集合恒为空，这条断言当场退化成空转（而且怎么改都绿）。
+    #    所以现在按**落屏尺寸**筛（语义），并补一条「至少得有一个大家伙」
+    #    的存在性探针 —— 否则它还能再退化一次，而且照样看不出来。
     big_sizes: dict[int, list[str]] = {}
     for mid, node in manifest["monsters"].items():
-        if not node or node["drawScale"] != BIG_SCALE:
+        if not node:
             continue
         eff = node["frame"]["w"] * node["drawScale"]
-        big_sizes.setdefault(eff, []).append(mid)
-    if len(big_sizes) > 1:
+        if eff <= CELL + 1e-6:
+            continue
+        big_sizes.setdefault(round(eff), []).append(mid)
+    if not big_sizes:
+        missing.append(
+            f"没有任何怪物画得比一格（{CELL}px）大 —— 「体型层级」这条断言失去意义。"
+            f"BOSS 应当占 {CELL} × {BOSS_TILES} 格 = {CELL * BOSS_TILES}px，"
+            f"请检查 BOSS 是不是还画在 96 网格上、drawScale 是不是 1.0"
+        )
+    elif len(big_sizes) > 1:
         detail = "；".join(f"{k}px → {', '.join(sorted(v))}" for k, v in sorted(big_sizes.items()))
-        missing.append(f"「大家伙」落屏尺寸不一致，体型层级会倒挂：{detail}")
+        missing.append(f"画得比一格大的怪落屏尺寸不一致，体型层级会倒挂：{detail}")
 
     # ── 4. 道具 ─────────────────────────────────────────────────
     item_shelf = Shelf(512)
