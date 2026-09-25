@@ -16,7 +16,7 @@
     "verify:sandbox": "node tools/verify-sandbox.cjs",
     "verify:visual": "node tools/verify-visual.cjs",
     "verify:url-shim": "node tools/verify-url-shim.cjs",
-    "verify:all": "npm run verify:sandbox && npm run verify:visual && npm run verify:minigame && npm run verify:dom && npm run verify:url-shim",
+    "verify:all": "npm run verify:sandbox && npm run verify:visual && npm run verify:minigame && npm run verify:dom && npm run verify:seal && npm run verify:url-shim",
     "assets": "${PYTHON:-python3} tools/build-assets.py",
     "shot": "node tools/shot-web.cjs",
     "preview": "vite preview --port 4173 --strictPort",
@@ -25,7 +25,8 @@
     "import": "node tools/import-mota50.mjs",
     "balance": "node tools/build-balance-check.mjs",
     "ide:storage": "node tools/read-ide-storage.cjs",
-    "ide:project": "node tools/read-ide-project.cjs"
+    "ide:project": "node tools/read-ide-project.cjs",
+    "verify:seal": "node tools/seal-verify.mjs"
   },
   "dependencies": {
     "pixi.js": "^8.6.6"

@@ -691,6 +691,10 @@ head('I · 参考源完整性');
   let events = null;
   try { events = readJSON('data/events.json'); } catch { /* 事件表尚未重建 */ }
 
+  // 事件表结构：`{ events: [...] }`，每条有 `effects: [{ op, floor, ... }]`。
+  // 事件生成的楼梯用的是 `op === 'addStair'`（见 src/data/types.ts 的 EventEffect）。
+  const eventList = events?.events ?? [];
+
   // 能实现 n → n+1 的一次性换层道具
   const upItems = Object.values(items)
     .flatMap((it) => (it.effects ?? []).filter((e) => e.op === 'changeFloor' && (e.delta ?? 0) > 0)
@@ -703,9 +707,13 @@ head('I · 参考源完整性');
     if (f.stairs.up.length > 0) continue;            // 有上楼梯，正常
     const target = f.index + 1;
     const method = f.notes?.exit?.method ?? null;
-    const byEvent = !!(events && Object.values(events).some(
-      (ev) => (ev.floorIndex === f.index || ev.floor === f.id)
-        && (ev.effects ?? []).some((e) => e.op === 'generateStairs')));
+    // 本层出口有两种事件支撑方式：
+    //  ① 本层直接生成上楼梯（`addStair.floor === f.index`，如 10→11、40→41）；
+    //  ② 有别的层的 addStair 直达本层的上一层（`addStair.to === target`，如 24 层直达 50 层，
+    //     于是 49 层本身不需要上楼梯 —— 方案 A 的跨层入口）。
+    const byEvent = eventList.some(
+      (ev) => (ev.effects ?? []).some(
+        (e) => e.op === 'addStair' && (e.floor === f.index || e.to === target)));
     const oneShot = upItems.filter((t) => target === f.index + (t.delta ?? 0));
 
     boundaries.push({ f, target, method, byEvent, oneShot });
@@ -739,7 +747,7 @@ head('I · 参考源完整性');
 
   // ── I3 事件表是否存在 ────────────────────────────────────────
   if (events) {
-    pass(`data/events.json 存在，含 ${Object.keys(events).length} 条事件`);
+    pass(`data/events.json 存在，含 ${(events.events ?? []).length} 条事件`);
   } else {
     info('data/events.json 尚未重建（上一版 3 层草案的事件表已移入 data/_legacy-3floors/）');
     info('受影响的机制：第 10 层剧情生成楼梯、第 49→50 层通路、道具/道具赠予类事件');

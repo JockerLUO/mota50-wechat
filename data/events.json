@@ -1,0 +1,87 @@
+{
+  "$license": "对参考源码《魔塔50层》的有意修正。原数据派生自 GPL-3.0 作品 m8705/MAGIC-TOWER-JS，本文件只补「参考实现没写完、导致游戏不可通关」的那一类事件，不新增玩法。详见 reference/mota50/ATTRIBUTION.md §3。",
+  "$comment": "三处区域边界通路。楼梯图只在 3 处断开，全部落在区域边界 BOSS 层 —— 这是「打完 BOSS 才开启通往下一区的路」的经典设计，不是数据损坏；参考实现只写了其中一处（10→11 的 floor[10][115]=4）。本文件把另外两处按同一手法补齐，使游戏可通关。",
+  "source": {
+    "stairGraphGaps": "docs/known-gaps.md §1",
+    "f10Evidence": "reference/mota50/source/mota50-event.js:eventHappened[7] → floor[10][115]=4（115 = 5 + 10×11，即 (5,10)）",
+    "f24Evidence": "reference/mota50/source/mota50-action.js:wiserWord[24]「你不能直接到50楼，据说魔塔50层与24层有关联」；第 24 层红门 (5,7) 后的空腔 (4..6, 4..6) 全塔唯一「上了红锁却空无一物」的封闭房间，智者就站在红门下方 (5,9)",
+    "verifiedAt": "2026-09-25"
+  },
+  "$effectOps": {
+    "addStair": "在本层 (x,y) 生成一条通往 to 层的楼梯：地形改成上楼梯标记，并把落点记进 state.extraStairs（引擎的换层判定合并读它与数据里的 stairs）"
+  },
+  "events": [
+    {
+      "id": "f10-zone1-clear",
+      "title": "一区通路：击败骷髅队长后开启上楼梯",
+      "trigger": { "op": "defeated", "id": "skeletonCaptain" },
+      "once": true,
+      "effects": [
+        {
+          "op": "addStair",
+          "floor": 10,
+          "x": 5,
+          "y": 10,
+          "to": 11,
+          "arrive": { "x": 5, "y": 10 }
+        }
+      ],
+      "why": "楼梯图断点 10→11。有源码依据：event.js 的 eventHappened[7] 分支执行 floor[10][115]=4，115 = 5 + 10×11 → (5,10)。参考实现写了这一条，本项目照抄坐标。",
+      "evidence": "reference/mota50/source/mota50-event.js:floor[10][115]=4"
+    },
+    {
+      "id": "f40-zone4-clear",
+      "title": "四区通路：击败骑士队长后开启上楼梯",
+      "trigger": { "op": "defeated", "id": "knightCaptain" },
+      "once": true,
+      "effects": [
+        {
+          "op": "addStair",
+          "floor": 40,
+          "x": 5,
+          "y": 4,
+          "to": 41,
+          "arrive": { "x": 5, "y": 0 }
+        }
+      ],
+      "why": "楼梯图断点 40→41。参考实现没写这一条（11 层以后的同类事件全部缺失），攻略靠「上楼器」绕过。项目文档推荐按源码先例统一用 generateStairs 处理 10→11 与 40→41（docs/known-gaps.md §1「三处边界通路的统一修法」）。生成点取 (5,4)：它是上区（0–4 行）的空地，且正对红门 (5,7) 上方，不与骑士队长 3×3 占位重叠。",
+      "evidence": "docs/known-gaps.md §1；floor-40 notes.exit.method = teleport"
+    },
+    {
+      "id": "f24-gate-to-50",
+      "title": "50 层入口：第 24 层红门后的空腔",
+      "trigger": { "op": "start" },
+      "once": true,
+      "effects": [
+        {
+          "op": "addStair",
+          "floor": 24,
+          "x": 5,
+          "y": 6,
+          "to": 50,
+          "arrive": { "x": 5, "y": 7 }
+        }
+      ],
+      "why": "楼梯图断点 49→50，也是唯一让游戏不可通关的那一条。按 docs/known-gaps.md §1 方案 A：入口不放在 49 层（那会与「50 层与 24 层有关联」的提示矛盾），而放在第 24 层红门后那个全塔唯一「上了红锁却空无一物」的封闭空腔中央 (5,6)。参考实现把内容留空了；这里补上。",
+      "evidence": "reference/mota50/source/mota50-action.js:wiserWord[24]；floor-24 地形第 4–6 行 x4..6 为封闭空腔，item[24] 全为 0"
+    },
+    {
+      "id": "f49-seal-break",
+      "title": "魔法封印解除：魔王现出真身",
+      "trigger": { "op": "allDefeated", "ids": ["darkKnight", "seniorWizard"], "floor": 49 },
+      "once": true,
+      "effects": [
+        {
+          "op": "replaceMonster",
+          "floor": 50,
+          "x": 5,
+          "y": 5,
+          "from": "demonKing",
+          "to": "demonKingTrue"
+        }
+      ],
+      "why": "docs/known-gaps.md §4 的缺口：第 50 层放的是「封印前」假魔王（8000/5000/1000，def 1000），而满属性攻击约 481 根本打不动它；真正的最终 BOSS「真魔王」（5000/1580/190）在参考数据中从未被放置（monster-placement.json 的 neverPlaced）。第 49 层 floor-notes 明确记着攻略机制：『先杀四周中间的魔法警卫解除封印，封印解除后魔王才可被击败』。第 49 层实际放置的守卫是 2 黑暗骑士 + 2 高级巫师，全灭这 4 只即视为封印解除，把假魔王切换成可击败的真魔王。",
+      "evidence": "docs/known-gaps.md §4；data/floor-notes.json 第 49 层 note；data/monster-placement.json neverPlaced 含 demonKingTrue"
+    }
+  ]
+}

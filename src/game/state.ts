@@ -12,9 +12,17 @@
  * 只在原版用 `coin`/`att` 的地方统一成 `gold`/`atk`。
  */
 
-import type { FloorEntity, GameData, KeyId } from '../data';
+import type { FloorEntity, GameData, KeyId, Stair } from '../data';
 import { floorOf } from '../data';
 import { footprintAt, inFootprint, type Footprint } from './footprint';
+
+/**
+ * 事件生成的楼梯。比 `Stair` 多一个 `floor`：它是**全局**记的，
+ * 而数据里那些楼梯本来就挂在各自楼层下。
+ */
+export interface PlacedStair extends Stair {
+  floor: number;
+}
 
 export type Dir = 'up' | 'down' | 'left' | 'right';
 
@@ -73,6 +81,24 @@ export interface GameState {
   removed: Set<string>;
   /** 地形覆盖：楼层 → `x,y` → 新字符（门被打开、墙被挖掉等） */
   terrainPatch: Record<number, Record<string, string>>;
+  /**
+   * 怪物替换表：`floor:x,y` → 新怪物 id。
+   *
+   * 用于「封印解除」这类二形态切换：第 50 层的假魔王在封印解除后换成真魔王。
+   * 数据（`data/floors`）是静态的，动态换怪只能记在状态里，`entityAt` 查它。
+   */
+  monsterSwap: Record<string, string>;
+
+  /**
+   * 事件生成的楼梯（区域边界通路，见 docs/known-gaps.md §1）。
+   *
+   * 楼梯图在 10→11 / 40→41 / 49→50 三处断开，其中最后一条让游戏**不可通关**。
+   * 这三条路是「打完 BOSS 才开启」这类事件补出来的，所以它们必须存在**状态**里
+   * （会随开局重置），不能写回 `data/`。
+   */
+  extraStairs: PlacedStair[];
+  /** 已触发过的一次性事件 id —— `once: true` 的事件靠它不重复执行 */
+  fired: Set<string>;
 
   /** 领域伤害可以把勇者打死（战斗会被提前禁止），所以阵亡是一种真实状态 */
   dead: boolean;
@@ -106,6 +132,9 @@ export function createInitialState(data: GameData): GameState {
     talked: {},
     removed: new Set<string>(),
     terrainPatch: {},
+    monsterSwap: {},
+    extraStairs: [],
+    fired: new Set<string>(),
     dead: false,
     log: [],
     stats: { steps: 0, battles: 0, hpLost: 0, goldEarned: 0, kills: 0 }
@@ -164,6 +193,13 @@ export function entityAt(
 ): FloorEntity | null {
   const f = floorOf(data, floor);
   for (const e of f.entities) {
+    // 怪物替换：这一格若被 swap，先看是否命中（同一格），命中就返回新怪物。
+    // 注意要在 removed 检查**之前**：假魔王「现出真身」后，它自己并没被打败，
+    // 而是「这一格现在是真魔王」，所以要优先读 swap。
+    const swapped = state.monsterSwap[`${floor}:${e.x},${e.y}`];
+    if (swapped && e.type === 'monster' && e.x === x && e.y === y) {
+      return { type: 'monster', id: swapped, x, y };
+    }
     if (state.removed.has(entityKey(floor, e.x, e.y, e.type, e.id))) continue;
     if (e.x === x && e.y === y) return e;
     if (e.type !== 'monster' || !data.monsters[e.id]?.boss) continue;
@@ -182,7 +218,9 @@ export function livingMonsters(
   for (const e of floorOf(data, floor).entities) {
     if (e.type !== 'monster') continue;
     if (state.removed.has(entityKey(floor, e.x, e.y, e.type, e.id))) continue;
-    out.push({ id: e.id, x: e.x, y: e.y, fp: entityFootprint(data, e) });
+    const swapped = state.monsterSwap[`${floor}:${e.x},${e.y}`];
+    const id = swapped ?? e.id;
+    out.push({ id, x: e.x, y: e.y, fp: entityFootprint(data, { ...e, id }) });
   }
   return out;
 }
@@ -190,6 +228,22 @@ export function livingMonsters(
 /** 勇者是否持某件被动道具 */
 export function hasPassive(state: GameState, id: string): boolean {
   return state.passives.includes(id);
+}
+
+/**
+ * 某一层上**当前存在**的全部楼梯 —— 数据里的 + 事件生成的。
+ *
+ * 换层判定必须走这个函数，不能只读 `floorOf(data, floor).stairs`：
+ * 三处区域边界通路是事件补出来的，直接读数据会得到「楼梯不存在」，
+ * 表现是勇者踩在画着楼梯的格子上却原地不动。
+ */
+export function stairsOn(state: GameState, data: GameData, floor: number): PlacedStair[] {
+  const f = floorOf(data, floor);
+  const out: PlacedStair[] = [];
+  for (const s of f.stairs.up) out.push({ ...s, floor });
+  for (const s of f.stairs.down) out.push({ ...s, floor });
+  for (const s of state.extraStairs) if (s.floor === floor) out.push(s);
+  return out;
 }
 
 export function addToBag(state: GameState, id: string): void {

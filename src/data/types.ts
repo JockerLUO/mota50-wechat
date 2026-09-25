@@ -148,6 +148,48 @@ export interface RegionDef {
   note?: string;
 }
 
+/**
+ * 事件 —— 对参考源码「没写完的那部分」的补齐，而不是新玩法。
+ *
+ * 目前只有一类：`addStair`（在指定格生成一条楼梯）。
+ * 它被用来补上楼梯图在三处区域边界的断点（docs/known-gaps.md §1），
+ * 其中 49→50 那条是「游戏不可通关」的直接原因。
+ */
+export interface EventEffect extends Record<string, unknown> {
+  op: 'addStair';
+  floor: number;
+  x: number;
+  y: number;
+  to: number;
+  arrive: { x: number; y: number };
+}
+
+/** 把某层某格的怪物替换成另一个 id（「封印解除」这类二形态切换） */
+export interface ReplaceMonsterEffect extends Record<string, unknown> {
+  op: 'replaceMonster';
+  floor: number;
+  x: number;
+  y: number;
+  /** 原怪物 id（用于防御性断言：换错对象会当场报错） */
+  from: string;
+  /** 替换成 */
+  to: string;
+}
+
+export type AnyEventEffect = EventEffect | ReplaceMonsterEffect;
+
+export interface GameEvent {
+  id: string;
+  title: string;
+  /** 触发条件。`start` = 开局即生效；`defeated` = 击败某怪；`allDefeated` = 列表内的怪全部被击败 */
+  trigger: { op: 'defeated'; id: string } | { op: 'start' } | { op: 'allDefeated'; ids: string[]; floor?: number };
+  once: boolean;
+  effects: AnyEventEffect[];
+  /** 为什么要有这条 —— 必须指向证据，见 data/events.json */
+  why: string;
+  evidence?: string;
+}
+
 export interface GameConstants {
   hero: HeroConstants;
   /**
@@ -197,5 +239,7 @@ export interface GameData {
   floorIndex: FloorIndexEntry[];
   floors: Map<number, FloorData>;
   floorNotes: Record<string, Record<string, unknown>>;
+  /** 区域边界通路事件（docs/known-gaps.md §1）。空数组 = 游戏不可通关 */
+  events: GameEvent[];
   missing: string[];
 }

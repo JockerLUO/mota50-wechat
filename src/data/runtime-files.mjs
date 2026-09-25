@@ -38,7 +38,10 @@ export const RUNTIME_TOP_JSON = [
   // 楼层索引：它既是「第 N 层叫什么」，也是**楼层文件的清单来源**
   //（每层的文件名就是 `floors/<id>.json`，见下）。
   'floors/index.json',
-  'floor-notes.json'
+  'floor-notes.json',
+  // 区域边界通路事件：三处楼梯图断点的补齐（docs/known-gaps.md §1）。
+  // 少了它游戏不可通关，所以它是运行时数据，不是工具数据。
+  'events.json'
 ];
 
 /**

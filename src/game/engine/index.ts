@@ -17,6 +17,7 @@
  *   items.ts     道具发放与扣除
  *   merchant.ts  商人交易（sourceId 33）
  *   shop.ts      商店三选一（sourceId 39）
+ *   events.ts    区域边界通路事件（addStair）
  *   step.ts      主步骤 + 使用道具 ← **依赖链顶端**，不该被任何人 import
  *
  * 判断拆分对不对，看 import 方向就够了：**箭头只能从上往下**。
@@ -31,4 +32,5 @@ export { applyEffects } from './effects';
 export { grantItem, heldCount } from './items';
 export { merchantNote, merchantOffers, tradeAccept, type MerchantOffer, type RawTrade } from './merchant';
 export { buyStat, shopOptions, shopQuote, type ShopOption, type ShopView } from './shop';
+export { applyTrigger, newGame, type EventTrigger } from './events';
 export { step, useItem } from './step';

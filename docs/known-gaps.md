@@ -9,7 +9,11 @@
 
 ---
 
-## 1. 🔴 三处区域边界通路缺少数据支撑（其中 49→50 导致游戏无法通关）
+## 1. ✅ 三处区域边界通路已补齐（`data/events.json`）
+
+> **状态（2026-09-25）：已解决。** 三处断点全部写成事件表 `data/events.json` 的 `addStair` 事件，
+> 引擎经 `applyTrigger` 在战斗中触发，生成的楼梯记进 `state.extraStairs`（`src/game/state.ts` 的 `stairsOn` 合并读）。
+> 见文末「§10 · 事件表如何落地」。
 
 ### 完整的楼梯图
 
@@ -17,9 +21,9 @@
 
 | 断点 | 所在位置 | 声明方式 | 数据支撑 |
 |---|---|---|---|
-| **10 → 11** | 一区 BOSS 层（骷髅队长） | `event` 剧情生成楼梯 | ⚠️ **有源码依据**（`floor[10][115]=4`），但事件表尚未重建 |
-| **40 → 41** | 四区 BOSS 层（骑士队长） | `teleport` | ❌ 无实现 |
-| **49 → 50** | 假魔王层 | `teleport` | ❌ 无实现 |
+| **10 → 11** | 一区 BOSS 层（骷髅队长） | `event` 剧情生成楼梯 | ✅ 有源码依据（`floor[10][115]=4`），已写成 `f10-zone1-clear` |
+| **40 → 41** | 四区 BOSS 层（骑士队长） | `teleport` | ✅ 已写成 `f40-zone4-clear`（按 §1「统一修法」） |
+| **49 → 50** | 假魔王层 | `teleport` | ✅ 已写成 `f24-gate-to-50`（方案 A：入口在第 24 层红门空腔） |
 
 除此之外，第 2~9、11~39、41~48 层的上下楼梯**完全连续**。
 
@@ -208,7 +212,12 @@ role 层出现过的 id: 1,2,3,4,5,6,7,9,10,11,...,33,36,37,38,39
 
 ---
 
-## 4. 真魔王从未被放置
+## 4. ✅ 真魔王已放置（封印解除事件）
+
+> **状态（2026-09-25）：已解决。** 第 50 层仍放「封印前」假魔王 `demonKing`（8000/5000/1000），
+> 但新增 `f49-seal-break` 事件：击败第 49 层 4 只守卫（2 黑暗骑士 + 2 高级巫师）后，
+> `replaceMonster` 把 (5,5) 的假魔王切换成真魔王 `demonKingTrue`（5000/1580/190）。
+> 切换记进 `state.monsterSwap`，`entityAt`/`livingMonsters` 优先读它（真身出现 ≠ 被打败，不标 `removed`）。
 
 ### 证据
 
@@ -220,10 +229,11 @@ role 层出现过的 id: 1,2,3,4,5,6,7,9,10,11,...,33,36,37,38,39
 
 最终 BOSS 的**二形态**（封印解除后）在数据中没有落点。这是参考实现的未完成部分，不是原版缺失。
 
-### 可选方案
+### 落地方案
 
-若采纳 §1 的方案 A（49→50 由事件开启），可顺带在同一事件里处理二形态切换：
-在 50 层击败 `demonKing` 后，把怪物替换为 `demonKingTrue`。
+`f49-seal-break` 事件（`data/events.json`）：`trigger: { op: 'allDefeated', ids: ['darkKnight','seniorWizard'], floor: 49 }`
+→ `effects: [{ op: 'replaceMonster', floor: 50, x: 5, y: 5, from: 'demonKing', to: 'demonKingTrue' }]`。
+与 floor-notes 第 49 层「先杀四周中间守卫解除封印」的攻略一致。
 
 ---
 
@@ -438,10 +448,10 @@ tools/
 
 | # | 缺口 | 严重度 | 是否阻塞运行时开发 |
 |---|---|---|---|
-| 1 | 三处区域边界通路（10→11 / 40→41 / **49→50**）无数据支撑 | 🔴 极高 | **是** —— 49→50 使游戏不可通关。**已找到原始线索：通往 50 层的入口在第 24 层红门后的空腔** |
+| 1 | ~~三处区域边界通路~~ → **已补齐**（`data/events.json` 的 `addStair` 事件，见 §10） | 🟢 已解决 | 否 —— 游戏已可通关 |
 | 2 | 二区 BOSS 吸血鬼未放置 | 🔴 高 | 是 —— 二区无 BOSS 战（智者对白佐证它本该存在） |
 | 3 | ~~商人无法购买~~ → **商品清单已取得**，只差运行时实现 | 🟢 低（原 🔴） | 否 —— 数据已备好，`npcs.json` 有完整商品清单 |
-| 4 | 真魔王未放置 | 🟡 中 | 否 —— 可在 50 层事件中处理 |
+| 4 | ~~真魔王未放置~~ → **已补齐**（`f49-seal-break` 封印解除，见 §4） | 🟢 已解决 | 否 —— 假魔王封印解除后切真魔王 |
 | 5 | 4 件道具 + 2 个 NPC 未放置 | 🟡 中 | 部分（屠龙剑/小偷影响 35 层） |
 | 6 | 第 30 层无下楼梯 | 🟢 低 | 否 —— 与单向进入惯例一致，有传送器兜底 |
 | 7 | 红钥匙 4+1(商人) vs 红门 11 | 🟢 低 | 否 —— 缺口收窄到 6 扇，倾向于设计意图 |
@@ -450,6 +460,9 @@ tools/
 
 **改善：** 上一轮列了 3 个 🔴，本轮通过补全归档的 `action.js`，**第 3 项已从「数据缺口」降级为「运行时工作」**，
 且第 1 项找到了原始设计线索、第 7 项缺口收窄。**现存 🔴 降到 2 项。**
+
+**再改善（2026-09-25）：** 第 1、4 项（三处边界通路 + 真魔王放置）已通过 `data/events.json` 事件表补齐，
+游戏从「数学上不可通关」变为「可通关」。**现存 🔴 只剩 1 项（吸血鬼未放置）。**
 
 **另有两项口径差异**（非缺口，成因已确认，详见 `docs/source-review.md` §4.3）：
 黄钥匙比基准帖少 15 把（商人出售部分不在地图数据中）、怪物金币总和比基准帖高 20.4%（全清 vs 最优路线）。
@@ -475,7 +488,32 @@ I · 参考源完整性
 ```
 
 **这样设计的意图：** 这些缺口原本只能靠人读文档记住。放进校验器后，
-它们变成每次运行都会浮现的输出 —— 修好之后警告自动消失（I2 段会检查 `events.json` 里是否真的有对应的 `generateStairs` 事件）。
+它们变成每次运行都会浮现的输出 —— 修好之后警告自动消失（I2 段会检查 `events.json` 里是否真的有对应的 `addStair` 事件）。
 
-当前校验结果：**30 项通过，2 项警告，0 项失败**。
-两项警告分别是：① 黄钥匙口径差异（已确认，不可修）；② 本文件的 3 处边界通路（待决策）。
+当前校验结果：**32 项通过，1 项警告，0 项失败**。
+唯一警告是黄钥匙口径差异（已确认不可修，见上）。三处边界通路已全部「已由剧情事件实现 ✓」。
+
+> **2026-09-25 更新：** 边界通路已解决。`data/events.json` 已重建（4 条事件：3 条 `addStair` + 1 条 `replaceMonster`），
+> I2 段的「3 处区域边界通路缺少数据支撑」警告随之消失（同时修正了 I2 段对 `addStair` 与跨层入口的识别）。
+
+---
+
+## 10. 事件表如何落地（`data/events.json` → 引擎）
+
+事件表不是孤立的数据文件，它有一条完整的「数据 → 引擎 → 状态」链路，缺一环就会「数据写了但游戏不认」：
+
+| 环节 | 文件 | 做了什么 |
+|---|---|---|
+| 数据 | `data/events.json` | 4 条事件（`f10-zone1-clear` / `f40-zone4-clear` / `f24-gate-to-50` / `f49-seal-break`） |
+| 类型 | `src/data/types.ts` | `GameEvent` / `EventEffect`（`addStair`）/ `ReplaceMonsterEffect`（`replaceMonster`）；`GameData.events` 字段 |
+| 读取 | `src/data/index.ts` + `runtime-files.mjs` + `source-web.ts` | 把 `events.json` 纳入运行时数据清单 |
+| 引擎 | `src/game/engine/events.ts` | `applyTrigger` 匹配 `defeated` / `allDefeated` / `start`，执行 `addStair`（写 `state.extraStairs`）与 `replaceMonster`（写 `state.monsterSwap`） |
+| 状态 | `src/game/state.ts` | `extraStairs` + `monsterSwap` + `fired` 三个新字段；`entityAt`/`livingMonsters` 优先读 `monsterSwap`；`stairsOn` 合并读数据楼梯与 `extraStairs` |
+| 触发 | `src/game/engine/step.ts` | 击败怪物后 `applyTrigger(defeated)` + `applyTrigger(allDefeated)`；换层判定改用 `stairsOn` |
+
+**两个最容易踩的坑**（都已在实现时规避）：
+
+1. **`allDefeated` 必须限定 `floor`** —— 守卫 `darkKnight` 全塔 12 只、`seniorWizard` 14 只，
+   不限定第 49 层统计会永不解封。`f49-seal-break` 的 trigger 带 `floor: 49`。
+2. **`replaceMonster` 不标 `removed`** —— 真身出现 ≠ 被打败，`entityAt` 里 `monsterSwap` 检查要
+   **先于** `removed` 检查，否则假魔王被换成真魔王后那一格读出来是 null。

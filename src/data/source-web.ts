@@ -38,6 +38,7 @@ import npcsJson from '../../data/npcs.json';
 import constantsJson from '../../data/constants.json';
 import floorNotesJson from '../../data/floor-notes.json';
 import floorIndexJson from '../../data/floors/index.json';
+import eventsJson from '../../data/events.json';
 
 /**
  * 楼层：一条收窄的 glob。
@@ -62,7 +63,8 @@ const table: Record<string, unknown> = {
   'npcs.json': npcsJson,
   'constants.json': constantsJson,
   'floor-notes.json': floorNotesJson,
-  'floors/index.json': floorIndexJson
+  'floors/index.json': floorIndexJson,
+  'events.json': eventsJson
 };
 
 for (const [globKey, data] of Object.entries(floorModules)) {

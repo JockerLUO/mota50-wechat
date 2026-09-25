@@ -11,9 +11,9 @@
  */
 
 import type { GameData } from '../../data';
-import { floorOf } from '../../data';
-import { DIRS, entityAt, entityKey, patchTile, pushLog, tileAt, type Dir, type GameState } from '../state';
+import { DIRS, entityAt, entityKey, patchTile, pushLog, stairsOn, tileAt, type Dir, type GameState } from '../state';
 import { bumpTalk, npcLine } from '../dialogue';
+import { applyTrigger } from './events';
 import { REUSABLE_OPS, applyEffects } from './effects';
 import { grantItem } from './items';
 import { MERCHANT_SOURCE_ID, SHOP_SOURCE_ID, merchantOffers } from './merchant';
@@ -74,6 +74,10 @@ export function step(state: GameState, data: GameData, dir: Dir): StepResult {
     );
     checkDeath(state);
     if (state.dead) return { kind: 'battle', moved: false, message: '勇者阵亡' };
+    // 区域边界通路：打完 BOSS 才开启通往下一区的路（10→11 / 40→41）；
+    // 封印解除：某组怪全灭后触发（如第 49 层守卫全灭 → 假魔王换真魔王）
+    applyTrigger(state, data, { op: 'defeated', id: ent.id });
+    applyTrigger(state, data, { op: 'allDefeated' });
     return moveOnto(state, data, floor, nx, ny, 'battle');
   }
 
@@ -155,9 +159,9 @@ function moveOnto(state: GameState, data: GameData, floor: number, x: number, y:
   state.pos = { x, y };
   state.stats.steps++;
 
-  const stair = [...floorOf(data, floor).stairs.up, ...floorOf(data, floor).stairs.down].find(
-    (s) => s.x === x && s.y === y
-  );
+  // ⚠️ 必须走 `stairsOn`（数据里的 + 事件生成的）：直接读 `floorOf(data, floor).stairs`
+  // 会漏掉三处区域边界通路，表现是勇者踩在画着楼梯的格子上却不换层。
+  const stair = stairsOn(state, data, floor).find((s) => s.x === x && s.y === y);
 
   if (stair) {
     const target = stair.to;

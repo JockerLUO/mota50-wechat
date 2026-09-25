@@ -49,6 +49,7 @@ import type {
   FloorIndexEntry,
   GameConstants,
   GameData,
+  GameEvent,
   ItemDef,
   Monster,
   NpcDef,
@@ -66,6 +67,7 @@ export type {
   FloorIndexEntry,
   GameConstants,
   GameData,
+  GameEvent,
   HeroConstants,
   ItemDef,
   ItemEffect,
@@ -182,6 +184,7 @@ export function loadData(): GameData {
   }
 
   const floorNotes = read<{ floorNotes: Record<string, Record<string, unknown>> }>('floor-notes.json').floorNotes;
+  const events = read<{ events: GameEvent[] }>('events.json').events;
 
   // 清单 ↔ 实际读取 的双向核对（少读的那一侧在上面 read 时就会抛，这里管多列的那一侧）
   const unused = RUNTIME_TOP_JSON.filter((key: string) => !seen.has(key));
@@ -203,6 +206,7 @@ export function loadData(): GameData {
     floorIndex,
     floors,
     floorNotes,
+    events,
     missing: findMissing(monsters, items, [...floors.values()])
   };
   return cached;
