@@ -5,13 +5,17 @@
  * 量「落屏尺寸」才是要保护的不变量，量帧尺寸会随 SS 一起变、等于没测。
  * 怪物落屏分两种样本（2026-09-24 起 BOSS 从「64px 两格」改成「占 3×3 格」）：
  *   · 非 BOSS —— 帧在 rasterTile 网格上，落屏一格（或旧的「大家伙」1.5 格）；
- *   · BOSS   —— 帧就是 `格子 × 占位格数`（= 96 网格），1:1 落屏 96px。
+ *   · BOSS   —— 落屏 = `格子 × 占位格数`（= 96px，正好盖住 3×3），
+ *     帧 = 落屏 × `meta.bossSupersample`（2026-09-25 起 ≥2）。
  *     **不再允许 BOSS 落屏 64px**：那正是这次改动要消掉的旧版尺寸，
  *     而旧版判据把它当合法档放行（见下面那一段注释）。
  *
  * 代码逐字符取自拆分前的 tools/verify-visual.cjs（只做了缩进平移），
  * 所以这里的行号/注释都与那版同源，改断言时不必再回头对旧文件。
  */
+
+/** BOSS 帧相对落屏的**最低**超采样倍数。2 与杂兵一致（帧 64 / 落屏 32）。 */
+const BOSS_SS_MIN = 2;
 
 async function run(ctx) {
   const { page, check, MANIFEST, terrainPng, ROOT, DIST, fs, path, BOSS_IDS, BOSS_TILES } = ctx;
@@ -61,7 +65,7 @@ async function run(ctx) {
   // 怪物：帧与落屏尺寸按「是不是 BOSS」分两套，两边都不是拍脑袋放行 ——
   //   · 非 BOSS：帧 = rasterTile 网格（超采样的产物），落屏一格(32)或 1.5 格(48)。
   //     1.5 格那一档是旧的「大家伙」尺寸，现已无怪使用（留着兼容手工试验）。
-  //   · BOSS：帧 = `格子 × 占位格数`（96）、落屏 **1:1** 等于它占的那几格。
+  //   · BOSS：落屏 = `格子 × 占位格数`（96，正好盖住 3×3），帧 = 落屏 × **超采样倍数**。
   //
   // ⚠️ 这一条曾经硬编码「BOSS 的两格(64)」。BOSS 从 64px 长到 96px 时它是
   //    **唯一报红的**判据 —— 也就是说，旧版把它写成「合法档」之后，
@@ -71,24 +75,45 @@ async function run(ctx) {
   //    棋盘占位三方必须是同一个数字，谁掉队这里就报谁。
   //    这里量的是 MANIFEST（构建期自述），A5a 量的是真正落屏的包围盒 ——
   //    两边都对上了，「画出来的范围 == 走不进去的范围」才算成立。
+  //
+  // 2026-09-25 补：判据从「帧 == 96」改成「**落屏 == 96** 且 **帧 = 落屏 × SS(≥2)**」。
+  //    原因：BOSS 源图是 192×192 的**平滑插画**，帧只存 1 倍（96）再由 GPU 拉到
+  //    288 设备像素时边缘必糊（玩家报的「周边线条模糊」）。加了超采样之后
+  //    「帧 == 96」这条会**误杀**正确实现 —— 而它本来要保护的是
+  //    「精灵与占位块一样大」（落屏那件事），帧边长只是中间量（铁律 #12）。
+  //    SS 从 MANIFEST 自述读，不在这里硬编码；下限 2 才是真的设计要求。
   const bossFrame = cell * BOSS_TILES;
+  const bossSS = MANIFEST.meta.bossSupersample;
   const monBad = [];
+  if (!(bossSS >= BOSS_SS_MIN)) {
+    monBad.push(
+      `BOSS 超采样倍数 ${bossSS} < ${BOSS_SS_MIN} —— 帧只比落屏大 ${bossSS} 倍时，` +
+        `平滑插画的边缘在 dpr≥2 上会被 GPU 拉成灰阶渐变（「周边线条模糊」）。` +
+        `杂兵走的就是 2 倍（帧 64 / 落屏 32），BOSS 没理由更低`
+    );
+  }
   for (const [id, node] of Object.entries(MANIFEST.monsters)) {
     if (!node) continue;
     const isBoss = BOSS_IDS.includes(id);
     const onScreen = node.frame.w * node.drawScale;
     if (isBoss) {
-      if (node.frame.w !== bossFrame) {
-        monBad.push(`${id} 帧 ${node.frame.w} 不是 ${bossFrame}（= 格子 ${cell} × 占位 ${BOSS_TILES} 格）`);
-      } else if (node.frame.w !== node.frame.h) {
+      if (node.frame.w !== node.frame.h) {
         monBad.push(
           `${id} 帧 ${node.frame.w}×${node.frame.h} 不是正方形 —— 占位块是 ` +
             `${BOSS_TILES}×${BOSS_TILES}，精灵比它高或矮都会捅出去`
         );
       } else if (!near(onScreen, bossFrame)) {
         monBad.push(
-          `${id} 落屏 ${onScreen} ≠ 占位块 ${bossFrame} —— BOSS 必须 1:1 盖住它占的 ` +
-            `${BOSS_TILES}×${BOSS_TILES} 格（改大之后它同时是「这 ${BOSS_TILES} 格都是它的」的唯一提示）`
+          `${id} 落屏 ${onScreen}（帧 ${node.frame.w} × drawScale ${node.drawScale}）` +
+            ` ≠ 占位块 ${bossFrame}（= 格子 ${cell} × 占位 ${BOSS_TILES} 格）—— BOSS 必须 ` +
+            `1:1 盖住它占的 ${BOSS_TILES}×${BOSS_TILES} 格（改大之后它同时是「这 ` +
+            `${BOSS_TILES} 格都是它的」的唯一提示）`
+        );
+      } else if (bossSS >= BOSS_SS_MIN && node.frame.w !== bossFrame * bossSS) {
+        monBad.push(
+          `${id} 帧 ${node.frame.w} ≠ 落屏 ${bossFrame} × 超采样 ${bossSS} ` +
+            `（应为 ${bossFrame * bossSS}）—— 「帧 = 落屏 × SS」是全项目统一的规则，` +
+            `BOSS 不该是例外`
         );
       }
     } else if (node.frame.w !== rasterTile) {
@@ -140,7 +165,7 @@ async function run(ctx) {
 
   check(
     `A17 像素密度：图集 ${rasterTile} 网格（原始 ${meta.baseTile} ×${ss}）、drawScale=${meta.drawScale}，` +
-      `BOSS ${bossFrame} 网格 = 占位 ${BOSS_TILES} 格、1:1 落屏；` +
+      `BOSS 落屏 ${bossFrame}px = 占位 ${BOSS_TILES} 格（图集帧 ${bossFrame * bossSS} = 落屏 × SS ${bossSS}）；` +
       `落屏勇者仍 ${heroNow ? `${Math.round(heroNow.size.w)}×${Math.round(heroNow.size.h)}` : '?'}`,
     densBad.length === 0,
     densBad.slice(0, 3).join(' | ') ||

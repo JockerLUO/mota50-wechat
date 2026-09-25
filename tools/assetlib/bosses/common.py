@@ -3,7 +3,8 @@ BOSS 素材的公共层：网格、共享骨架原语、断言门面。
 
 ## 为什么 BOSS 单独立一层，而且现在是一个包
 
-① **落屏规则与杂兵不同。** `BOSS_DRAW_SCALE` 恒为 1.0（绘制网格 1:1 落屏），
+① **落屏规则与杂兵不同。** `BOSS_DRAW_SCALE = 1 / BOSS_SS`（2026-09-25 起 0.5：
+   帧 192 是设计网格 96 × SS 2，落屏仍 = 设计网格 96px），
    而 `MONSTERS` 表里那一列对它们统一写 1 —— **故意留着误导不了的写法**：
    写 3 会让人以为改那里能放大 BOSS。这条有断言兜底。
 
@@ -12,13 +13,15 @@ BOSS 素材的公共层：网格、共享骨架原语、断言门面。
 
    | | 改前 | 改后 |
    |---|---|---|
-   | 绘制网格 | 64 | **96**（= 格子 32 × 占位 3） |
+   | 设计网格 | 64 | **96**（= 格子 32 × 占位 3） |
+   | 图集帧网格 | 64 | **192**（= 设计网格 × SS 2，2026-09-25 加） |
    | 落屏 | 64px（2 格） | **96px（3 格）** |
    | 棋盘占位 | 自己那 1 格 | **3×3 格，九格都不可走进** |
 
-   96 网格是**按占位格数算出来的**，不是拍脑袋：`BOS_W = CELL × BOSS_TILES`，
+   96 是**按占位格数算出来的**，不是拍脑袋：`BOS_W = CELL × BOSS_TILES`，
    而 `BOSS_TILES` 读的是 `data/constants.json` 的 `boss.footprintTiles` ——
-   玩法、渲染、素材三方共用同一个数字，构建期有断言钉住它。
+   玩法、渲染、素材三方共用同一个数字，构建期有断言钉住它（判据 0 钉的是
+   **落屏尺寸** = 帧 × drawScale，所以加超采样不会把它误杀）。
 
 ③ **一个 BOSS 一个文件。** 改一只 BOSS（造型 + 配色 + 它占哪几个 id）只碰一个文件。
    这一层只放**真的被两只以上共用**的东西，放过一次性的东西会让「改一只只看一处」
@@ -120,17 +123,42 @@ ART_SOURCES = ("imported", "drawn")
 
 ART_SOURCE = _art_source()
 
-# BOSS 的绘制网格：**一个源像素 = 一个落屏像素**（1:1），所以它就是落屏尺寸。
-# 不做「画完再缩到非整数倍」——nearest 采样下每 4 列丢 1 列，1px 的轮廓线会时断时续
-# （改前那 4 只大 BOSS 发糊就是这个原因）。
+# BOSS 的**设计网格**：一个设计像素 = 一个落屏像素（1:1）。
+#
+# 它是「画多大」这件事在设计意义上的网格 —— 手绘那一套 `_sym` / `_ell` / 行号常量
+# 全部建立在这个数字上，判据的分块尺寸也从它推。
 BOS_W = BOS_H = CELL * BOSS_TILES
+
+# ── 图集**帧网格** = 设计网格 × 超采样倍数（2026-09-25）────────────────
+#
+# 为什么帧要比落屏大：**帧 = 落屏 × SS 是全项目统一的规则**（地形帧 = `RASTER_TILE`
+# = 16×4、杂兵帧 = 64 = 落屏 32×2、勇者帧 = 64 = 落屏 32×2）。
+# BOSS 之前是唯一例外：帧 96、落屏 96，**只有 1 倍**。
+#
+# 后果在外部图源上暴露得最彻底：源图是 192×192 的平滑插画，
+#
+#   旧链：192 源 → 缩到 96（丢掉一半）→ 落屏 96px → dpr 3 时 GPU 把 96 纹理
+#         拉到 288 设备像素（3× 双线性）⇒ **既丢了细节、又糊了边缘**。
+#
+# 新链：192 源 → 直接进 192 帧（**一个源像素都没丢**）→ 落屏 96px →
+#         dpr 3 时 GPU 只拉 1.5×，dpr 2 时正好 1:1。
+#
+# 取 2（而不是 4）的理由很直接：**源图就只有 192**。放到 4 倍只是把同一批像素
+# 摊开（铁律 #10「超采样不创造信息」），图集却会从一张 512×1965 涨到无法接受。
+# 也就是说这里的 2 不是「放大倍数」，而是「**别再缩小**」。
+BOSS_SS = 2
+BOS_FRAME = BOS_W * BOSS_SS
 
 # 镜像轴：`_sym` 的搭档恒为 `W - x - w`，所以轴在 W/2 = 48.0 ——
 # `_ell(cx=48)` 与 `_sym` 因此天然一致（都对称于 x=48 那条格线）。
 BOS_CX = BOS_W // 2
 
-# 落屏倍数：**恒为 1.0**（96 网格 1:1 落屏 96px）。
-BOSS_DRAW_SCALE = 1.0
+# 落屏倍数：落屏 = 帧边长 × 本值 = `CELL × BOSS_TILES`（96px，正好盖住 3×3 格）。
+#
+# ⚠️ 它**不是** 1.0 了，但仍然不是「可以拿去放大 BOSS 的旋钮」——
+# `MONSTERS` 表里对 BOSS 那一列照旧统一写 1（刻意的误导不了的写法），
+# 真正落屏尺寸只由**帧边长 × 本值**决定，且由判据 0 钉在「格子 × 占位格数」上。
+BOSS_DRAW_SCALE = 1 / BOSS_SS
 
 # ── `verify_boss_art` 的门槛：四个都是「先量、再定」的 ──────────────
 #
@@ -174,10 +202,14 @@ BOSS_DRAW_SCALE = 1.0
 #   （64² 时代的 400 → 96² 按面积比 2.25 折是 900；实测后取 1500）。
 #   区分力：**改前 28/28 对全红**（旧版最小 447，demonKing vs demonKingTrue），
 #   改后最小 1732（knightCaptain vs vampire，两只人形的最近一对）。
+#   ⚠️ 2026-09-25 帧边长 96 → 192（`BOSS_SS = 2`），阈值按**面积**同步 ×SS² → 6000。
+#   为什么不改回「在设计网格上量」：判据说的是「**发布出去的**剪影分不分得开」，
+#   就该量真正进图集的那一版；而把它缩回 96 再量会引入一次重采样，
+#   等于用一个中间量代替成品（铁律 #12）。
 BOSS_DETAIL_MIN = 3.5
 BOSS_INNER_MIN = 2.40
 BOSS_HEAD_SYM_MAX = 0.02
-BOSS_SIL_MIN_DIFF = 1500
+BOSS_SIL_MIN_DIFF = 1500 * BOSS_SS * BOSS_SS
 
 # 哪些 BOSS 是**正面朝向玩家**的（头部对称度判据只对它们生效）。
 #
@@ -192,19 +224,50 @@ def bos_canvas() -> Image.Image:
     return Image.new("RGBA", (BOS_W, BOS_H), (0, 0, 0, 0))
 
 
+def design_frame(im: Image.Image) -> Image.Image:
+    """
+    把**帧网格**的图缩回**设计网格**（`BOS_FRAME` → `BOS_W`，NEAREST）。
+
+    给「按设计像素说话」的那几条判据用（细节密度 / 内部细节 / 头部对称度）：
+    它们的分块尺寸（`BOS_DETAIL_BLOCK` 等）与阈值都是在 96 设计网格上标定的。
+
+    用 NEAREST 而不是 LANCZOS：`drawn` 那一套的 192 帧本来就是 96 帧 ×2
+    的方块，NEAREST 折回来是**逐像素无损的原图**；而 LANCZOS 会引入
+    一批本来不存在的中间色，把密度读数抬上去（那正是这两条判据要量掉的东西）。
+    """
+    if im.size == (BOS_W, BOS_H):
+        return im
+    return im.resize((BOS_W, BOS_H), Image.NEAREST)
+
+
 def finish(im: Image.Image) -> Image.Image:
-    """收尾：描边。**所有** BOSS 都走这一个出口。
+    """收尾：描边 + 抬到**帧网格**。**所有** BOSS 都走这一个出口。
+
+    两条画法的产出处在不同的网格上，这里把它们收口到同一个帧网格：
+
+    | 画法 | 造型函数画在哪 | `finish` 做什么 | 描边的 1px 等于 |
+    |---|---|---|---|
+    | `drawn` | 96 **设计网格**（`bos_canvas()`） | 先描边、再 NEAREST ×SS 抬到 192 | 1 个**设计像素**（与它自己的杂兵语言一致） |
+    | `imported` | 直接出 192 **帧网格** | 只描边 | 0.5 个设计像素（插画细节本来就比设计网格细） |
+
+    **描边在各自的网格上加，不在统一网格上加** —— 若改成「先抬到 192 再描边」，
+    `drawn` 的轮廓会从 1 设计像素变成 0.5，等于偷偷把它的画风改了；
+    而那个改动不会有任何判据报警。抬网格那一步用 NEAREST 是**无损**的
+    （每个设计像素变成 SS×SS 个同色方块）。
 
     画布尺寸也在这里复核 —— 造型函数忘了用 `bos_canvas()` 时（比如自己
     `Image.new` 成 64 网格），会在这里当场暴露，而不是等到 `verify_boss_art`
     的判据 1 去猜「是不是退回了杂兵造型」。
     """
-    if (im.width, im.height) != (BOS_W, BOS_H):
-        raise AssertionError(
-            f"BOSS 造型画布是 {im.width}×{im.height}，应为 {BOS_W}×{BOS_H}"
-            f"（= 格子 {CELL} × 占位 {BOSS_TILES} 格）—— 造型函数要用 bos_canvas()"
-        )
-    return add_outline(im, MON_INK)
+    if (im.width, im.height) == (BOS_FRAME, BOS_FRAME):
+        return add_outline(im, MON_INK)
+    if (im.width, im.height) == (BOS_W, BOS_H):
+        return add_outline(im, MON_INK).resize((BOS_FRAME, BOS_FRAME), Image.NEAREST)
+    raise AssertionError(
+        f"BOSS 造型画布是 {im.width}×{im.height}，应为设计网格 {BOS_W}×{BOS_H}"
+        f"（= 格子 {CELL} × 占位 {BOSS_TILES} 格，造型函数要用 bos_canvas()）"
+        f"或帧网格 {BOS_FRAME}×{BOS_FRAME}（= 设计网格 × SS {BOSS_SS}）"
+    )
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -549,7 +612,8 @@ def boss_ids() -> tuple[str, ...]:
 
 def boss_art_base(bid: str, source: str | None = None) -> Image.Image:
     """
-    一只 BOSS 的静止帧（96 网格，1:1 落屏 96px）。描边语言与杂兵完全一致。
+    一只 BOSS 的静止帧（**帧网格** `BOS_FRAME` = 192，落屏 96px = 3 格）。
+    描边语言与杂兵完全一致。
 
     `source` 不传时用 `data/constants.json` 里的 `boss.artSource`。传它是为了
     让 `main.py` 能把**两套画法都建一遍**（都过各自的断言，只把选中的那套进图集）——
@@ -559,6 +623,8 @@ def boss_art_base(bid: str, source: str | None = None) -> Image.Image:
     if src == "imported":
         return finish(imported.build(bid))
     mod = _MODULE_OF[bid]
+    # `mod.draw` 出的是 96 **设计网格**，由 `finish` 描边后 NEAREST 抬到帧网格
+    # （见 `finish` 的对照表：描边必须在各自的网格上加，否则会偷偷改掉画风）。
     return finish(mod.draw(mod.spec(bid), bid))
 
 
@@ -672,10 +738,18 @@ def verify_boss_art(frames: dict[str, list[Image.Image]], source: str | None = N
     src = source or ART_SOURCE
     problems: list[str] = []
 
-    # 判据 0 —— 网格与占位必须来自同一个数
-    if BOS_W != CELL * BOSS_TILES:
+    # 判据 0 —— 网格与占位必须来自同一个数。
+    #
+    # 说的是**落屏尺寸**（帧边长 × drawScale）等于「格子 × 占位格数」，
+    # 而不是「帧边长等于 96」：后者把「画在哪个网格上」与「占几格」混为一谈，
+    # 于是给帧加超采样（帧 192 / drawScale 0.5，落屏仍是 96）会被它误杀。
+    # 这条要保护的从一开始就是「精灵与占位块一样大」这一件事（铁律 #12：
+    # 判据绑语义，别绑会随画法变的中间量），只是旧版正好两者数值相同而已。
+    on_screen = BOS_FRAME * BOSS_DRAW_SCALE
+    if abs(on_screen - CELL * BOSS_TILES) > 1e-9:
         problems.append(
-            f"BOSS 绘制网格 {BOS_W} ≠ 格子 {CELL} × 占位格数 {BOSS_TILES} —— "
+            f"BOSS 的**落屏尺寸**是 {on_screen:g}px（帧 {BOS_FRAME} × drawScale "
+            f"{BOSS_DRAW_SCALE:g}），而棋盘上占 {BOSS_TILES} 格 = {CELL * BOSS_TILES}px —— "
             f"素材画多大与棋盘占几格必须是同一个数（真值在 data/constants.json 的 "
             f"boss.footprintTiles），否则画面会出现「精灵比占位块大/小一圈」"
         )
@@ -698,13 +772,14 @@ def verify_boss_art(frames: dict[str, list[Image.Image]], source: str | None = N
             )
             continue
         im = fs[0]
-        if (im.width, im.height) != (BOS_W, BOS_H):
+        if (im.width, im.height) != (BOS_FRAME, BOS_FRAME):
             problems.append(
-                f"BOSS {bid} 的画布是 {im.width}×{im.height}，应为 {BOS_W}×{BOS_H} —— "
-                f"它八成退回了旧网格的造型（造型函数忘了走 bos_canvas()？）"
+                f"BOSS {bid} 的画布是 {im.width}×{im.height}，应为帧网格 "
+                f"{BOS_FRAME}×{BOS_FRAME}（= 设计网格 {BOS_W} × SS {BOSS_SS}）—— "
+                f"它八成退回了旧网格的造型（造型函数没走 `bos_canvas()` / `finish()`？）"
             )
             continue
-        if not im.crop((0, BOS_H - 1, BOS_W, BOS_H)).getchannel("A").getbbox():
+        if not im.crop((0, BOS_FRAME - 1, BOS_FRAME, BOS_FRAME)).getchannel("A").getbbox():
             problems.append(
                 f"BOSS {bid} 最后一行为空 —— 精灵是踩着占位块下沿摆的，底行留白会让它浮在半空"
             )
@@ -717,7 +792,11 @@ def verify_boss_art(frames: dict[str, list[Image.Image]], source: str | None = N
             checked += 1
             continue
 
-        d = _detail_density(im, BOS_DETAIL_BLOCK)
+        # 5 / 7 / 8 三条按**设计网格**量（`design_frame` 对 `drawn` 是无损折回）：
+        # 它们的分块尺寸与阈值都是在设计网格上标定的，直接对着 192 帧量
+        # 会让块变成「6 个设计像素」那么小、读数掉下来 —— 那是静默的量错口径。
+        d_im = design_frame(im)
+        d = _detail_density(d_im, BOS_DETAIL_BLOCK)
         checked += 1
         if d < BOSS_DETAIL_MIN:
             problems.append(
@@ -726,7 +805,7 @@ def verify_boss_art(frames: dict[str, list[Image.Image]], source: str | None = N
                 f"要么是把小网格的图放大过来（放大不创造颜色，只把同一批像素摊开），"
                 f"要么是大面积纯色没有压明暗三阶"
             )
-        inner = _inner_detail(im, BOS_INNER_BLOCK, BOS_INNER_MARGIN)
+        inner = _inner_detail(d_im, BOS_INNER_BLOCK, BOS_INNER_MARGIN)
         if inner < BOSS_INNER_MIN:
             problems.append(
                 f"BOSS {bid} 的内部细节只有 {inner:.2f}（排除轮廓后每 "
@@ -735,7 +814,7 @@ def verify_boss_art(frames: dict[str, list[Image.Image]], source: str | None = N
                 f"阴影 / 高光 / 刻线 / 鳞片（只压一层暗纹不够，要连高光一起给）"
             )
         if bid in HEAD_FRONT:
-            asym = _head_asym(im)
+            asym = _head_asym(d_im)
             if asym > BOSS_HEAD_SYM_MAX:
                 problems.append(
                     f"BOSS {bid} 是正面朝向的，但头部区域的左右不对称像素占 "

@@ -4,8 +4,8 @@
 
 - 产物：`dist-minigame/game.js`（单文件 IIFE，约 2.11 MB / gzip 458 KB）
 - 构建：`npm run build:minigame`
-- 验证：`npm run verify:minigame`（无 DOM 环境实测，25 项常驻判据；用
-  `npm run build:minigame:beacon` 的取证构建再跑，另得 6 项取证判据 = 31。退出码 0/1）
+- 验证：`npm run verify:minigame`（无 DOM 环境实测，37 项常驻判据；用
+  `npm run build:minigame:beacon` 的取证构建再跑，另得 6 项取证判据 = 43。退出码 0/1）
 
 ---
 

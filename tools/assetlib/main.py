@@ -34,7 +34,10 @@ from .monsters import MON_SHAPES, PROC_MONSTERS, mon_art_frames, verify_mon_art,
 from .bosses import (
     ART_SOURCE,
     ART_SOURCES,
+    BOS_FRAME,
+    BOS_W,
     BOSS_DRAW_SCALE,
+    BOSS_SS,
     BOSS_TILES,
     boss_art_frames,
     boss_art_source_of,
@@ -56,12 +59,13 @@ def _boss_src_note(mid: str) -> str:
     if info["kind"] == "imported":
         return (
             f"外部图源 {info['file']}（原文件名「{info['originalName']}」）"
-            f"→ 脚本化去背 / 去白边 / 等比缩放进 {CELL * BOSS_TILES} 网格，1:1 落屏"
+            f"→ 脚本化去背 / 反预乘去白边 / alpha 二值化 / 等比缩进 {BOS_FRAME} 帧网格"
+            f"（落屏 {CELL * BOSS_TILES}px）"
             f"（sha256 {info['sha256'][:16]}…）"
         )
     return (
-        f"本仓库手绘（tools/assetlib/bosses/ 包，{CELL * BOSS_TILES} 网格 = "
-        f"{CELL} × 占位 {BOSS_TILES} 格，1:1 落屏）"
+        f"本仓库手绘（tools/assetlib/bosses/ 包，{BOS_W} 设计网格 = "
+        f"{CELL} × 占位 {BOSS_TILES} 格，{BOS_FRAME} 帧网格 = 设计网格 × {BOSS_SS}）"
     )
 
 
@@ -98,6 +102,10 @@ def main() -> int:
             "supersample": SS,
             "cell": CELL,
             "drawScale": DRAW_SCALE,
+            # BOSS 自己那条超采样：帧边长 = 落屏(格子×占位格数) × 本值。
+            # 自述进 MANIFEST 是因为**保护它的判据在运行时那一侧**（A17）：
+            # 那里不该硬编码 2，而该问构建期「你说的 SS 是多少」再检查它够不够。
+            "bossSupersample": BOSS_SS,
             "note": "实体 → 图集坐标的唯一事实来源。改映射请改 tools/assetlib/data.py 后重跑，"
                     "不要直接编辑本文件。",
         },
@@ -297,10 +305,13 @@ def main() -> int:
 
     for mid, (src_name, xf, scale, note) in MONSTERS.items():
         # BOSS 走自己的网格体系：**两条换算都不能用** ——
-        # `_mon_out` 是「把 32 网格抬到出图 64」，对已经是 96 的帧是空操作但语义错；
+        # `_mon_out` 是「把 32 网格抬到出图 64」，对已经出好帧的 BOSS 是空操作但语义错；
         # `_out_scale` 是给「绘制网格 16 → 出图 64」换算倍数的。
-        # BOSS 的落屏规则只有一条：**绘制网格 1:1 落屏**（96 网格 → 96px 占 3 格），
-        # 所以 drawScale 常量 1.0。
+        #
+        # BOSS 的落屏规则只有一条：**帧边长 × BOSS_DRAW_SCALE = 格子 × 占位格数**
+        # （帧 192 × 0.5 = 96px，正好占 3 格）。`BOSS_DRAW_SCALE` 里那个 1/SS
+        # 是「帧比落屏大 SS 倍」的抵消，**不是可以拿去放大 BOSS 的旋钮** ——
+        # 真值仍是 `boss.footprintTiles`，由 `verify_boss_art` 判据 0 钉住。
         if mid in BOSS_IDS:
             frames = boss_by_source[ART_SOURCE][mid]
             boss_frames[mid] = frames
@@ -423,8 +434,8 @@ def main() -> int:
         missing.append(f"{mid}: PROC_MONSTERS 里有造型，但 MONSTERS 没标 gen，接不上")
     hand = len(proc_used)
     print(f"  手绘怪物 {hand} 只 / {len(MON_SHAPES)} 种形状"
-          f"；BOSS {len(boss_frames)} 只 / {CELL * BOSS_TILES} 网格 = {CELL} × 占位 {BOSS_TILES} 格，"
-          f"1:1 落屏"
+          f"；BOSS {len(boss_frames)} 只 / 设计网格 {CELL * BOSS_TILES} = {CELL} × 占位 {BOSS_TILES} 格，"
+          f"帧网格 {BOS_FRAME}（× SS {BOSS_SS} 超采样）、落屏 {CELL * BOSS_TILES}px"
           f"（画法 {ART_SOURCE}，两套都过断言）"
           f"（其余 {len(MONSTERS) - hand} 只取自 0x72）")
 
@@ -463,10 +474,13 @@ def main() -> int:
     # 屏幕上只有 32px，而 16×16 放大 3 倍的巨龙有 48px —— 结果魔王比小龙还小。
     #
     # ⚠️ 判据原本写的是「`drawScale == BIG_SCALE`（3）」。2026-09-24 BOSS 改成
-    #    96 网格 / 1:1 落屏之后 drawScale 变成 1.0，**没有任何怪还等于 3** ——
+    #    96 网格之后 drawScale 变成 1.0，**没有任何怪还等于 3** ——
     #    集合恒为空，这条断言当场退化成空转（而且怎么改都绿）。
     #    所以现在按**落屏尺寸**筛（语义），并补一条「至少得有一个大家伙」
     #    的存在性探针 —— 否则它还能再退化一次，而且照样看不出来。
+    #
+    #    2026-09-25 加超采样（帧 192 / drawScale 0.5）时这条**一个字都没改**就
+    #    继续成立 —— 正是「绑语义不绑中间量」（铁律 #12）那次改动的回报。
     big_sizes: dict[int, list[str]] = {}
     for mid, node in manifest["monsters"].items():
         if not node:
@@ -479,7 +493,7 @@ def main() -> int:
         missing.append(
             f"没有任何怪物画得比一格（{CELL}px）大 —— 「体型层级」这条断言失去意义。"
             f"BOSS 应当占 {CELL} × {BOSS_TILES} 格 = {CELL * BOSS_TILES}px，"
-            f"请检查 BOSS 是不是还画在 96 网格上、drawScale 是不是 1.0"
+            f"请检查 BOSS 的**落屏尺寸**（帧 {BOS_FRAME} × drawScale {BOSS_DRAW_SCALE:g}）"
         )
     elif len(big_sizes) > 1:
         detail = "；".join(f"{k}px → {', '.join(sorted(v))}" for k, v in sorted(big_sizes.items()))

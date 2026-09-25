@@ -26,7 +26,10 @@ from assetlib.bosses import BOS_W, BOSS_DRAW_SCALE, boss_art_frames, boss_ids  #
 from assetlib.config import CELL, ROOT  # noqa: E402
 from assetlib.pil import Image, ImageDraw  # noqa: E402
 
-SCALE = BOSS_DRAW_SCALE  # 1:1
+# 落屏倍数（= 1 / BOSS_SS）。帧是 192，乘上它就是**落屏的 96px** ——
+# 预览图要看的正是「玩家看到的那一版」，所以跟着 MANIFEST 那条规则走，
+# 不在这里另写一个缩放。
+SCALE = BOSS_DRAW_SCALE
 
 
 def _checker(size: int, a=(214, 218, 226, 255), b=(238, 240, 245, 255), step: int = 8):

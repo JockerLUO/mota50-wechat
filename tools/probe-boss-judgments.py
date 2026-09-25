@@ -96,9 +96,9 @@ def probe_stretch() -> tuple[str, list]:
     def broken(im):
         bbox = im.getchannel("A").getbbox()
         im2 = im.crop(bbox)
-        small = im2.convert("RGBa").resize((imported.BOS_W, imported.BOS_H),
+        small = im2.convert("RGBa").resize((imported.BOS_FRAME, imported.BOS_FRAME),
                                            Image.LANCZOS).convert("RGBA")
-        out = Image.new("RGBA", (imported.BOS_W, imported.BOS_H), (0, 0, 0, 0))
+        out = Image.new("RGBA", (imported.BOS_FRAME, imported.BOS_FRAME), (0, 0, 0, 0))
         out.alpha_composite(small, (0, 0))
         return out
 
@@ -111,26 +111,27 @@ def probe_stretch() -> tuple[str, list]:
 
 
 def probe_top_align() -> tuple[str, list]:
-    """④ 顶对齐：`y = BOS_H - nh` 改成 `y = 0`（脚离地，浮在半空）。"""
-    orig = imported.fit_into_grid
+    """④ 顶对齐：`realign` 的底对齐改成顶对齐（脚离地，浮在半空）。
+
+    2026-09-25 起对齐职责从 `fit_into_grid` 搬到了 `realign`（二值化削掉一圈
+    轮廓之后要按**新**轮廓重新底对齐），病根也跟着搬家 —— patch
+    `fit_into_grid` 产出什么对齐都会被 `realign` 修正，探针会假阴。
+    """
+    orig = imported.realign
 
     def broken(im):
-        bbox = im.getchannel("A").getbbox()
-        im2 = im.crop(bbox)
-        cw, ch = im2.size
-        s = min(imported.BOS_W / cw, imported.BOS_H / ch)
-        nw, nh = max(1, round(cw * s)), max(1, round(ch * s))
-        small = im2.convert("RGBa").resize((nw, nh), Image.LANCZOS).convert("RGBA")
-        out = Image.new("RGBA", (imported.BOS_W, imported.BOS_H), (0, 0, 0, 0))
-        out.alpha_composite(small, ((imported.BOS_W - nw) // 2, 0))
+        bb = im.getchannel("A").getbbox()
+        c = im.crop(bb)
+        out = Image.new("RGBA", (imported.BOS_FRAME, imported.BOS_FRAME), (0, 0, 0, 0))
+        out.alpha_composite(c, ((imported.BOS_FRAME - c.width) // 2, 0))  # 顶，不是底
         return out
 
-    imported.fit_into_grid = broken
+    imported.realign = broken
     try:
-        return ("底对齐改成顶对齐",
+        return ("realign 底对齐改成顶对齐",
                 common.verify_boss_art(_frames("imported"), "imported"))
     finally:
-        imported.fit_into_grid = orig
+        imported.realign = orig
 
 
 def probe_source_switch_ignored() -> tuple[str, list]:
@@ -154,12 +155,54 @@ def probe_source_switch_ignored() -> tuple[str, list]:
         common.boss_art_base = orig
 
 
+def probe_no_harden() -> tuple[str, list]:
+    """⑥ 不做 alpha 二值化：删掉 harden_alpha 这一步（本轮玩家报的「周边线条模糊」）。
+
+    注意返回值做了**定向过滤**：只保留含「半透明」的红。若 I7（TRANSLUCENT_MAX=0）
+    没有被这条病根打红，列表为空 → FAIL。不做过滤的话，其它判据（覆盖率等）
+    的误伤红会把「I7 没有区分力」这件事盖住。
+    """
+    orig = imported.build
+
+    def broken(bid):
+        # 真链：realign(harden_alpha(fit_into_grid(_clean(bid))))
+        return imported.realign(imported.fit_into_grid(imported._clean(bid)))
+
+    imported.build = broken
+    try:
+        problems = common.verify_boss_art(_frames("imported"), "imported")
+        return ("删掉 harden_alpha（边缘 alpha 保持渐变）",
+                [p for p in problems if "半透明" in p])
+    finally:
+        imported.build = orig
+
+
+def probe_harden_before_scale() -> tuple[str, list]:
+    """⑦ 顺序反了：先二值化再缩放（LANCZOS 会把硬边重新抹成渐变）。"""
+    orig = imported.build
+
+    def broken(bid):
+        return imported.realign(
+            imported.fit_into_grid(imported.harden_alpha(imported._clean(bid)))
+        )
+
+    imported.build = broken
+    try:
+        problems = common.verify_boss_art(_frames("imported"), "imported")
+        return ("harden_alpha 排到 fit_into_grid 之前",
+                [p for p in problems if "半透明" in p])
+    finally:
+        imported.build = orig
+
+
 PROBES = (
     probe_no_matte,
     probe_no_feather,
     probe_stretch,
     probe_top_align,
     probe_source_switch_ignored,
+    probe_no_harden,
+    probe_harden_before_scale,
 )
 
 

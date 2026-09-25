@@ -35,16 +35,28 @@ BOSS 素材 —— **外部图源**那一半（2026-09-25 起是默认画法）�
                                                    这条靠 ② 的余量 + 人眼核对图
 ③ 边缘去白边       失败：留下 1px 浅色光圈          → 判据「剪影外缘光圈占比」抓
 ④ 裁剪到内容       失败：整幅 192 撑满 → 内容缩得极小 → 判据「非透明占比」抓
-⑤ 等比缩放进 96    失败：拉伸变形                  → 判据「长宽比守恒」抓
+⑤ 等比缩进帧网格   失败：拉伸变形                  → 判据「长宽比守恒」抓
 ⑥ 底对齐居中       失败：脚离地 / 浮空             → 判据「底行必须有像素」抓（共用）
+⑦ alpha 二值化     失败：边缘一圈半透明 → 发糊       → 判据「硬边」抓
 ```
 
-## 两个「不做」的取舍（都写在这里，免得下一个人重新试一遍）
+> ⑦ 是 2026-09-25 补的一步。玩家报「**周边线条模糊**」：①②③ 每一步都在制造
+> 半透明（去背是硬切留下抗锯齿圈、③ 把那一圈故意压成低 alpha、缩放再把
+> alpha 抹成渐变），于是剪影外圈是一条几像素宽的灰带 —— 而棋盘上其它东西
+> 全是硬边像素画。**二值化必须排在 ③ 之后**（先反预乘换出真彩，再砍掉低 alpha），
+> 顺序反了会留下一圈白边。详见 `harden_alpha`。
+
+## 三个「不做」的取舍（都写在这里，免得下一个人重新试一遍）
 
 **不做硬边化（限色 / 描边像素化）。** 源图是平滑插画，落屏 96px 时抗锯齿正是
 它比同一网格的像素画耐看的原因；限色会把它打回「劣质像素画」，两头不讨好。
 描边**照样加**（走 `common.finish`）—— 描边是这一套素材的公共语言，
 杂兵、道具、地形全有，少了它这一族会在棋盘上"飘"。
+
+> ⚠️ 2026-09-25 澄清一次：**「限色」与「alpha 二值化」是两件事，别混为一谈。**
+> 上面否掉的是**限色**（把几万色砍成十几个色阶），它会把插画打回劣质像素画。
+> 而 `harden_alpha` 只动 alpha、RGB 一个像素不改 —— 插画内部的明暗纹理全部保留，
+> 只有剪影边缘从「渐变」变成「硬边」。玩家报的「周边线条模糊」要的是后者。
 
 **不做逐图微调。** 八张图一律走同一套参数。任何「这张稍微挪一点」都是手工修图的
 变体，会让「图集是怎么来的」重新变得不可复现。
@@ -57,7 +69,7 @@ from collections import Counter, deque
 
 from ..config import ROOT
 from ..pil import Image
-from .common import BOS_H, BOS_W, finish
+from .common import BOS_FRAME, finish
 
 # ════════════════════════════════════════════════════════════════════
 # 一、源图登记表
@@ -142,9 +154,13 @@ POCKET_BG_MATCH_MIN = 0.50 # 块内「≈底色」占比达到多少才判为背
 
 # ── 源图的期望尺寸 ──────────────────────────────────────────────────
 #
-# 只为「源图被换成了小图」这类事故留一条能读懂的红：源图比落屏网格还小时，
+# 只为「源图被换成了小图」这类事故留一条能读懂的红：源图比**帧网格**还小时，
 # 放大只会得到一坨糊的（放大不创造信息）。这一条是**下界**，不是「必须等于」。
-SRC_MIN_SIDE = BOS_W
+#
+# 拿帧网格（192）而不是设计网格（96）当基准：链上真正发生的那次重采样是
+# 「源图 → 帧网格」，所以「源图够不够大」该跟帧网格比。当前八张源图正好 192，
+# 落在等号上（不触发）；换成 128 的图会当场报出来。
+SRC_MIN_SIDE = BOS_FRAME
 
 
 def source_path(bid: str):
@@ -186,8 +202,8 @@ def load_source(bid: str) -> Image.Image:
     im = Image.open(path).convert("RGBA")
     if min(im.size) < SRC_MIN_SIDE:
         raise SystemExit(
-            f"BOSS {bid} 的源图只有 {im.size[0]}×{im.size[1]}，小于落屏网格 "
-            f"{BOS_W}×{BOS_H} —— 放大不创造信息，只会得到一坨糊的。换一张大图。"
+            f"BOSS {bid} 的源图只有 {im.size[0]}×{im.size[1]}，小于帧网格 "
+            f"{BOS_FRAME}×{BOS_FRAME} —— 放大不创造信息，只会得到一坨糊的。换一张大图。"
         )
     return im
 
@@ -353,12 +369,21 @@ def feather_edges(im: Image.Image) -> Image.Image:
 
 def fit_into_grid(im: Image.Image) -> Image.Image:
     """
-    ④⑤⑥ 裁剪到内容 → 等比缩放到 96 内 → 底对齐居中。
+    ④⑤⑥ 裁剪到内容 → 等比缩放**缩进帧网格**（`BOS_FRAME`）→ 底对齐居中。
 
     **等比**而不是拉伸到满格：八个角色的体型本来就该不一样（魔龙横宽、法师瘦高），
-    拉满会把「一条龙」和「一个人」都压成同一个方框。底对齐是因为精灵的落点由
-    `common.finish` 之后由渲染层按「脚踩占位块下沿」摆 —— 帧内底留白会让它浮空
-    （这正是 `verify_boss_art` 判据 2 守的东西）。
+    拉满会把「一条龙」和「一个人」都压成同一个方框。
+
+    ⚠️ 这一步的输出**还不是最终帧** —— 它用的是「反预乘之后」的柔和轮廓包围盒，
+    而 `harden_alpha` 之后轮廓会缩一圈（削掉抗锯齿圈与水印）。所以 `build()`
+    在它之后还要走 `realign` 重新按硬边轮廓底对齐。见 `build()`。
+
+    ## 为什么目标网格是 `BOS_FRAME`（192）而不是设计网格（96）
+
+    源图本就是 192×192，内容包围盒实测 150~190。缩到 96 等于**先扔掉一半**，
+    再由 GPU 把 96 纹理拉到 288 设备像素（dpr 3）—— 一丢一拉，边缘必糊。
+    缩进 192 则**一个源像素都不丢**，缩放倍数落在 1.0~1.3 之间（对平滑插画
+    这一档重采样没有可见损失）。详见 `common.BOSS_SS` 那一段。
     """
     bbox = im.getchannel("A").getbbox()
     if not bbox:
@@ -366,7 +391,7 @@ def fit_into_grid(im: Image.Image) -> Image.Image:
     im = im.crop(bbox)
 
     cw, ch = im.size
-    scale = min(BOS_W / cw, BOS_H / ch)
+    scale = min(BOS_FRAME / cw, BOS_FRAME / ch)
     nw = max(1, round(cw * scale))
     nh = max(1, round(ch * scale))
 
@@ -377,21 +402,132 @@ def fit_into_grid(im: Image.Image) -> Image.Image:
     # —— 后者才是真的把那两点红色平均下来。
     small = im.convert("RGBa").resize((nw, nh), Image.LANCZOS).convert("RGBA")
 
-    out = Image.new("RGBA", (BOS_W, BOS_H), (0, 0, 0, 0))
+    out = Image.new("RGBA", (BOS_FRAME, BOS_FRAME), (0, 0, 0, 0))
     # `alpha_composite` 而不是 `paste(im, pos, im)` —— 后者是「用 mask 覆盖」，
     # 会把 alpha 平方（本项目已知缺陷，见 docs）。这里对源图 alpha 只过一次。
-    out.alpha_composite(small, ((BOS_W - nw) // 2, BOS_H - nh))
+    out.alpha_composite(small, ((BOS_FRAME - nw) // 2, BOS_FRAME - nh))
     return out
 
 
-def build(bid: str) -> Image.Image:
-    """一只 BOSS 的 96 网格帧（**描边之前** —— 描边由 `common.finish` 统一加）。"""
+def realign(im: Image.Image) -> Image.Image:
+    """
+    ⑥′ 按**当前**轮廓重新裁剪 + 底对齐居中。
+
+    为什么硬边化之后必须重做一次：`fit_into_grid` 对齐用的是「反预乘之后」
+    那个偏大的柔和包围盒，而 `harden_alpha` 会把轮廓削掉一圈 ——
+    实测被削掉的正是**抗锯齿圈与右下角那处水印**（那些像素的 alpha 只有 20~26，
+    本来就该去掉）。不重做的话，帧底部会留下 1~22px 的透明留白，
+    而 `verify_boss_art` 判据 2（底行必须有像素）与渲染层的「脚踩占位块下沿」
+    都会因此把精灵整个抬起来。
+    """
+    bb = im.getchannel("A").getbbox()
+    if not bb:
+        raise SystemExit("硬边化之后整幅都是透明的 —— 阈值 ALPHA_HARD_MIN 是不是太高了")
+    c = im.crop(bb)
+    if c.width > BOS_FRAME or c.height > BOS_FRAME:
+        raise SystemExit(
+            f"硬边化之后内容 {c.width}×{c.height} 超过了帧网格 {BOS_FRAME} —— "
+            f"轮廓不该在二值化时变大，先查 ALPHA_HARD_MIN"
+        )
+    out = Image.new("RGBA", (BOS_FRAME, BOS_FRAME), (0, 0, 0, 0))
+    out.alpha_composite(c, ((BOS_FRAME - c.width) // 2, BOS_FRAME - c.height))
+    return out
+
+
+# 二值化阈值：alpha ≥ 本值 ⇒ 不透明。
+#
+# 取 128 是**「这一格有一半以上是美术本体」**那条等值线 —— 它正是
+# 「把抗锯齿图像转成硬边像素画」的标准做法，不是随手挑的中间值。
+ALPHA_HARD_MIN = 128
+
+
+def harden_alpha(im: Image.Image) -> Image.Image:
+    """
+    ⑦ **把 alpha 二值化** —— 这是「边缘不糊」的最后一刀，也是外部图源
+    与全项目像素画语言对齐的地方。
+
+    ## 不糊的边缘从哪来
+
+    这一条链之前每一步都在**制造半透明**：去背是硬切（留下与白底混过的抗锯齿圈），
+    `feather_edges` 更进一步把那一圈**故意**压成低 alpha，最后 LANCZOS 缩放
+    再把 alpha 抹成一片渐变。实测（skeletonCaptain，96 网格那一版）：
+
+        alpha == 0   6004 px
+        alpha 1..254  **1596 px**   ← 占全部非透明像素的 49.7%
+        alpha == 255   1616 px
+
+    也就是说**边缘有一半的像素是半透明的**。在 dpr 3 上每个这样的像素会摊成
+    3×3 的灰阶块 ⇒ 剪影外圈是一条 3~6 设备像素宽的**模糊带** ——
+    而棋盘上其它东西（墙、地板、杂兵）全是 `alpha ∈ {0,255}` 的硬边像素画。
+    并排放着，BOSS 的「发虚」就是这么来的。
+
+    ## 为什么二值化之前必须先反预乘（`feather_edges`）
+
+    顺序不能反。被白底混过的边界像素**颜色本身是浅的**（那是 `c = a·C + (1-a)·255`
+    里的白底分量）。若先二值化再反预乘，这些像素会被判成不透明、并且带着
+    那层浅色留下来 ⇒ 剪影外圈多一圈「白边」，比模糊更难看。
+    先反预乘把它们换成真彩 + 低 alpha，再二值化 ⇒ **低 alpha 那些直接变透明**，
+    留下来的是真彩，白边和模糊一起消失。
+
+    实测被这一刀削掉的两类东西，恰好都是**本来就该去掉**的：
+      · 抗锯齿圈（alpha 20~127，实测每行 2~24 个像素，沿整条剪影分布）；
+      · 源图右下角那处**水印**（亮度 222~251 ⇒ 反预乘后 alpha 只有 20~26）。
+    后者是意外收获：水印在旧链里一直留在图集里，只是小到没人注意。
+
+    ## 顺序：必须在**缩放之后**
+
+    反过来（先二值化再缩放）会前功尽弃：LANCZOS 把硬边重新抹成渐变，
+    半透明像素又回来了。所以链是「缩放 → 二值化 → 重新底对齐」。
+
+    ## 不做的事：不限制颜色
+
+    只动 alpha，RGB 一个像素不改。插画内部的明暗阶、纹理、细节全部保留 ——
+    这一条与「不做硬边化（限色）」那条取舍不冲突：限色会把插画打回劣质像素画，
+    而**边缘硬不硬与内部有多少颜色是两件事**。
+    """
+    im = im.copy()
+    px = im.load()
+    for y in range(im.height):
+        for x in range(im.width):
+            r, g, b, a = px[x, y]
+            if a == 0 or a == 255:
+                continue
+            px[x, y] = (r, g, b, 255) if a >= ALPHA_HARD_MIN else (0, 0, 0, 0)
+    return im
+
+
+def _clean(bid: str) -> Image.Image:
+    """①②②′③ —— 到「反预乘去白边」为止（**还没缩放、还没硬边化**）。"""
     src = load_source(bid)
     bg = backdrop_color(src)          # ⚠️ 必须在去背之前取（去背会清掉整个边框环）
     im, _ = clear_background(src)
     im, _ = clear_pockets(im, bg)
-    im = feather_edges(im)
-    return fit_into_grid(im)
+    return feather_edges(im)
+
+
+def source_contour(bid: str) -> tuple[int, int]:
+    """
+    源图上**硬边化之后**的轮廓包围盒（宽, 高）—— 判据 I3 的参照物。
+
+    为什么参照物也得过一遍硬边化：否则拿「含抗锯齿圈 + 含右下角水印」的
+    旧包围盒去对「已经削干净的帧」，长宽比会差出一大截（实测骑士王
+    152×185 → 117×181，比值 0.822 → 0.646），然后判据会报「缩放被改成拉伸了」
+    —— 报错指向缩放、病根在参照物取错了阶段。**判据的参照物必须与被判物同阶段。**
+    """
+    bb = harden_alpha(_clean(bid)).getchannel("A").getbbox()
+    if not bb:
+        raise SystemExit(f"BOSS {bid} 硬边化之后没有内容")
+    return (bb[2] - bb[0], bb[3] - bb[1])
+
+
+def build(bid: str) -> Image.Image:
+    """
+    一只 BOSS 的帧网格帧（**描边之前** —— 描边由 `common.finish` 统一加）。
+
+    ⑦ 必须排在 ⑤ 之后：二值化放在缩放之前，LANCZOS 会把硬边重新抹成渐变。
+    ⑥′（`realign`）必须排在 ⑦ 之后：硬边化会削掉一圈轮廓，底对齐要按新轮廓重做。
+    """
+    return realign(harden_alpha(fit_into_grid(_clean(bid))))
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -441,7 +577,7 @@ WHITE_TEST_MIN = 225
 # 剪影**外缘**那一圈里「接近白的不透明像素」占比的上限。
 #
 # 这条守的是**去了背但没去白边** —— 硬切完的边界上留着原图里跟白底混过的
-# 抗锯齿像素，缩到 96 之后是一圈浅色光圈，在深色棋盘上很显眼。
+# 抗锯齿像素，落屏后是一圈浅色光圈，在深色棋盘上很显眼。
 #
 # 实测（同一次测量，量「距透明区 ≤FEATHER_BAND 圈的不透明像素」里的近白占比）：
 #   (b) 去背+清口袋、不去白边：17.1% ~ 20.4%（八只全部）
@@ -453,13 +589,14 @@ WHITE_TEST_MIN = 225
 # 所以 `verify_imported` 量的是 `build()` 的输出，不是 `boss_art_base()` 的输出。
 RIM_WHITE_MAX = 0.05
 
-# 非透明像素占 96² 的比例区间。
+# 非透明像素占**帧面积**的比例区间。
 #   下界：防「去背把美术本体也吃掉了」或「缩小到几乎看不见」；
 #   上界：防「去背整个没跑」（那时非透明占比接近 1.0）。
 # 实测（同一次测量）处理完整后落在 **37.9% ~ 70.1%**：
 #   下界 0.20 → 余量 1.9×；上界 0.92 → 余量 1.3×。
 # 上界余量比下界小，是有意的：上界要抓的是「整幅白底还在」（≥0.92 才成立），
 # 而「画得满」本身是合法的（乌贼 70.1%），不该被卡。
+# 这是**比值**，所以帧网格从 96 换到 192 时不用改。
 COVER_MIN = 0.20
 COVER_MAX = 0.92
 
@@ -467,15 +604,37 @@ COVER_MAX = 0.92
 # 必须与「源图内容包围盒的长宽比」相等（各自 round 掉不到 1px）。
 # 这条守的是「有人把缩放改成拉伸到满格」——那会让龙和人一样宽，而任何
 # 只看尺寸的判据都不会红。
+# 帧网格翻倍后这条**自动变严**（同样的 2px 在 192 上占比只有一半）—— 保持 2。
 ASPECT_TOL = 2
+
+# ── 判据 7：边缘必须是硬边（2026-09-25 新增）───────────────────────────
+#
+# 玩家报「周边线条模糊」时，可量的东西就是这个：**帧里半透明像素的个数**。
+#
+# 实测（skeletonCaptain，96 网格那一版）：
+#   alpha == 0     6004 px
+#   alpha 1..254   **1596 px**  ← 占全部非透明像素 49.7%
+#   alpha == 255    1616 px
+# 也就是说边缘**将近一半的像素是半透明的**，在 dpr 3 上摊成 3×3 的灰阶块 ⇒
+# 剪影外圈一条几设备像素宽的模糊带。而棋盘上其它东西全是 `alpha ∈ {0,255}`。
+#
+# 上限取 **0**，不是「一个很小的数」：`harden_alpha` 之后半透明像素在数学上
+# 恰好为 0（非 0 即 255），任何非零读数都说明二值化那一步没跑或跑在别处了。
+# 写成 0.001 之类的「宽容值」只会让这条判据在「二值化忘了接上」时仍然全绿。
+TRANSLUCENT_MAX = 0
 
 
 def frame_stats(im: Image.Image) -> dict:
-    """量一帧：内容包围盒、非透明占比、白底残留占比。判据与文档共用同一把尺。"""
+    """量一帧：内容包围盒、非透明占比、白底残留占比、**半透明像素数**。
+
+    判据与文档共用同一把尺 —— 阈值表里的数字全部由这里量出来。
+    `translucent` 是判据 7（硬边）的读数：`harden_alpha` 之后它必须恰好为 0。
+    """
     w, h = im.size
     px = im.load()
     opaque = 0
     white = 0
+    translucent = 0
     xs: list[int] = []
     ys: list[int] = []
     for y in range(h):
@@ -483,6 +642,8 @@ def frame_stats(im: Image.Image) -> dict:
             r, g, b, a = px[x, y]
             if a == 0:
                 continue
+            if a != 255:
+                translucent += 1
             opaque += 1
             xs.append(x)
             ys.append(y)
@@ -490,12 +651,13 @@ def frame_stats(im: Image.Image) -> dict:
                 white += 1
     if not xs:
         return {"empty": True, "opaque": 0, "cover": 0.0, "whiteRatio": 1.0,
-                "bw": 0, "bh": 0}
+                "translucent": translucent, "bw": 0, "bh": 0}
     return {
         "empty": False,
         "opaque": opaque,
         "cover": opaque / (w * h),
         "whiteRatio": white / opaque,
+        "translucent": translucent,
         "bw": max(xs) - min(xs) + 1,
         "bh": max(ys) - min(ys) + 1,
     }
@@ -534,12 +696,13 @@ def rim_stats(im: Image.Image) -> dict:
 
 def verify_imported(bid: str, raw: Image.Image, finished: Image.Image) -> list[str]:
     """
-    外部图源的判据。**每一条都有对应的探针实验**（见 docs/assets.md §13.15 的表）。
+    外部图源的判据（I1~I7）。**每一条都有对应的探针实验**
+    （见 `tools/probe-boss-judgments.py` 与 docs/assets.md §13.15 的表）。
 
     ## 两个入参：为什么既收 `raw` 又收 `finished`
 
     · `raw`      = `build(bid)` 的输出（**描边之前**）—— 观感类判据（白底残留 /
-                   内容占比 / 长宽比 / 底对齐 / 外缘光圈）必须量它。
+                   内容占比 / 长宽比 / 底对齐 / 外缘光圈 / 硬边）必须量它。
                    ⚠️ 外缘光圈那条**只能**量 raw：`finish()` 那圈 MON_INK 描边
                    正好落在最外缘，量 finished 会把「贴着透明区的那一圈」变成深色，
                    判据于是**恒真**。
@@ -549,7 +712,7 @@ def verify_imported(bid: str, raw: Image.Image, finished: Image.Image) -> list[s
 
     ## 与 `verify_boss_art` 的分工
 
-    那条管**两族共有**的东西（网格 / 画布 / 底行 / 单帧 / 剪影互异 / 与数据对账），
+    那条管**两族共有**的东西（落屏尺寸 / 画布 / 底行 / 单帧 / 剪影互异 / 与数据对账），
     这条只管**外部图源特有**的东西。重复的判据不写两遍 —— 写两遍就会有一次忘了
     跟着改。
     """
@@ -598,31 +761,49 @@ def verify_imported(bid: str, raw: Image.Image, finished: Image.Image) -> list[s
         problems.append(
             f"BOSS {bid} 的剪影外缘有 {rs['ratio']:.1%} 的浅色像素（{rs['white']}/"
             f"{rs['rim']}，上限 {RIM_WHITE_MAX:.0%}）—— 走了去背但没走 "
-            f"`feather_edges`。实测不去白边是 17%~21%，缩到 96 之后是一圈浅色光圈，"
+            f"`feather_edges`。实测不去白边是 17%~21%，落屏后是一圈浅色光圈，"
             f"在深色棋盘上像贴纸边"
         )
 
     # 判据 I3 —— 等比缩放没被改成拉伸
-    src = clear_background(load_source(bid))[0]
-    bb = src.getchannel("A").getbbox()
-    cw, ch = bb[2] - bb[0], bb[3] - bb[1]
+    #
+    # 参照物取**同一个阶段**的轮廓（源图也过一遍硬边化，见 `source_contour`）：
+    # 若拿「含抗锯齿圈 + 含右下角水印」的旧包围盒去对已经削干净的帧，
+    # 长宽比会差一大截，报出来是「缩放被改成拉伸了」—— 报错指向缩放、
+    # 病根在参照物取错了阶段（实测骑士王 0.822 → 0.646）。
+    cw, ch = source_contour(bid)
     want = cw / ch
     got = st["bw"] / st["bh"]
     if abs(got - want) > ASPECT_TOL / min(st["bw"], st["bh"]):
         problems.append(
             f"BOSS {bid} 的帧内容长宽比是 {got:.3f}（{st['bw']}×{st['bh']}），"
-            f"而源图内容的长宽比是 {want:.3f}（{cw}×{ch}）—— 缩放被改成拉伸了。"
-            f"`fit_into_grid` 必须走 `min(BOS_W/cw, BOS_H/ch)` 这一个倍数，"
+            f"而源图轮廓（硬边化之后）的长宽比是 {want:.3f}（{cw}×{ch}）"
+            f"—— 缩放被改成拉伸了。`fit_into_grid` 必须走 "
+            f"`min(BOS_FRAME/cw, BOS_FRAME/ch)` 这一个倍数，"
             f"否则龙和人会被压成同一个方框"
         )
 
     # 判据 I4 —— 帧底必须踩到占位块下沿。**量 raw**：描边会把空的底行填掉
-    # （下面第 94 行有 alpha>120 的像素时，outline 正好写进第 95 行），
+    # （下面第 `BOS_FRAME-2` 行有 alpha>120 的像素时，outline 正好写进最后一行），
     # 于是量 finished 会恒真。
-    bottom = raw.getchannel("A").crop((0, BOS_H - 1, BOS_W, BOS_H)).getbbox()
+    bottom = raw.getchannel("A").crop((0, BOS_FRAME - 1, BOS_FRAME, BOS_FRAME)).getbbox()
     if not bottom:
         problems.append(
             f"BOSS {bid} 的最后一行为空 —— 源图裁完之后没做底对齐，"
-            f"精灵会浮在占位块上方。`fit_into_grid` 的 y 必须是 BOS_H - 缩放后高度"
+            f"精灵会浮在占位块上方。`fit_into_grid` 的 y 必须是 BOS_FRAME - 缩放后高度"
+        )
+
+    # 判据 I7 —— 边缘必须是硬边（玩家报的「周边线条模糊」的可量口径）
+    #
+    # 量 `raw` 而不是 `finished`：描边那一步是四邻域膨胀，它自己写进来的像素
+    # 是不透明的，但**它不会消掉已有的半透明像素** —— 所以两条都能量。
+    # 之所以还是选 raw：这条判据描述的是「插画处理链有没有收硬」，
+    # 与 `finish` 无关；量 raw 让它连着 `harden_alpha` 一起被守住。
+    if st["translucent"] > TRANSLUCENT_MAX:
+        problems.append(
+            f"BOSS {bid} 的帧里有 {st['translucent']} 个半透明像素"
+            f"（应恰好为 0）—— `harden_alpha` 没跑，或者被排到了 "
+            f"`fit_into_grid` 之前。半透明边缘在 dpr 3 上会摊成 3×3 的灰阶块，"
+            f"剪影外圈就是一条模糊带（而棋盘上其它东西全是 alpha∈{{0,255}}）"
         )
     return problems
