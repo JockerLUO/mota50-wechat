@@ -42,6 +42,8 @@ bosses/
 """
 
 from .common import (  # noqa: F401
+    ART_SOURCE,
+    ART_SOURCES,
     BOS_CX,
     BOS_H,
     BOS_W,
@@ -49,11 +51,15 @@ from .common import (  # noqa: F401
     BOSS_TILES,
     boss_art_base,
     boss_art_frames,
+    boss_art_source_of,
     boss_ids,
     verify_boss_art,
+    verify_boss_source_switch,
 )
 
 __all__ = [
+    "ART_SOURCE",
+    "ART_SOURCES",
     "BOS_CX",
     "BOS_H",
     "BOS_W",
@@ -61,6 +67,8 @@ __all__ = [
     "BOSS_TILES",
     "boss_art_base",
     "boss_art_frames",
+    "boss_art_source_of",
     "boss_ids",
     "verify_boss_art",
+    "verify_boss_source_switch",
 ]

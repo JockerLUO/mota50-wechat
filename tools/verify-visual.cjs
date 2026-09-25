@@ -43,6 +43,9 @@
  *       （素材层再做「上半身位移 + 接缝补偿」会立刻被这条抓住）
  *   A21 BOSS 占位块：九格都走不进、撞上去即开战且一步不走、击败后整块恢复通行、
  *       领域伤害贴的是占位块而不是坐标（A5a 量画面，这条量规则）
+ *   A22 BOSS 图集来自**当前**这批源图：`assets/MANIFEST.json` 记的源图 sha256
+ *       与 `assets/raw/boss/*.png` 现算的逐只相等（改源图没重跑 assets 会红）
+ *       —— A5a/A17/A21 管「帧摆在哪、多大、占几格」，这条管「帧是**哪来的**」
  *
  * 用法：node tools/verify-visual.cjs [--verbose]（先 npm run build）
  *
@@ -58,7 +61,7 @@ const { runAll, server } = require('./verify/harness.cjs');
 /**
  * 断例清单 —— **顺序即依赖**。
  *
- * A1..A21 的编号顺序就是它们历史上的执行顺序：A13 开头那句 `press('r')`
+ * A1..A22 的编号顺序就是它们历史上的执行顺序：A13 开头那句 `press('r')`
  * 假定 A1..A12 已经把全塔跑过一遍（那会留下「巫师领域」之类的状态），
  * 而 A21 开头也按一次 `r`（它要「攻击 10 < 骷髅队长防御 15」这个干净局面）。
  * 新增断言请追加在末尾；要插在中间的话，先确认后面那些断例的隐含前置条件。
@@ -80,7 +83,8 @@ const CHECKS = [
   require('./verify/checks/a18-text-resolution.cjs'),
   require('./verify/checks/a19-wall-masonry.cjs'),
   require('./verify/checks/a20-idle-bob.cjs'),
-  require('./verify/checks/a21-boss-footprint.cjs')
+  require('./verify/checks/a21-boss-footprint.cjs'),
+  require('./verify/checks/a22-boss-source.cjs')
 ];
 
 runAll(CHECKS).catch((err) => {

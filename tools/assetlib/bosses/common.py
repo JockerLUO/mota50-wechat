@@ -84,6 +84,42 @@ def _footprint_tiles() -> int:
 
 BOSS_TILES = _footprint_tiles()
 
+
+def _art_source() -> str:
+    """
+    BOSS 素材的画法来源：`"imported"`（外部图源，默认）或 `"drawn"`（手绘像素画）。
+
+    ## 为什么这个开关在 data 里，而不是一个 python 常量
+
+    与 `footprintTiles` 同一个理由：它决定的是**产物形态**，而产物还有别的读者。
+    放 data 里，渲染层/文档/工具都能读到同一个值；放 python 常量里，
+    「图集是哪种画法」就只有构建脚本自己知道。
+
+    取值**只允许这两个**。写错一个字母时不能静默回落到默认值 ——
+    那会让「改了开关但没生效」变成一次很难查的静默失败。
+    """
+    const = json.loads((ROOT / "data" / "constants.json").read_text(encoding="utf-8"))
+    try:
+        value = const["boss"]["artSource"]
+    except (KeyError, TypeError) as exc:  # pragma: no cover
+        raise SystemExit(
+            "data/constants.json 里读不到 boss.artSource —— BOSS 用「外部图源」还是"
+            "「手绘像素画」由它决定，缺了它无法继续（也不该猜一个默认值）。"
+        ) from exc
+    if value not in ART_SOURCES:
+        raise SystemExit(
+            f"boss.artSource 是 {value!r}，只允许 {sorted(ART_SOURCES)} —— "
+            f"写错就报错，而不是悄悄回落到默认值（那会让「改了开关但没生效」很难查）"
+        )
+    return value
+
+
+# 合法取值。新增一种画法时**三处一起改**：这里、`boss_art_base` 的分派、
+# 以及 `verify_boss_art` 里那几条按来源分枝的判据。
+ART_SOURCES = ("imported", "drawn")
+
+ART_SOURCE = _art_source()
+
 # BOSS 的绘制网格：**一个源像素 = 一个落屏像素**（1:1），所以它就是落屏尺寸。
 # 不做「画完再缩到非整数倍」——nearest 采样下每 4 列丢 1 列，1px 的轮廓线会时断时续
 # （改前那 4 只大 BOSS 发糊就是这个原因）。
@@ -495,6 +531,7 @@ def blade(im, *, x0, y0, x1, y1, core, light, dark, thick=7, fuller=2):
 # 本模块按这张表把它们拼成 id → 造型 / 配色，`main.py` 只认这层门面。
 
 from . import demon, dragon, knight, kraken, mage, skeleton, vampire  # noqa: E402
+from . import imported  # noqa: E402
 
 MODULES = (skeleton, knight, vampire, mage, kraken, dragon, demon)
 
@@ -510,15 +547,71 @@ def boss_ids() -> tuple[str, ...]:
     return tuple(_MODULE_OF)
 
 
-def boss_art_base(bid: str) -> Image.Image:
-    """一只 BOSS 的静止帧（96 网格，1:1 落屏 96px）。描边语言与杂兵完全一致。"""
+def boss_art_base(bid: str, source: str | None = None) -> Image.Image:
+    """
+    一只 BOSS 的静止帧（96 网格，1:1 落屏 96px）。描边语言与杂兵完全一致。
+
+    `source` 不传时用 `data/constants.json` 里的 `boss.artSource`。传它是为了
+    让 `main.py` 能把**两套画法都建一遍**（都过各自的断言，只把选中的那套进图集）——
+    这样"没被选中的那套"不会因为长期没人跑而烂掉，而它正是 `artSource` 的后备。
+    """
+    src = source or ART_SOURCE
+    if src == "imported":
+        return finish(imported.build(bid))
     mod = _MODULE_OF[bid]
     return finish(mod.draw(mod.spec(bid), bid))
 
 
-def boss_art_frames(bid: str) -> list[Image.Image]:
+def boss_art_frames(bid: str, source: str | None = None) -> list[Image.Image]:
     """BOSS 的 idle 帧 —— 与杂兵同理，**只有 1 帧**（呼吸在渲染层的刚体位移）。"""
-    return [boss_art_base(bid)]
+    return [boss_art_base(bid, source)]
+
+
+def boss_art_source_of(bid: str) -> dict:
+    """当前图集里这一只 BOSS 的来源信息（写进 MANIFEST，供 a22 做内容哈希对拍）。"""
+    if ART_SOURCE == "imported":
+        return {
+            "kind": "imported",
+            "file": f"raw/boss/{imported.source_path(bid).name}",
+            "originalName": imported.source_original_name(bid),
+            "sha256": imported.source_sha256(bid),
+        }
+    return {"kind": "drawn", "file": "tools/assetlib/bosses/"}
+
+
+def verify_boss_source_switch(frames_by_source: dict[str, dict[str, list]]) -> list:
+    """
+    `artSource` 必须**真的在起作用** —— 两套画法产出的帧逐只不同。
+
+    这条是「开关接了但没读」的唯一守卫。实测过的失败形态：把 `artSource` 加进
+    data 却忘了让 `boss_art_base` 读它，于是改 data 什么都不会变，
+    而所有既有断言（网格 / 画布 / 底行 / 剪影）**照样全绿** —— 因为两套本来就都合规。
+
+    比的是「有没有差别」而不是「差别多大」：阈值化会引入一个需要维护的数字，
+    而这里要回答的是一个是非题。
+    """
+    problems: list[str] = []
+    a, b = frames_by_source.get("imported"), frames_by_source.get("drawn")
+    if not a or not b:
+        return [
+            "两套画法必须都产出 —— 只建了一套，`artSource` 的后备就没有被验证过。"
+            f"（实测拿到的：{sorted(frames_by_source)}）"
+        ]
+    if sorted(a) != sorted(b):
+        return [
+            f"两套画法覆盖的 BOSS 名单不一致：imported={sorted(a)} drawn={sorted(b)}"
+        ]
+    same = []
+    for bid in sorted(a):
+        fa, fb = a[bid][0], b[bid][0]
+        if list(fa.getdata()) == list(fb.getdata()):
+            same.append(bid)
+    if same:
+        problems.append(
+            f"这些 BOSS 在两套画法下产出了**逐像素相同**的帧：{same} —— "
+            f"`boss.artSource` 没有被查分派读，改它不会改变任何东西"
+        )
+    return problems
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -533,30 +626,50 @@ BOS_DETAIL_BLOCK = BOS_W // 8    # 96 → 12
 BOS_INNER_BLOCK = BOS_W // 16    # 96 → 6
 BOS_INNER_MARGIN = BOS_W // 32   # 96 → 3
 
-def verify_boss_art(frames: dict[str, list[Image.Image]]) -> list:
+def verify_boss_art(frames: dict[str, list[Image.Image]], source: str | None = None) -> list:
     """
     BOSS 造型断言。**与 `verify_mon_art` 分开**，因为网格不同（96 vs 32）——
     那边所有判据都建立在 `MON_H` 上，对着 96 网格的帧会**静默量错一格量级**
     （「最后一行」量的是第 31 行，而 BOSS 的内容到第 95 行），比报错难查得多。
 
-    ## 九条判据
+    ## 判据分两族，按 `artSource` 分派
 
-      0. **绘制网格 == 格子 × 占位格数**。这条是 2026-09-24 新增的，它守的是
-         「素材画多大」与「棋盘占几格」**是同一个数**：三方（素材 / 渲染 / 引擎）
-         里只有素材这一侧能算出「画布对不对」，另外两侧拿到的是一个已经画好的
-         帧。少了这条，把占位改成 2 而忘了改画布，画面就变成
-         「精灵比占位块大一圈」—— 看着有点怪，但没有任何东西会报警。
+    **两族共用**（与画法无关，`drawn` / `imported` 都跑）：
+
+      0. **绘制网格 == 格子 × 占位格数**。它守的是「素材画多大」与「棋盘占几格」
+         **是同一个数**：三方（素材 / 渲染 / 引擎）里只有素材这一侧能算出
+         「画布对不对」，另外两侧拿到的是一个已经画好的帧。少了这条，把占位改成 2
+         而忘了改画布，画面就变成「精灵比占位块大一圈」—— 看着有点怪，但没人报警。
       1. **画布必须是本网格** —— 抓「BOSS 悄悄退回 32 网格的杂兵造型」。
-      2. **底行必须有像素** —— 与杂兵同理，底部锚定下帧底留白就是浮在半空。
-         这里还多一层：精灵是**踩着占位块下沿**摆的，底行留白 = 整只浮起来。
+      2. **底行必须有像素** —— 底部锚定下帧底留白就是浮在半空。这里还多一层：
+         精灵是**踩着占位块下沿**摆的，底行留白 = 整只浮起来。
       3. **每只只出 1 帧 idle** —— 呼吸是渲染层的刚体位移。
-      4. **八只 BOSS 的剪影互不相同** —— 抓「画了八只结果都是同一个轮廓换色」。
-         比较的是**差异像素数 ≥ 阈值**，不是「不相等」（差 1 个像素也叫不相等）。
-      5. **细节密度达标**（`_detail_density`，块大小随网格缩放）。
+      4. **八只 BOSS 的剪影互不相同** —— 抓「八只其实同一个轮廓换色」。
+         比的是**差异像素数 ≥ 阈值**，不是「不相等」（差 1 个像素也叫不相等）。
       6. **`BOSS_IDS` 与 `data/monsters.json` 的 boss 字段一致**。
+
+    **只有 `drawn` 跑**（为手绘像素画设计，对平滑插画恒真或误杀 —— 见下）：
+
+      5. **细节密度达标**（`_detail_density`，块大小随网格缩放）。
       7. **内部细节达标**（`_inner_detail`）—— 抓「边缘花哨 + 内部一整片纯色」。
       8. **正面朝向的 BOSS，头部必须左右对称**（`_head_asym`，名单见 `HEAD_FRONT`）。
+
+    **只有 `imported` 跑**：`imported.verify_imported` 的四条
+    （白底残留 / 内容占比 / 长宽比守恒 / 底对齐）。
+
+    ## ⚠️ 为什么 5 / 7 / 8 必须分族，而不是「留着也不碍事」
+
+    这三条判据问的是**「画师有没有在每一块像素里压出明暗阶、有没有走镜像原语」**。
+
+      · 5 / 7 量的是「独立颜色数」：平滑插画天然有几万种颜色，阈值 3.5 / 2.40
+        对它们**恒真**。留着不是「多一条保险」，而是一条**空转**的装饰
+        （本项目对空转断言的态度见 铁律 #12/#17）。
+      · 8 更有害：骑士王左手举剑右手持盾、骷髅王一手剑一手斧，量到的正是
+        **刻意的**不对称 —— 留着会把八只全部误杀，然后被人当成噪声关掉。
+
+    这是铁律 #13 那次教训的直接应用：**换画法时必须同步问「判据现在保护的是什么」**。
     """
+    src = source or ART_SOURCE
     problems: list[str] = []
 
     # 判据 0 —— 网格与占位必须来自同一个数
@@ -572,6 +685,10 @@ def verify_boss_art(frames: dict[str, list[Image.Image]]) -> list:
             f"产出的 BOSS 是 {sorted(frames)}，与注册表 {sorted(boss_ids())} 对不上"
         )
         return problems
+
+    # ⚠️ 探针（铁律 #17）：本分支实际判了几条，必须报出来。
+    # 分族判据最典型的假绿是「两族都没跑」—— 判据函数照样返回空列表。
+    checked = 0
 
     for bid, fs in frames.items():
         if len(fs) != 1:
@@ -591,7 +708,17 @@ def verify_boss_art(frames: dict[str, list[Image.Image]]) -> list:
             problems.append(
                 f"BOSS {bid} 最后一行为空 —— 精灵是踩着占位块下沿摆的，底行留白会让它浮在半空"
             )
+
+        if src == "imported":
+            # 传两个：raw 是描边**之前**的（观感类判据只能量它 —— 描边那圈 MON_INK
+            # 正好落在最外缘，会把「外缘光圈」那条判据盖成恒真），
+            # finished 是真正进图集的那一帧，用来做闭环对拍。
+            problems.extend(imported.verify_imported(bid, imported.build(bid), im))
+            checked += 1
+            continue
+
         d = _detail_density(im, BOS_DETAIL_BLOCK)
+        checked += 1
         if d < BOSS_DETAIL_MIN:
             problems.append(
                 f"BOSS {bid} 的细节密度只有 {d:.2f}（每 {BOS_DETAIL_BLOCK}×{BOS_DETAIL_BLOCK} 块的"
@@ -616,6 +743,12 @@ def verify_boss_art(frames: dict[str, list[Image.Image]]) -> list:
                     f"半侧视，或者成对结构（角 / 手臂 / 眼 / 牙）有一侧没走 `_sym`。"
                     f"正面朝向的对称结构一律用 `_sym` / `_beam_sym` 写"
                 )
+
+    if checked != len(frames):
+        problems.append(
+            f"按来源 {src!r} 只判了 {checked}/{len(frames)} 只 BOSS —— "
+            f"分族判据跑了空集（这就是分族最容易出的假绿）"
+        )
 
     ids = sorted(frames)
     for i, a in enumerate(ids):

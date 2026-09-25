@@ -1,6 +1,6 @@
 {
   "meta": {
-    "generatedAt": "2026-09-24T14:15:11+00:00",
+    "generatedAt": "2026-09-25T02:18:13+00:00",
     "generator": "tools/build-assets.py",
     "baseTile": 16,
     "rasterTile": 64,
@@ -344,7 +344,7 @@
       ]
     },
     "skeletonCaptain": {
-      "src": "本仓库手绘（tools/assetlib/bosses/ 包，96 网格 = 32 × 占位 3 格，1:1 落屏）",
+      "src": "外部图源 raw/boss/skeletonCaptain.png（原文件名「骷髅王.png」）→ 脚本化去背 / 去白边 / 等比缩放进 96 网格，1:1 落屏（sha256 e0da4799f45bc934…）",
       "note": "手绘·骷髅队长（96 网格 BOSS / 占 3×3 格）：金盔金甲 + 圆盾 + 骨剑",
       "drawScale": 1.0,
       "atlas": "monsters",
@@ -363,7 +363,13 @@
           "x": 97,
           "y": 65
         }
-      ]
+      ],
+      "source": {
+        "kind": "imported",
+        "file": "raw/boss/skeletonCaptain.png",
+        "originalName": "骷髅王.png",
+        "sha256": "e0da4799f45bc934a0e8969e65967cc61f2e6cfa5b8da934ac70c90f725822d2"
+      }
     },
     "ghostWarrior": {
       "src": "本仓库手绘（tools/assetlib/monsters.py: MON_SHAPES）",
@@ -410,7 +416,7 @@
       ]
     },
     "vampire": {
-      "src": "本仓库手绘（tools/assetlib/bosses/ 包，96 网格 = 32 × 占位 3 格，1:1 落屏）",
+      "src": "外部图源 raw/boss/vampire.png（原文件名「吸血鬼.png」）→ 脚本化去背 / 去白边 / 等比缩放进 96 网格，1:1 落屏（sha256 a2c6100384a81fcd…）",
       "note": "手绘·吸血鬼伯爵（96 网格 BOSS / 占 3×3 格）：高领斗篷 + 尖牙 + 红眼",
       "drawScale": 1.0,
       "atlas": "monsters",
@@ -429,7 +435,13 @@
           "x": 97,
           "y": 162
         }
-      ]
+      ],
+      "source": {
+        "kind": "imported",
+        "file": "raw/boss/vampire.png",
+        "originalName": "吸血鬼.png",
+        "sha256": "a2c6100384a81fcd16e2b2ff294bdc946bb3d712c5b66ee0d96acb67913c6db5"
+      }
     },
     "ice_zombie": {
       "src": "0x72/ice_zombie",
@@ -720,7 +732,7 @@
       ]
     },
     "archmage": {
-      "src": "本仓库手绘（tools/assetlib/bosses/ 包，96 网格 = 32 × 占位 3 格，1:1 落屏）",
+      "src": "外部图源 raw/boss/archmage.png（原文件名「大法师.png」）→ 脚本化去背 / 去白边 / 等比缩放进 96 网格，1:1 落屏（sha256 3abacfdc613ccad9…）",
       "note": "手绘·大法师（96 网格 BOSS / 占 3×3 格）：金袍高帽 + 金宝珠 + 长白须",
       "drawScale": 1.0,
       "atlas": "monsters",
@@ -739,7 +751,13 @@
           "x": 97,
           "y": 519
         }
-      ]
+      ],
+      "source": {
+        "kind": "imported",
+        "file": "raw/boss/archmage.png",
+        "originalName": "大法师.png",
+        "sha256": "3abacfdc613ccad91e5b79c9a092c68fb2d917ce475706eda5c0f9a7c4d6eb87"
+      }
     },
     "magicGuard": {
       "src": "本仓库手绘（tools/assetlib/monsters.py: MON_SHAPES）",
@@ -962,7 +980,7 @@
       ]
     },
     "knightCaptain": {
-      "src": "本仓库手绘（tools/assetlib/bosses/ 包，96 网格 = 32 × 占位 3 格，1:1 落屏）",
+      "src": "外部图源 raw/boss/knightCaptain.png（原文件名「骑士王.png」）→ 脚本化去背 / 去白边 / 等比缩放进 96 网格，1:1 落屏（sha256 0682e507d8001256…）",
       "note": "手绘·骑士长（96 网格 BOSS / 占 3×3 格）：白银甲金饰 + 红披风金羽",
       "drawScale": 1.0,
       "atlas": "monsters",
@@ -981,7 +999,13 @@
           "x": 97,
           "y": 811
         }
-      ]
+      ],
+      "source": {
+        "kind": "imported",
+        "file": "raw/boss/knightCaptain.png",
+        "originalName": "骑士王.png",
+        "sha256": "0682e507d80012565b721cc917f8efb855fe1781a6614dde90b0f657667a49c6"
+      }
     },
     "darkKnight": {
       "src": "本仓库手绘（tools/assetlib/monsters.py: MON_SHAPES）",
@@ -1028,7 +1052,7 @@
       ]
     },
     "dragon": {
-      "src": "本仓库手绘（tools/assetlib/bosses/ 包，96 网格 = 32 × 占位 3 格，1:1 落屏）",
+      "src": "外部图源 raw/boss/dragon.png（原文件名「巨龙.png」）→ 脚本化去背 / 去白边 / 等比缩放进 96 网格，1:1 落屏（sha256 4a279146390c1087…）",
       "note": "手绘·魔龙（96 网格 BOSS / 占 3×3 格）：巨角 + 长吻 + 展翼 + 卷尾",
       "drawScale": 1.0,
       "atlas": "monsters",
@@ -1047,10 +1071,16 @@
           "x": 97,
           "y": 908
         }
-      ]
+      ],
+      "source": {
+        "kind": "imported",
+        "file": "raw/boss/dragon.png",
+        "originalName": "巨龙.png",
+        "sha256": "4a279146390c1087da5902c2601b13e8af567a5f240ca1a23d064af9480de8f3"
+      }
     },
     "kraken": {
-      "src": "本仓库手绘（tools/assetlib/bosses/ 包，96 网格 = 32 × 占位 3 格，1:1 落屏）",
+      "src": "外部图源 raw/boss/kraken.png（原文件名「章鱼.png」）→ 脚本化去背 / 去白边 / 等比缩放进 96 网格，1:1 落屏（sha256 b4a1bab3a7a46ddd…）",
       "note": "手绘·巨型乌贼（96 网格 BOSS / 占 3×3 格）：圆头 + 侧鳍 + 六条腕",
       "drawScale": 1.0,
       "atlas": "monsters",
@@ -1069,10 +1099,16 @@
           "x": 291,
           "y": 908
         }
-      ]
+      ],
+      "source": {
+        "kind": "imported",
+        "file": "raw/boss/kraken.png",
+        "originalName": "章鱼.png",
+        "sha256": "b4a1bab3a7a46ddd4b71e4f72767b38a3475f720ac9c5cb46adaf0e9ebe21924"
+      }
     },
     "demonKing": {
-      "src": "本仓库手绘（tools/assetlib/bosses/ 包，96 网格 = 32 × 占位 3 格，1:1 落屏）",
+      "src": "外部图源 raw/boss/demonKing.png（原文件名「魔王.png」）→ 脚本化去背 / 去白边 / 等比缩放进 96 网格，1:1 落屏（sha256 ceb6fbd800bc9d84…）",
       "note": "手绘·魔王（96 网格 BOSS / 占 3×3 格）：巨角 + 膜翼 + 发光眼",
       "drawScale": 1.0,
       "atlas": "monsters",
@@ -1091,10 +1127,16 @@
           "x": 0,
           "y": 1005
         }
-      ]
+      ],
+      "source": {
+        "kind": "imported",
+        "file": "raw/boss/demonKing.png",
+        "originalName": "魔王.png",
+        "sha256": "ceb6fbd800bc9d84b14c33a6de8e2f8408941fd8de2f182d79708be0bbe88dfd"
+      }
     },
     "demonKingTrue": {
-      "src": "本仓库手绘（tools/assetlib/bosses/ 包，96 网格 = 32 × 占位 3 格，1:1 落屏）",
+      "src": "外部图源 raw/boss/demonKingTrue.png（原文件名「魔王（二形态）.png」）→ 脚本化去背 / 去白边 / 等比缩放进 96 网格，1:1 落屏（sha256 be9281b01f533d3d…）",
       "note": "手绘·魔王真身（96 网格 BOSS / 占 3×3 格）：高举巨翼 + 三段长角 + 金冠",
       "drawScale": 1.0,
       "atlas": "monsters",
@@ -1113,7 +1155,13 @@
           "x": 194,
           "y": 1005
         }
-      ]
+      ],
+      "source": {
+        "kind": "imported",
+        "file": "raw/boss/demonKingTrue.png",
+        "originalName": "魔王（二形态）.png",
+        "sha256": "be9281b01f533d3d7d523a39df7454034755402d565dc224a761adec762fef02"
+      }
     }
   },
   "items": {

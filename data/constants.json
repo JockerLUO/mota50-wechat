@@ -31,9 +31,11 @@
   },
   "boss": {
     "footprintTiles": 3,
+    "artSource": "imported",
     "note": "BOSS 在棋盘上占 3×3 格：整块占位区都不可走进（撞上去 = 与这只 BOSS 开战），击败后整块恢复通行。原版的 BOSS 与杂兵同为 1 格，本项目有意改大 —— 大块头是层级信号，而「画得大却能从身上走过去」在俯视格子上读起来是错的。",
     "singleSourceNote": "这个数字是**单一来源**：素材侧 tools/assetlib/bosses/common.py 读它算出绘制网格（CELL × footprintTiles = 96），渲染层与引擎读它算落屏尺寸与阻挡；构建期有一条断言钉住「素材网格 == 格子 × 本值」，所以改这里会同时改掉三方，不存在只改一处的可能。",
-    "deviatesFromSource": "对 floor-50 王座间的影响见 data/floors/floor-50.json 的 notes.projDeviation —— 参考数据是 5×5 外框（内 3×3），3×3 占位会把内间占满、魔王永远够不着，所以本项目把外框扩到 7×7（内 5×5）。"
+    "deviatesFromSource": "对 floor-50 王座间的影响见 data/floors/floor-50.json 的 notes.projDeviation —— 参考数据是 5×5 外框（内 3×3），3×3 占位会把内间占满、魔王永远够不着，所以本项目把外框扩到 7×7（内 5×5）。",
+    "artSourceNote": "BOSS 素材的画法来源，只允许 \"imported\" 或 \"drawn\"。imported = 把 assets/raw/boss/*.png 脚本化处理成 96 网格帧（tools/assetlib/bosses/imported.py），源图 SHA-256 记进 assets/MANIFEST.json 并由 A22 对拍；drawn = tools/assetlib/bosses/ 包里的手绘像素画。两套都活着、都要过各自的构建期断言，只有被选中的那套进图集 —— 未选中的那套因此不会烂掉，它正是这个开关的后备。写错取值会直接报错，不会静默回落。"
   },
   "combat": {
     "heroStrikesFirst": true,

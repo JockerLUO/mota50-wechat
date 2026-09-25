@@ -31,8 +31,38 @@ from .items import gen_icon, verify_items
 from .hero import HERO_DIRS, build_actor_sheet, verify_hero_art
 from .npc import NPC_ART, NPC_DIRS, npc_art_frames, verify_npc_art, verify_npc_scale
 from .monsters import MON_SHAPES, PROC_MONSTERS, mon_art_frames, verify_mon_art, verify_monster_fit
-from .bosses import BOSS_DRAW_SCALE, BOSS_TILES, boss_art_frames, verify_boss_art
+from .bosses import (
+    ART_SOURCE,
+    ART_SOURCES,
+    BOSS_DRAW_SCALE,
+    BOSS_TILES,
+    boss_art_frames,
+    boss_art_source_of,
+    verify_boss_art,
+    verify_boss_source_switch,
+)
 
+
+
+def _boss_src_note(mid: str) -> str:
+    """
+    MANIFEST 里 BOSS 帧的 `src` 文案 —— 必须说清**是哪一套画法**。
+
+    图集是提交进仓库的二进制，光看图分不出「这张是手绘像素画还是外部插画处理来的」。
+    而这两件事的维护方式完全不同（改前者动 python，改后者换 png + 重跑），
+    所以来源必须写在能被读到的地方。
+    """
+    info = boss_art_source_of(mid)
+    if info["kind"] == "imported":
+        return (
+            f"外部图源 {info['file']}（原文件名「{info['originalName']}」）"
+            f"→ 脚本化去背 / 去白边 / 等比缩放进 {CELL * BOSS_TILES} 网格，1:1 落屏"
+            f"（sha256 {info['sha256'][:16]}…）"
+        )
+    return (
+        f"本仓库手绘（tools/assetlib/bosses/ 包，{CELL * BOSS_TILES} 网格 = "
+        f"{CELL} × 占位 {BOSS_TILES} 格，1:1 落屏）"
+    )
 
 
 def monster_frames(src_name: str, anim: str) -> tuple[list[str], str]:
@@ -248,6 +278,23 @@ def main() -> int:
     # 静默量错网格。
     boss_frames: dict[str, list[Image.Image]] = {}
 
+    # ── BOSS 的两套画法**都建一遍** ────────────────────────────────
+    #
+    # 为什么不是「只建 `artSource` 选中的那套」：
+    #
+    #   · 未选中的那套是 `artSource` 的**后备**。如果它长期没人跑，它就会烂掉 ——
+    #     而"烂掉"这件事在需要它的那一刻才会被发现（本项目对「产出素材 /
+    #     消费素材 / 保护素材三方必须对齐」的态度见铁律 #15）。
+    #   · 两套都过各自的断言，于是「判据跟着画法走」这件事每次构建都被验证，
+    #     而不是等谁来手动切一次开关。
+    #   · 顺带白拿一条正面守卫：`verify_boss_source_switch` 断言两套产出**逐只不同**，
+    #     于是「开关加了但没人读它」当场红（那种情况下所有既有判据照样全绿）。
+    #
+    # 代价：八只 BOSS 各多算一遍（96² 像素级操作，实测可忽略）。
+    boss_by_source: dict[str, dict[str, list[Image.Image]]] = {}
+    for _src in ART_SOURCES:
+        boss_by_source[_src] = {bid: boss_art_frames(bid, _src) for bid in BOSS_IDS}
+
     for mid, (src_name, xf, scale, note) in MONSTERS.items():
         # BOSS 走自己的网格体系：**两条换算都不能用** ——
         # `_mon_out` 是「把 32 网格抬到出图 64」，对已经是 96 的帧是空操作但语义错；
@@ -255,7 +302,7 @@ def main() -> int:
         # BOSS 的落屏规则只有一条：**绘制网格 1:1 落屏**（96 网格 → 96px 占 3 格），
         # 所以 drawScale 常量 1.0。
         if mid in BOSS_IDS:
-            frames = boss_art_frames(mid)
+            frames = boss_by_source[ART_SOURCE][mid]
             boss_frames[mid] = frames
             for anim in ("idle", "run"):
                 for fi, im in enumerate(frames):
@@ -263,7 +310,9 @@ def main() -> int:
                     mon_cells.append((f"{mid}.{anim}.{fi}", im))
                     mon_meta.append({
                         "monster": mid, "anim": anim, "frame": fi,
-                        "src": "本仓库手绘（tools/assetlib/bosses/ 包，96 网格 = 32 × 占位 3 格，1:1 落屏）",
+                        # `src` 要**说清是哪一套画法**：图集是提交进仓库的，
+                        # 光看图分不出「这张是手绘还是外部图源处理来的」。
+                        "src": _boss_src_note(mid),
                         "note": note, "drawScale": BOSS_DRAW_SCALE,
                         "artH": bot - top + 1, "artPadBottom": im.height - 1 - bot,
                     })
@@ -345,8 +394,17 @@ def main() -> int:
         missing.append("怪物造型断言失败：" + p)
     # BOSS 的造型断言：网格 == 格子 × 占位格数、底行有像素、单帧、八只剪影互不相同、
     # 细节密度与内部细节达标、正面朝向的头部对称，且与 data/monsters.json 的 boss 字段一一对应
-    for p in verify_boss_art(boss_frames):
-        missing.append("BOSS 造型断言失败：" + p)
+    # BOSS 的造型断言，**两套画法各跑一遍各自的判据**：
+    # 共有的（网格 == 格子 × 占位格数、画布、底行、单帧、剪影互异、与数据对账）
+    # 两边都跑；为像素画设计的密度 / 内部细节 / 头部对称只跑 drawn，
+    # 为外部图源设计的（白底残留 / 内容占比 / 长宽比守恒 / 底对齐）只跑 imported。
+    # 分族的理由（以及为什么不是"留着也不碍事"）见 bosses/common.py 的 docstring。
+    for _src, _frames in boss_by_source.items():
+        for p in verify_boss_art(_frames, _src):
+            missing.append(f"BOSS 造型断言失败（{_src}）：" + p)
+    # 画法开关必须真的在起作用 —— 两套产出逐只不同（否则它就是接了个寂寞）
+    for p in verify_boss_source_switch(boss_by_source):
+        missing.append("BOSS 画法开关断言失败：" + p)
     monsters_json_boss = {
         mid for mid, v in
         json.loads((ROOT / "data" / "monsters.json").read_text(encoding="utf-8"))["monsters"].items()
@@ -367,6 +425,7 @@ def main() -> int:
     print(f"  手绘怪物 {hand} 只 / {len(MON_SHAPES)} 种形状"
           f"；BOSS {len(boss_frames)} 只 / {CELL * BOSS_TILES} 网格 = {CELL} × 占位 {BOSS_TILES} 格，"
           f"1:1 落屏"
+          f"（画法 {ART_SOURCE}，两套都过断言）"
           f"（其余 {len(MONSTERS) - hand} 只取自 0x72）")
 
     for m in mon_meta:
@@ -379,6 +438,16 @@ def main() -> int:
             "idle": [], "run": [],
         })
         node[m["anim"]].append({"x": m["x"], "y": m["y"]})
+
+    # BOSS 的来源信息（外部图源时含**内容哈希**）。
+    #
+    # 这条哈希是「图集是不是由当前这批源图生成的」那条断言（checks/a22）的另一半：
+    # 源图改了但没重跑 `npm run assets` 时，两边对不上 —— 而症状与铁律 #2 记的那次
+    # 完全同族：无报错、图集完整、只是画的是上一版素材。
+    for _bid in BOSS_IDS:
+        _node = manifest["monsters"].get(_bid)
+        if _node:
+            _node["source"] = boss_art_source_of(_bid)
 
     # 补齐未映射到的怪物（数据里有、映射表漏了）→ 明确标 null，让渲染层走兜底
     monsters_json = json.loads((ROOT / "data" / "monsters.json").read_text(encoding="utf-8"))["monsters"]
