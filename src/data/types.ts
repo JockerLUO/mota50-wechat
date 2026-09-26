@@ -176,13 +176,63 @@ export interface ReplaceMonsterEffect extends Record<string, unknown> {
   to: string;
 }
 
-export type AnyEventEffect = EventEffect | ReplaceMonsterEffect;
+/**
+ * 清除某层的某种地形（按 `data/tiles.json` 的**编号**）。
+ *
+ * 第 2 层监牢的 6 扇牢门、第 8 层的自动门都走它 —— 参考源码是逐格写死的
+ * （`floor[2][48]=floor[2][81]=…=0`），而那一层的这种地形**恰好只有那几格**，
+ * 所以「按地形清」与「按坐标清」等价。等价这件事由判据钉住
+ * （`verify:autoplay` 的 A 段会核对 F2 恰有 6 格牢门、F8 恰有 1 格自动门）。
+ */
+export interface ClearTerrainEventEffect extends Record<string, unknown> {
+  op: 'clearTerrain';
+  floor: number;
+  /** 地形编号（tiles.json legend 的键）：2 = 牢门 D，10 = 自动门 a */
+  terrain: number;
+}
+
+/** 按比例增减属性（第 2 层智者的「攻击/防御各 +10%」） */
+export interface MulStatEventEffect extends Record<string, unknown> {
+  op: 'mulStat';
+  floor: number;
+  stat: string;
+  value: number;
+}
+
+/** 直接发一件道具（第 3 层智者送怪物书） */
+export interface GrantItemEventEffect extends Record<string, unknown> {
+  op: 'grantItem';
+  floor: number;
+  item: string;
+  count?: number;
+}
+
+export type AnyEventEffect =
+  | EventEffect
+  | ReplaceMonsterEffect
+  | ClearTerrainEventEffect
+  | MulStatEventEffect
+  | GrantItemEventEffect;
 
 export interface GameEvent {
   id: string;
   title: string;
-  /** 触发条件。`start` = 开局即生效；`defeated` = 击败某怪；`allDefeated` = 列表内的怪全部被击败 */
-  trigger: { op: 'defeated'; id: string } | { op: 'start' } | { op: 'allDefeated'; ids: string[]; floor?: number };
+  /**
+   * 触发条件。
+   *   - `start`        开局即生效
+   *   - `defeated`     击败某怪
+   *   - `allDefeated`  列表内的怪全部被击败（可限定楼层）
+   *   - `talked`       与某 NPC 搭话（可限定楼层与坐标）
+   *
+   * ⚠️ `talked` 的 `x`/`y` 不是可选的锦上添花：第 2 层**有两个智者**，
+   * 参考源码靠 `pos===43` 区分（(10,3) 给 +10%，(10,9) 去 35 楼开暗道）。
+   * 只按 `id + floor` 匹配会让**两个都触发**同一个事件 —— 那是 +10% 变 +21%。
+   */
+  trigger:
+    | { op: 'defeated'; id: string }
+    | { op: 'start' }
+    | { op: 'allDefeated'; ids: string[]; floor?: number }
+    | { op: 'talked'; id: string; floor?: number; x?: number; y?: number };
   once: boolean;
   effects: AnyEventEffect[];
   /** 为什么要有这条 —— 必须指向证据，见 data/events.json */

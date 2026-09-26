@@ -53,7 +53,19 @@ async function run(ctx) {
     await page.waitForTimeout(60);
     await page.mouse.up();
   };
-  const browseBtn = { x: 20 + 120 + 10 + 60, y: 584 + 16 }; // 工具栏三按钮的中间那颗
+  //
+  // ⚠️ 按钮坐标**从渲染层取**，不硬编码。
+  //
+  // 原先这里是 `20 + 120 + 10 + 60` —— 「三颗各 120」时代的几何。2026-09-26
+  // 工具栏加了第四颗「自动通关」（120 → 87），那个坐标正好落在**按钮之间的缝**上：
+  // 点下去毫无反应，而症状是「返回键失灵」，看起来像功能坏了、不像布局变了。
+  // 同一个数写在两处，改一处必漏。现在按 `id` 找。
+  const btn = await page.evaluate(() => {
+    const list = window.mota.game.__probe().toolbarButtons;
+    return list.find((b) => b.id === 'browse');
+  });
+  if (!btn) throw new Error('工具栏里没有 id === "browse" 的按钮（几何接口变了？）');
+  const browseBtn = { x: btn.x + btn.w / 2, y: btn.y + btn.h / 2 };
   const floorCell = (i) => ({
     // FLOOR_CARD x=20 y=240 w=380 head=76；6 列 × 50 宽、间距 4；格高 34、行距 38
     x: 20 + Math.round((380 - (6 * 50 + 5 * 4)) / 2) + (i % 6) * 54 + 25,

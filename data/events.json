@@ -1,20 +1,118 @@
 {
-  "$license": "对参考源码《魔塔50层》的有意修正。原数据派生自 GPL-3.0 作品 m8705/MAGIC-TOWER-JS，本文件只补「参考实现没写完、导致游戏不可通关」的那一类事件，不新增玩法。详见 reference/mota50/ATTRIBUTION.md §3。",
-  "$comment": "三处区域边界通路。楼梯图只在 3 处断开，全部落在区域边界 BOSS 层 —— 这是「打完 BOSS 才开启通往下一区的路」的经典设计，不是数据损坏；参考实现只写了其中一处（10→11 的 floor[10][115]=4）。本文件把另外两处按同一手法补齐，使游戏可通关。",
+  "$license": "参考源码《魔塔50层》的派生数据。原数据来自 GPL-3.0 作品 m8705/MAGIC-TOWER-JS，本文件把参考实现里**已经写好、但导入时没有转写过来**的事件补齐（见 $comment）。详见 reference/mota50/ATTRIBUTION.md §3。",
+  "$comment": "本文件有**两类**事件，来路必须分清：\n  ① 补断点（4 条，2026-09-25）：参考实现**自己也漏写**的区域边界通路，补了游戏才可通关。见 docs/known-gaps.md §1。\n  ② 补漏转写（3 条一区事件，2026-09-26）：参考实现在 `mota50-event.js` 的 `checkEvent()` 里**写好了**，但本项目的导入流程只搬了地图/怪物/道具，事件层没有转写 —— 于是第 2 层监牢永远打不开、智者的 +10% 从来不生效。这一类不是「设计决策」，是纯粹的漏搬。\n每条都带 why 与 evidence（源码行号），改动前先读。",
   "source": {
     "stairGraphGaps": "docs/known-gaps.md §1",
     "f10Evidence": "reference/mota50/source/mota50-event.js:eventHappened[7] → floor[10][115]=4（115 = 5 + 10×11，即 (5,10)）",
     "f24Evidence": "reference/mota50/source/mota50-action.js:wiserWord[24]「你不能直接到50楼，据说魔塔50层与24层有关联」；第 24 层红门 (5,7) 后的空腔 (4..6, 4..6) 全塔唯一「上了红锁却空无一物」的封闭房间，智者就站在红门下方 (5,9)",
-    "verifiedAt": "2026-09-25"
+    "zone1EventTable": "reference/mota50/source/mota50-event.js:2246 checkEvent() 的 eventHappened[0] / [1] / [3] / [5]（前 10 层）",
+    "verifiedAt": "2026-09-26"
   },
   "$effectOps": {
-    "addStair": "在本层 (x,y) 生成一条通往 to 层的楼梯：地形改成上楼梯标记，并把落点记进 state.extraStairs（引擎的换层判定合并读它与数据里的 stairs）"
+    "addStair": "在本层 (x,y) 生成一条通往 to 层的楼梯：地形改成上楼梯标记，并把落点记进 state.extraStairs（引擎的换层判定合并读它与数据里的 stairs）",
+    "replaceMonster": "把指定格的怪物换成另一个 id（封印解除）",
+    "clearTerrain": "清除**本层**某种地形的全部格子（按 tiles.json 的编号）。用于「击败守卫后牢门/自动门开启」——参考源码是逐格写死坐标，而那一层这种地形恰好只有那几格，两者等价（判据钉住这个等价）",
+    "mulStat": "按比例增减属性（先 floor 再乘），第 2 层智者的攻防各 +10%",
+    "grantItem": "直接发一件道具，第 3 层智者送怪物书"
   },
   "events": [
     {
+      "id": "f2-prison-open",
+      "title": "第 2 层监牢：击败两名中级卫兵后牢门开启",
+      "trigger": {
+        "op": "allDefeated",
+        "ids": [
+          "midGuard"
+        ],
+        "floor": 2
+      },
+      "once": true,
+      "effects": [
+        {
+          "op": "clearTerrain",
+          "floor": 2,
+          "terrain": 2
+        }
+      ],
+      "why": "参考实现 `checkEvent()` 的 eventHappened[0]：2 楼两名中级卫兵 (5,1)(7,1) 都被击败后，把 (4,4)(8,4)(4,7)(8,7)(4,10)(8,10) 六格牢门清成空地。本项目此前**完全没有这条事件**，后果可复现：第 2 层从落点出发只有 13 格可达（`npm run autoplay:plan -- --reach 2`），整层的宝石、药水、商人赠礼、智者全部锁在牢门后 —— 而智者那一份正是攻防 +10%。",
+      "evidence": "reference/mota50/source/mota50-event.js:2251 `if(r[2][16]===0 && r[2][18]===0){ floor[2][48]=floor[2][81]=floor[2][114]=0; floor[2][52]=floor[2][85]=floor[2][118]=0; }`。48/81/114 = 4+4×11 / 4+7×11 / 4+10×11 → (4,4)(4,7)(4,10)；52/85/118 → (8,4)(8,7)(8,10)。六格全是 data/floors/floor-02.json 里的牢门 D（地形编号 2）"
+    },
+    {
+      "id": "f2-sage-buff",
+      "title": "第 2 层智者 (10,3)：攻击与防御各 +10%",
+      "trigger": {
+        "op": "talked",
+        "id": "sage",
+        "floor": 2,
+        "x": 10,
+        "y": 3
+      },
+      "once": true,
+      "effects": [
+        {
+          "op": "mulStat",
+          "floor": 2,
+          "stat": "atk",
+          "value": 1.1
+        },
+        {
+          "op": "mulStat",
+          "floor": 2,
+          "stat": "def",
+          "value": 1.1
+        }
+      ],
+      "why": "参考实现 eventHappened[1]。⚠️ 坐标是这条事件的**必要**条件：第 2 层有两个智者 —— (10,3) 给 +10%，(10,9) 是「去 35 楼开暗道」。只按 id+floor 匹配会让两个都触发（+10% 变成 +21%），所以 trigger 必须带 x/y。台词与效果同源：wiserWord[2][0]「谢谢你救了我，为感谢你的帮助，我将把你的攻击力和防御力各加10%」。",
+      "evidence": "reference/mota50/source/mota50-event.js:2259 `if(r[2][43]===0){ player.att = Math.floor(player.att*1.1); player.def = Math.floor(player.def*1.1); }`；43 = 10+3×11 → (10,3)。区分依据同文件 2294-2300 的 `if(pos===43)`"
+    },
+    {
+      "id": "f3-sage-book",
+      "title": "第 3 层智者 (10,3)：赠送怪物书",
+      "trigger": {
+        "op": "talked",
+        "id": "sage",
+        "floor": 3
+      },
+      "once": true,
+      "effects": [
+        {
+          "op": "grantItem",
+          "floor": 3,
+          "item": "monsterBook",
+          "count": 1
+        }
+      ],
+      "why": "参考实现 eventHappened[3]。第 1 版 UI 里怪物书是「查怪物图鉴」的可用道具（items.json 的 toggleUi），不直接影响战斗数值 —— 但它是参考源码**明确写了**的一条，属于漏搬，补上。",
+      "evidence": "reference/mota50/source/mota50-event.js:2275 `if(r[3][43]===0){ player.item.push(10); }`；wiserWord[3]「送你一本怪物书，它能预测出当前楼层各类怪物对你的伤害」"
+    },
+    {
+      "id": "f8-autodoor-open",
+      "title": "第 8 层自动门：击败两名初级卫兵后开启",
+      "trigger": {
+        "op": "allDefeated",
+        "ids": [
+          "juniorGuard"
+        ],
+        "floor": 8
+      },
+      "once": true,
+      "effects": [
+        {
+          "op": "clearTerrain",
+          "floor": 8,
+          "terrain": 10
+        }
+      ],
+      "why": "参考实现 eventHappened[5] 的前半段（注释写作「8楼初级卫兵被打败，开自动门」）。⚠️ 参考实现这里有个**自身的 bug**：eventHappened[5] 被复用了两次 —— 后半段的「10 楼陷阱」也写 `if(!eventHappened[5])`。于是先触发哪一个，另一个就永远不触发；正常流程下玩家会先打完 8 楼守卫，**10 楼陷阱因此永远不会发动**（连带 eventHappened[6]/[7] 永不触发 → 参考实现里连骷髅队长的上楼梯都出不来）。本项目按**语义**拆开：这条只负责开 8 楼自动门；10 楼陷阱按「设计意图」单独决策（见 docs/known-gaps.md §11）。",
+      "evidence": "reference/mota50/source/mota50-event.js:2290 `if(r[8][52]===0 && r[8][54]===0){ floor[8][42]=0; }`；52/54 = 8+4×11 / 10+4×11 → (8,4)(10,4)；42 = 9+3×11 → (9,3) 是 data/floors/floor-08.json 里唯一的自动门 a。flag 复用见同文件 2297 起的第二个 `if(!eventHappened[5])`"
+    },
+    {
       "id": "f10-zone1-clear",
       "title": "一区通路：击败骷髅队长后开启上楼梯",
-      "trigger": { "op": "defeated", "id": "skeletonCaptain" },
+      "trigger": {
+        "op": "defeated",
+        "id": "skeletonCaptain"
+      },
       "once": true,
       "effects": [
         {
@@ -23,7 +121,10 @@
           "x": 5,
           "y": 10,
           "to": 11,
-          "arrive": { "x": 5, "y": 10 }
+          "arrive": {
+            "x": 5,
+            "y": 10
+          }
         }
       ],
       "why": "楼梯图断点 10→11。有源码依据：event.js 的 eventHappened[7] 分支执行 floor[10][115]=4，115 = 5 + 10×11 → (5,10)。参考实现写了这一条，本项目照抄坐标。",
@@ -32,7 +133,10 @@
     {
       "id": "f40-zone4-clear",
       "title": "四区通路：击败骑士队长后开启上楼梯",
-      "trigger": { "op": "defeated", "id": "knightCaptain" },
+      "trigger": {
+        "op": "defeated",
+        "id": "knightCaptain"
+      },
       "once": true,
       "effects": [
         {
@@ -41,7 +145,10 @@
           "x": 5,
           "y": 4,
           "to": 41,
-          "arrive": { "x": 5, "y": 0 }
+          "arrive": {
+            "x": 5,
+            "y": 0
+          }
         }
       ],
       "why": "楼梯图断点 40→41。参考实现没写这一条（11 层以后的同类事件全部缺失），攻略靠「上楼器」绕过。项目文档推荐按源码先例统一用 generateStairs 处理 10→11 与 40→41（docs/known-gaps.md §1「三处边界通路的统一修法」）。生成点取 (5,4)：它是上区（0–4 行）的空地，且正对红门 (5,7) 上方，不与骑士队长 3×3 占位重叠。",
@@ -50,7 +157,9 @@
     {
       "id": "f24-gate-to-50",
       "title": "50 层入口：第 24 层红门后的空腔",
-      "trigger": { "op": "start" },
+      "trigger": {
+        "op": "start"
+      },
       "once": true,
       "effects": [
         {
@@ -59,7 +168,10 @@
           "x": 5,
           "y": 6,
           "to": 50,
-          "arrive": { "x": 5, "y": 7 }
+          "arrive": {
+            "x": 5,
+            "y": 7
+          }
         }
       ],
       "why": "楼梯图断点 49→50，也是唯一让游戏不可通关的那一条。按 docs/known-gaps.md §1 方案 A：入口不放在 49 层（那会与「50 层与 24 层有关联」的提示矛盾），而放在第 24 层红门后那个全塔唯一「上了红锁却空无一物」的封闭空腔中央 (5,6)。参考实现把内容留空了；这里补上。",
@@ -68,7 +180,14 @@
     {
       "id": "f49-seal-break",
       "title": "魔法封印解除：魔王现出真身",
-      "trigger": { "op": "allDefeated", "ids": ["darkKnight", "seniorWizard"], "floor": 49 },
+      "trigger": {
+        "op": "allDefeated",
+        "ids": [
+          "darkKnight",
+          "seniorWizard"
+        ],
+        "floor": 49
+      },
       "once": true,
       "effects": [
         {

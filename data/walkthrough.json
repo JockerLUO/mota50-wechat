@@ -1,0 +1,272 @@
+{
+  "$license": "GPL-3.0-only",
+  "$comment": "自动通关 AI 的攻略骨架 —— 里程碑阶梯、阶段目标与进度检查点。它是**策略数据**，不是游戏运行数据：游戏本体不需要它，只有 headless 模拟（tools/autoplay/）与规划器（src/game/planner.ts 的 planPhases）读它。刻意不进 src/data/runtime-files.mjs 的运行时清单（那一份是给游戏包用的，见该文件末尾「不进包的 data/ 文件」一节）。每一条都必须带 why —— 骨架是从攻略考证来的，来源必须可审计，否则下一个人无法判断某一条能不能改。 ⚠️ bonus 的量级说明（2026-09-26 实测）：它是**同类项里的平局裁决**，不是主导项。初版把 ironSword 定成 2e6、sacredSword 1e7，而束搜索的其余分量（阶段楼层梯度 2e4/层、就绪度 ≈1e5、每件道具 1e3）都小两个量级 —— 于是「拿到它就赢」压倒了「拿到时还剩多少血」，实测 z1-power 阶段 18 个动作抢到铁剑、只剩 284 血，后面所有阶段都从这个残局开始。整体除以 100 之后，里程碑仍然会被优先拿（它同时贡献道具价值与 progress），但不再能压倒生存与就绪度。",
+  "source": "提炼自 data/floor-notes.json（楼层机制）、docs/mota50-numeric-system.md（含 wiserWord[27] 的权威进度基准）、docs/known-gaps.md（区域边界通路与缺口）。",
+  "milestones": [
+    {
+      "id": "floorTeleporter",
+      "name": "楼层传送器",
+      "floor": 1,
+      "why": "唯一的回溯工具（范围 [1,49]，只能去已到过的层）。第 30 层单向进入、40 层之后不再靠楼梯连续推进，没有它就没有回头路。第 1 层 (1,10) 可得。",
+      "bonus": 20000
+    },
+    {
+      "id": "ironSword",
+      "name": "铁剑",
+      "floor": 5,
+      "why": "atk+10。一区第一道门槛：没有它连 (2,5) 附近的初级卫兵都打不动。",
+      "bonus": 20000
+    },
+    {
+      "id": "ironShield",
+      "name": "铁盾",
+      "floor": 9,
+      "why": "def+10。一区后段怪攻高，防御是唯一能把 HP 损失压下来的东西。",
+      "bonus": 10000
+    },
+    {
+      "id": "silverShield",
+      "name": "银盾",
+      "floor": 11,
+      "why": "def+20，二区开局的门槛装备。",
+      "bonus": 10000
+    },
+    {
+      "id": "sacredSword",
+      "name": "神圣剑",
+      "floor": 13,
+      "why": "atk+100 —— 全局最大的一次质变。拿到它之前，二三区大部分怪都打不动；拿到它之后前半座塔就通了。",
+      "bonus": 100000
+    },
+    {
+      "id": "shovel",
+      "name": "铁锹",
+      "floor": 15,
+      "why": "破坏相邻墙。第 44 层神圣盾密室被 18 格墙围死，铁锹是地震卷轴之外唯一的进入手段。",
+      "bonus": 5000
+    },
+    {
+      "id": "holyWater",
+      "name": "圣水",
+      "floor": 16,
+      "why": "HP 翻倍，越晚用越亏 —— 但 HP 见底时它就是第二条命。",
+      "bonus": 3000
+    },
+    {
+      "id": "silverSword",
+      "name": "银剑",
+      "floor": 17,
+      "why": "atk+20，二区到三区的过渡装备。",
+      "bonus": 20000
+    },
+    {
+      "id": "cross",
+      "name": "十字架",
+      "floor": 19,
+      "why": "对亡灵系（traitCounter: crossVulnerable）攻击翻倍。藏在隐形墙内，必须撞墙取得；不拿它打不动第 20 层的吸血鬼。",
+      "bonus": 30000
+    },
+    {
+      "id": "knightSword",
+      "name": "骑士剑",
+      "floor": 33,
+      "why": "atk+40，四区门槛。",
+      "bonus": 30000
+    },
+    {
+      "id": "snowflake",
+      "name": "雪花",
+      "floor": 35,
+      "why": "清除本层地形（clearTerrain），第 35 层守关道具。",
+      "bonus": 5000
+    },
+    {
+      "id": "knightShield",
+      "name": "骑士盾",
+      "floor": 38,
+      "why": "def+40，四区后段。",
+      "bonus": 20000
+    },
+    {
+      "id": "downFlyer",
+      "name": "向下飞行器",
+      "floor": 41,
+      "why": "一次性下楼。第 41 层 (9,1) 在墙内，需铁锹或地震卷轴才能取。",
+      "bonus": 5000
+    },
+    {
+      "id": "holyShield",
+      "name": "圣盾",
+      "floor": 43,
+      "why": "def+50，五区过渡。",
+      "bonus": 20000
+    },
+    {
+      "id": "sacredShield",
+      "name": "神圣盾",
+      "floor": 44,
+      "why": "def+100 且免疫巫师领域伤害 —— 后期最大的隐性支出就是领域。十字形密室，须用铁锹挖 (5,7) 进入。",
+      "bonus": 50000
+    },
+    {
+      "id": "upFlyer",
+      "name": "向上飞行器",
+      "floor": 45,
+      "why": "一次性上楼，第 43 → 44 隐藏层的唯一常规入口。",
+      "bonus": 5000
+    },
+    {
+      "id": "goldenKey",
+      "name": "金钥匙",
+      "floor": 46,
+      "why": "clearTerrain: 7，开启第 46 层。",
+      "bonus": 5000
+    },
+    {
+      "id": "holySword",
+      "name": "圣剑",
+      "floor": 48,
+      "why": "atk+50。对真魔王 def190 而言，atk 门槛是 191，这一件常常就是够与不够的分界。",
+      "bonus": 30000
+    }
+  ],
+  "phases": [
+    {
+      "id": "z1-power",
+      "goal": {
+        "type": "item",
+        "id": "ironSword",
+        "floor": 5
+      },
+      "why": "一区第一步：拿铁剑。直线推进拿质变道具，不要为低层的小宝石停步。"
+    },
+    {
+      "id": "z1-shield",
+      "goal": {
+        "type": "item",
+        "id": "ironShield",
+        "floor": 9
+      },
+      "why": "铁盾（第 9 层，def+10）：第 10 层骷髅队长 atk65，防御直接决定「每回合掉多少血」。⚠️ 本阶段带 `arriveKeys: {yellowKey: 1}`：**第 9 层的落点 (5,0) 是一个被门围死的口袋** —— 实测带 0 把黄钥匙只有 **6 格**可达（`npm run autoplay:plan -- --reach 9 y0b0r0 500 30 14`），带 1 把约 50 格。而第 8 层去 F9 的楼梯本身要连开 **2 扇黄门**（(2,0)(3,0)），所以「上去」与「留一把」是冲突的 —— 必须先在 F8 多攒一把。没有这一档，搜索会花光钥匙爬上来、落地即被困住，阶段永远走不完（实测 47 万节点停在 F9）。",
+      "arriveKeys": {
+        "yellowKey": 1
+      }
+    },
+    {
+      "id": "z1-redkey",
+      "goal": {
+        "type": "item",
+        "id": "redKey",
+        "floor": 8
+      },
+      "why": "拿第 8 层的红钥匙 (9,1)。**这是第一个 BOSS 的硬前置，不是可选收集**：第 10 层中央脊骨（骷髅队长所在）只能从 (5,8) 的**红门**进 —— 左/右两侧的黄门区域都通不到中央（实测 `--reach 10` 逐格确认）。而全塔唯一的早期红钥匙就在 F8 (9,1)。 而那个口袋的唯一入口是 (9,3) **自动门**，必须先击败 (8,4)(10,4) 两只初级卫兵（data/events.json 的 f8-autodoor-open）。"
+    },
+    {
+      "id": "z1-boss",
+      "goal": {
+        "type": "defeat",
+        "id": "skeletonCaptain",
+        "floor": 10
+      },
+      "why": "击败第 10 层骷髅队长，触发 data/events.json 的 f10-zone1-clear 事件生成 10→11 上楼梯。不打赢它，一区就出不去。"
+    },
+    {
+      "id": "z1-mobility",
+      "goal": {
+        "type": "item",
+        "id": "floorTeleporter",
+        "floor": 1,
+        "note": "⚠️ 它**不能排在一区最开始**：到 (1,10) 要连开 4 扇黄门（(5,8)/(3,2)/(1,4)/(1,7)），而门后面才有第 4 把钥匙 —— 第 1 层自己凑不齐，必须先上 2~9 层攒钥匙再回来。实测把它排在第一阶段会让整个规划卡死在第 1 层。"
+      },
+      "why": "拿楼层传送器（第 1 层 (1,10)）：全局唯一的回溯工具，缺了它 30 层以后（单向层、40 层后不再靠楼梯）就没有回头路。"
+    },
+    {
+      "id": "z2-sword",
+      "goal": {
+        "type": "item",
+        "id": "sacredSword",
+        "floor": 13
+      },
+      "why": "神圣剑在第 13 层，atk+100，是全局最大的质变。"
+    },
+    {
+      "id": "z2-cross",
+      "goal": {
+        "type": "item",
+        "id": "cross",
+        "floor": 19
+      },
+      "why": "第 19 层十字架藏在隐形墙内；二区 BOSS 吸血鬼需要它（攻翻倍）。"
+    },
+    {
+      "id": "z3-push",
+      "goal": {
+        "type": "floor",
+        "floor": 30
+      },
+      "why": "三区（21–30 层）内容密度极低（0 道具、0 黄/蓝门），阶段目标就是穿过去。"
+    },
+    {
+      "id": "z4-knight",
+      "goal": {
+        "type": "item",
+        "id": "knightSword",
+        "floor": 33
+      },
+      "why": "第 33 层骑士剑 atk+40，四区门槛。"
+    },
+    {
+      "id": "z4-shield",
+      "goal": {
+        "type": "item",
+        "id": "knightShield",
+        "floor": 38
+      },
+      "why": "第 38 层骑士盾 def+40。"
+    },
+    {
+      "id": "z5-sacred",
+      "goal": {
+        "type": "item",
+        "id": "sacredShield",
+        "floor": 44
+      },
+      "why": "第 44 层神圣盾：def+100 且免疫领域伤害，五区最大的减损来源。"
+    },
+    {
+      "id": "z5-sword",
+      "goal": {
+        "type": "item",
+        "id": "holySword",
+        "floor": 48
+      },
+      "why": "第 48 层圣剑 atk+50，破真魔王 def190 的最后一块拼图。"
+    },
+    {
+      "id": "clear",
+      "goal": {
+        "type": "clear",
+        "floor": 50
+      },
+      "why": "第 49 层击败 4 守卫解除封印（f49-seal-break 把假魔王换成真魔王 5000/1580/190），第 24 层红门后传送至第 50 层，击败真魔王。"
+    }
+  ],
+  "checkpoints": [
+    {
+      "floor": 27,
+      "hp": 1500,
+      "atk": 80,
+      "def": 98,
+      "why": "原版作者给的权威进度基准（参考源码 wiserWord[27]，第 27 层智慧老人的台词）。低于这条线说明前 26 层漏了资源，后面会以复利形式还债。",
+      "source": "docs/mota50-numeric-system.md §「智者的提示里藏着一个权威的数值基准」"
+    }
+  ],
+  "acts": [
+    {
+      "id": "act1-first-boss",
+      "title": "第一幕：打到并击败第一个 BOSS（第 10 层骷髅队长）",
+      "until": "z1-boss",
+      "why": "用户 2026-09-26 定的范围：**先以第一个 BOSS 前为基准**，把它打通再谈后面。第一个 BOSS = 第 10 层骷髅队长（hp100/atk65/def15），击败它才触发 f10-zone1-clear 生成 10→11 的楼梯 —— 也就是说「打不过它」等于「一区出不去」。后面的楼层（二区起）留到下阶段优化，所以本幕的段落只到 z1-boss 为止，判据也只判到这里。"
+    }
+  ]
+}

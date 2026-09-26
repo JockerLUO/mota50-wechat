@@ -35,6 +35,18 @@ export interface ProbeView {
   lastBoardClick: Cell | null;
   dialogueOpen: boolean;
   toolbarBrowseLabel: string;
+  /** 自动通关那颗按钮的文案（「自动通关」/「停止自动」） */
+  toolbarAutoLabel: string;
+  /**
+   * 工具栏四颗按钮的**真实几何**。
+   *
+   * 判据点按钮要坐标，而写死的坐标在按钮数变化时会静默点空（A13 就踩过：
+   * 三颗各 120 时代的 `20 + 120 + 10 + 60`，改成四颗后落在按钮之间的缝上）。
+   * 所以几何从渲染层取，判据只按 `id` 找。
+   */
+  toolbarButtons: Array<{ id: string; label: string; x: number; y: number; w: number; h: number }>;
+  /** 自动通关是否运行中 */
+  autoRunning: boolean;
   /** 只取渲染器上被探针读到的四个值，不把整个 Renderer 递进来 */
   renderer: { type: number; resolution: number; width: number; height: number };
   backdrop: { horizon: number; paintedFloor: number };
@@ -91,6 +103,10 @@ export function probeSnapshot(v: ProbeView): Record<string, unknown> {
     browsing: v.browseFloor !== null,
     /** 工具栏中间那颗按钮的文案，断言「返回键真的摆出来了」用它 */
     toolbarBrowseLabel: v.toolbarBrowseLabel,
+    /** 自动通关那颗按钮的文案与运行状态 —— 断言「按钮真的变身了」用它 */
+    toolbarAutoLabel: v.toolbarAutoLabel,
+    toolbarButtons: v.toolbarButtons.map((b) => ({ ...b })),
+    autoRunning: v.autoRunning,
     // 渲染器信息：小游戏端要确认拿到的**不是**降级后的 CanvasRenderer。
     //
     // ⚠️ 这里返回**名字**，而不是 `renderer.type` 的原始数字，是踩过之后的决定：

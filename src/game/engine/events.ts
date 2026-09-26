@@ -22,9 +22,23 @@
 
 import type { GameData } from '../../data';
 import { createInitialState, patchTile, pushLog, type GameState } from '../state';
+import { applyEffects } from './effects';
+import { grantItem } from './items';
 
-/** 引擎内部触发某类事件时传的「信号」——只含触发种类与必要的定位信息，不带 ids/floor（那些在数据表里） */
-export type EventTrigger = { op: 'defeated'; id: string } | { op: 'start' } | { op: 'allDefeated' };
+/**
+ * 引擎内部触发某类事件时传的「信号」——只含触发种类与必要的定位信息。
+ *
+ * 注意它与数据表里的 `trigger` **不是同一个类型**：数据表写的是「触发条件」
+ * （带 ids / floor 这些筛选），这里传的是「刚刚发生了什么」。
+ *   - `defeated` / `talked` 带具体的 id（引擎在发生时才知道）
+ *   - `allDefeated` 不带 ids：全灭与否要由数据表里的名单去数（见 `allDefeated()`）
+ *   - `talked` 还要带坐标：同一层可能有多个同类 NPC（第 2 层有两个智者）
+ */
+export type EventTrigger =
+  | { op: 'defeated'; id: string }
+  | { op: 'start' }
+  | { op: 'allDefeated' }
+  | { op: 'talked'; id: string; floor: number; x: number; y: number };
 
 /**
  * 开一局新游戏 —— 建初始状态之后**必须**跑一遍 `start` 事件。
@@ -43,6 +57,14 @@ function matches(trigger: EventTrigger, t: GameData['events'][number]['trigger']
   if (t.op === 'start') return trigger.op === 'start';
   if (t.op === 'defeated') return trigger.op === 'defeated' && t.id === trigger.id;
   if (t.op === 'allDefeated') return trigger.op === 'allDefeated';
+  if (t.op === 'talked') {
+    if (trigger.op !== 'talked' || t.id !== trigger.id) return false;
+    if (t.floor !== undefined && t.floor !== trigger.floor) return false;
+    // 坐标是可选的**细化条件**：第 2 层两个智者必须靠它区分（见 types.ts 的注释）
+    if (t.x !== undefined && t.x !== trigger.x) return false;
+    if (t.y !== undefined && t.y !== trigger.y) return false;
+    return true;
+  }
   return false;
 }
 
@@ -69,6 +91,15 @@ export function applyTrigger(state: GameState, data: GameData, trigger: EventTri
         pushLog(state, `${ev.title}：第 ${e.floor} 层 (${e.x},${e.y}) 出现了通往第 ${e.to} 层的楼梯`, 'info');
       } else if (e.op === 'replaceMonster') {
         replaceMonster(state, data, e);
+      } else if (e.op === 'clearTerrain' || e.op === 'mulStat') {
+        // 这两个算子的实现在 `effects.ts`（道具也在用同一个），这里只是把它
+        // 套上「哪一层」——`EffectContext.floor` 是它认的楼层口径。
+        // ⚠️ 别在这里重写一遍：`clearTerrain` 的「按编号清」与 `mulStat` 的
+        // 「先 floor 再乘」都是被道具侧断言过的行为，抄一份必然漂移。
+        applyEffects(state, data, [e], { floor: e.floor, source: ev.title });
+      } else if (e.op === 'grantItem') {
+        const got = grantItem(state, data, e.item, e.count ?? 1, e.floor);
+        pushLog(state, `${ev.title}：${got.join('，') || e.item}`, 'loot');
       }
     }
   }

@@ -38,7 +38,19 @@
 
 import type { GameData, KeyId, Stat } from '../data';
 import { entityAt, livingMonsters, tileAt, type Dir, type GameState } from './state';
-import { touchesFootprint } from './footprint';
+import { footprintAt, inFootprint, touchesFootprint } from './footprint';
+import {
+  CATEGORY_ORDER,
+  THRESHOLD,
+  blockingMonsters,
+  guardedItemAt,
+  guardianAt,
+  itemScore,
+  monsterScore,
+  npcScore,
+  type Category,
+  type Score
+} from './score';
 import { previewBattle } from './engine/vitals';
 import { auraStepDamage } from '../../core/combat.mjs';
 import { hasAuraImmunity, shopCost, shopGain } from '../../core/shop.mjs';
@@ -81,16 +93,35 @@ export const POLICY = {
   /** 为「推进楼层」而战时留多少 —— 换层能换到新资源，所以比普通战斗敢赌一点 */
   ROAD_RESERVE: 60,
   /**
-   * 一件事至少要**赚几倍**才做。
+   * 一件事至少要**赚几倍**才做 —— 三个调用方都读它（贪心的道具 / 贪心的怪物 /
+   * 规划器的「可以绕过的怪」），**别在某一处另写一个倍数**。
    *
    * 「收益 > 代价」这条看着对，实际上会放过利润率 1.02 的交易 —— 实测 AI 用
    * 782 点血去换一枚价值 800 的红宝石，一层楼就掉到 188 血。
    * 血量是**一次性存量**（补的药水远少于能花的），所以薄利多销在这里是错的。
-   * 道具要求 2 倍：它是永久收益，但换来的强度要等很久才兑现；
-   * 怪物要求 1.2 倍 —— 它主要的意义是开路，别为一点金币硬拼。
+   * 道具要求 2 倍：它是永久收益，但换来的强度要等很久才兑现。
+   *
+   * ⚠️ **2026-09-26 的教训，值得记在这里**：换成 `score.ts` 的三套刻度那一轮，
+   * 门槛被改成了「两类分数各自 ≥ 0」——**利润率这一档整个丢了**，而分数本身的
+   * 量级同时被抬高了 10 倍以上（边际战斗价值 vs 商店价目表）。
+   * 两个改动叠起来 = 「多烂的交易都做」：贪心每次肯付 30% 的血
+   * （`MAX_SPEND_RATIO`），连付六次就掉到保命线，然后在两三层之间无限横跳
+   * （20000 步里 19605 步是白走的），最远层从 **F9 掉到 F6**。
+   * ⇒ **换刻度时必须同步问「原来的那条闸门现在是谁在读」**（与铁律 #13/#40 同族：
+   *   改了产出方，却没问消费方还认不认这个量纲）。
    */
   ITEM_PROFIT: 2.0,
-  MONSTER_PROFIT: 1.2,
+  /**
+   * 「**只为金币**而战」的怪的收益门槛（守道具 / 守门的怪不走这一条）。
+   *
+   * ⚠️ 从 1.2 提到 3.0（2026-09-26，用户口径）：爬楼途中可以绕过的怪应当绕过去，
+   * 别为几枚金币掉血；等攻防涨上来（→ 每场战斗的掉血变小）比值自然过线，
+   * 那时再回头清怪才是划算的。
+   *
+   * 1.2 的病是「勉强不亏就开打」：一场赚 25 点血当量的战斗，代价是路上多挨
+   * 两下 —— 而魔塔里血是**一次性存量**，补药远少于能花的。
+   */
+  MONSTER_PROFIT: 3.0,
   /** 低于这个净收益就当作「不值得专程去」 */
   MIN_GAIN: 1,
   /** 生命低于这条线就喝圣水（HP 翻倍） */
@@ -208,7 +239,7 @@ function doorTotals(data: GameData): Record<KeyId, number> {
  * 手里 30 把黄钥匙时第 31 把几乎不值钱，一把没有时它值一条命。
  * 所以按稀缺度缩放，而不是给一个固定价。
  */
-function keyValue(state: GameState, data: GameData, key: KeyId): number {
+export function keyValue(state: GameState, data: GameData, key: KeyId): number {
   const total = doorTotals(data)[key];
   const held = state.keys[key];
   const shortage = Math.max(0, total - held);
@@ -223,7 +254,7 @@ function keyValue(state: GameState, data: GameData, key: KeyId): number {
  * 手写表的下场是「加了一件新道具，AI 却按默认值 60 当垃圾」——
  * 那和判据里写死一份名单是同一种病（见铁律 #23）。
  */
-function itemHpValue(state: GameState, data: GameData, id: string, p: Prices): number {
+export function itemHpValue(state: GameState, data: GameData, id: string, p: Prices): number {
   const def = data.items[id];
   if (!def) return 0;
   let v = 0;
@@ -286,6 +317,67 @@ function itemHpValue(state: GameState, data: GameData, id: string, p: Prices): n
   // 已经持有的被动道具（大金币、怪物书…）再拿一份没有意义
   if (def.kind === 'passive' && state.passives.includes(id)) v = 0;
   return v;
+}
+
+// ── 商人（sourceId 33）─────────────────────────────────────────────
+//
+// ⚠️ 这块是补上的缺口：在此之前 `decideAutoAction` **从不与商人交易**
+//    （`sim.ts` 的 `case 'trade'` 只有一句「还没启用」）。
+//    症状是可复算的：AI 在第 8 层要开两扇黄门（(2,0)(3,0)）上第 9 层，
+//    手上 0 把黄钥匙，于是「下楼补货 → 下层已榨干 → 再上楼」空转 8000 步；
+//    而第 6 层商人卖蓝钥匙（50 金币）、第 7 层商人卖黄钥匙 ×5（50 金币），
+//    两个商人它都路过过。
+//
+//    根子在数据里：全塔 **193 把钥匙 vs 289 扇门**（`npm run validate` F 段），
+//    钥匙是硬约束，只靠地上捡必然不够 —— 商人正是唯一的补给渠道。
+
+
+
+// ── 「这怪该不该打」的两个硬判据 ────────────────────────────────────
+//
+// 用户口径（2026-09-26）：爬楼途中可以绕过的怪直接绕过；只有**它守着的东西**
+// 值回票价时才硬打。所以「打不打」先问两件事，而不是先问金币：
+//   ① 打它**会不会触发事件**（守门怪：开牢门 / 开自动门 / 开启区域通路）；
+//   ② 它**是不是守着道具**（同格或占位块内有道具，如大乌贼守铁锹）。
+
+/** 击败后会触发事件的怪 + 所有 BOSS —— 这些不是「可以跳过的怪」 */
+const gateCache = new WeakMap<GameData, Set<string>>();
+
+/**
+ * 守门怪名单 —— **从 `data/events` 反推**，不手写。
+ *
+ * 手写名单的必然结局是「加了新事件忘了加名字」，而那不会报错，
+ * 只会让 AI 把守门的怪当成普通杂兵绕过去、永远卡在门口（铁律 #23）。
+ */
+export function gateMonsters(data: GameData): Set<string> {
+  const cached = gateCache.get(data);
+  if (cached) return cached;
+  const out = new Set<string>();
+  for (const ev of data.events) {
+    if (ev.trigger.op === 'defeated') out.add(ev.trigger.id);
+    else if (ev.trigger.op === 'allDefeated') for (const id of ev.trigger.ids) out.add(id);
+  }
+  for (const [id, m] of Object.entries(data.monsters)) if (m.boss) out.add(id);
+  gateCache.set(data, out);
+  return out;
+}
+
+/** 这只怪是否**守着道具**（道具与它同格，或落在它的占位块内） */
+export function guardsItem(
+  state: GameState,
+  data: GameData,
+  floor: number,
+  ent: { type: string; id: string; x: number; y: number }
+): boolean {
+  // 用 `footprintAt` 而不是 `entityFootprint`：调用方传进来的可能只是
+  // `{type,id,x,y}`（planner 的 `entitiesOn` 就只给这四样），不需要完整 FloorEntity
+  const fp = footprintAt(data, ent.x, ent.y, ent.type === 'monster' && !!data.monsters[ent.id]?.boss);
+  for (const e of data.floors.get(floor)?.entities ?? []) {
+    if (e.type !== 'item') continue;
+    if (state.removed.has(`${floor}:${e.x}:${e.y}:item:${e.id}`)) continue;
+    if (inFootprint(fp, e.x, e.y)) return true;
+  }
+  return false;
 }
 
 // ── 可达性：加权 Dijkstra ───────────────────────────────────────────
@@ -399,33 +491,56 @@ function affordWith(owned: Record<KeyId, number>, need: Record<KeyId, number>): 
  * 可开之后又能捡到更多钥匙 —— 迭代到不再变化为止（层数有限，必然收敛）。
  */
 function reach(state: GameState, data: GameData, fight: boolean, from?: { x: number; y: number }, floor = state.floor): Reach {
-  let owned: Record<KeyId, number> = { ...state.keys };
   let r = dijkstra(state, data, fight, from, floor);
+  //
+  // ⚠️ 必须记「已经算过哪些钥匙」，否则持有量会被**反复累加**。
+  //
+  // 旧版每轮把「当前够得着的全部钥匙」加到 `owned` 上，而 `owned` 是跨轮累加的
+  // —— 同一把钥匙被数了 3~4 遍。高点位放行实际开不起的门，`stepToward` 走到
+  // 门前被引擎拒绝，于是出现「决策器反复生成一条走不通的路」而日志里什么都没有。
+  //
+  // 正确的不动点：`owned = 起手持有 + 每一把**新**够得着的钥匙`（各算一次）。
+  const counted = new Set<string>();
+  const gained = emptyKeys();
+
   for (let iter = 0; iter < 8; iter++) {
     const pick = emptyKeys();
     for (const e of data.floors.get(floor)?.entities ?? []) {
       if (e.type !== 'item' || !isKeyId(e.id)) continue;
       if (state.removed.has(`${floor}:${e.x}:${e.y}:item:${e.id}`)) continue;
       const k = K(e.x, e.y);
+      if (counted.has(k)) continue;
       const c = r.cost.get(k);
       if (c === undefined) continue;
       // 这把钥匙本身也得够得着（用**上一轮**的持有量判，避免自我循环论证）
-      if (!affordWith(owned, r.keys.get(k)!)) continue;
+      if (!affordWith(ownedWith(state.keys, gained), r.keys.get(k)!)) continue;
+      counted.add(k);
       pick[e.id] += 1;
     }
     if (pick.yellowKey === 0 && pick.blueKey === 0 && pick.redKey === 0) break;
-    const next: Record<KeyId, number> = {
-      yellowKey: state.keys.yellowKey + pick.yellowKey,
-      blueKey: state.keys.blueKey + pick.blueKey,
-      redKey: state.keys.redKey + pick.redKey
-    };
-    const grew = KEY_IDS.some((k) => next[k] > owned[k]);
-    owned = next;
-    if (!grew) break;
+    for (const k of KEY_IDS) gained[k] += pick[k];
     r = dijkstra(state, data, fight, from, floor);
   }
-  r.owned = owned;
+  r.owned = ownedWith(state.keys, gained);
   return r;
+}
+
+/**
+ * 本层「到每一格要掉多少血」的可达性代价表 —— 诊断用（`--scores` 的「路上代价」）。
+ *
+ * 单列一个导出是为了让**诊断与实际决策用同一个 `reach`**：
+ * 诊断里自己再写一遍 Dijkstra 的话，两边会在某次改动后悄悄分叉，
+ * 而分叉的表现是「分数看起来对、AI 却不是照它走的」——最难查的一类。
+ */
+export function reachCosts(state: GameState, data: GameData): Map<string, number> {
+  return reach(state, data, true).cost;
+}
+
+/** 起手持有 + 本层能捡到的（逐把计一次） */
+function ownedWith(base: Record<KeyId, number>, extra: Record<KeyId, number>): Record<KeyId, number> {
+  const out = emptyKeys();
+  for (const k of KEY_IDS) out[k] = base[k] + extra[k];
+  return out;
 }
 
 function dijkstra(state: GameState, data: GameData, fight: boolean, from?: { x: number; y: number }, floor = state.floor): Reach {
@@ -492,16 +607,38 @@ function isKeyId(id: string): id is KeyId {
 
 interface Goal {
   kind: 'item' | 'monster' | 'stairs' | 'npc';
+  /** 分数所属的类别 —— **跨类只能按 `CATEGORY_ORDER` 排，不能比分数** */
+  cat: Category;
+  /** 「同层顺便清理」的免费怪（不掉血）：不看分数，排在最前 */
+  free?: boolean;
   x: number;
   y: number;
   id: string;
+  /** 给人看的一行名字（`道具「红宝石」(5,4)`）—— 只用于诊断输出与 `Decision.chosen` */
+  label?: string;
   /** 净收益（价值 − 代价）。越大越优先 */
   gain: number;
   /** 到达这一格的路（不含起点） */
   path: Array<{ x: number; y: number }>;
   /** 撞上去的方向（NPC 用：站到旁边再撞） */
   bump?: Dir;
+  /** `merchantOffers()` 里的报价下标 —— 商人目标专用（成交时要原样回传） */
+  offerIndex?: number;
+  /** 商店要买的属性 —— 由 `npcScore` 按边际价值挑好，这里不再重算 */
+  stat?: 'hp' | 'atk' | 'def';
   note: string;
+}
+
+/**
+ * 「这条路径真正要走到的那一格」的 key。
+ *
+ * 与 `K(g.x, g.y)`（目标**实体**的坐标）的区别只在 NPC 类目标上：
+ * 商店/商人是「走到旁边再撞」，所以实体那一格是墙、不在可达图里。
+ * 补钥匙要先知道「这条路上要开几扇门」，那只有路径末格答得上来。
+ */
+function pathEndKey(g: Goal): string {
+  const last = g.path.length ? g.path[g.path.length - 1] : { x: g.x, y: g.y };
+  return K(last.x, last.y);
 }
 
 /** 朝目标走一步：路径第一步；已经在目标格上（楼梯常见）就先挪开，下一步再踩回来 */
@@ -559,6 +696,14 @@ function keyDetour(
   floor: number
 ): AutoAction | null {
   const need = r.keys.get(targetKey);
+  //
+  // `targetKey` 必须是**路径真正要走到的那一格**，不能是「目标实体的坐标」。
+  //
+  // ⚠️ 这里踩过一次，症状是「站在商店门口反复撞门 13 次」：
+  // 商店/商人的目标是「走到**旁边**再撞」，所以 `g.x,g.y` 是 **NPC 自己那一格**，
+  // 而 NPC 在 `enterCost` 里被当成墙 —— 它**永远不会进可达图**，
+  // `r.keys.get(NPC格)` 恒为 undefined，于是这个函数在第一行就 return null，
+  // 「先去补钥匙」这一整套从来没触发过。调用方现在统一传路径末格。
   if (!need) return null;
   // 找出「现在手上」不够开沿路门的那种钥匙，优先补它
   for (const k of KEY_IDS) {
@@ -620,10 +765,35 @@ export function createAutoMemory(): AutoMemory {
   };
 }
 
-/** 进展：拾取与击杀都算。步数不算 —— 它只会一直涨，量不出「有没有收获」 */
-function progressOf(state: GameState): number {
+/**
+ * 进展：拾取与击杀都算。步数不算 —— 它只会一直涨，量不出「有没有收获」。
+ *
+ * 导出是因为**模拟器的循环探针也要用它**：判别「局势有没有变过」必须与决策层
+ * 用同一个进度口径（写两份的话，一边改了另一边照样安静地绿 —— 铁律 #23）。
+ */
+export function progressOf(state: GameState): number {
   return state.removed.size + state.stats.kills;
 }
+
+/**
+ * 钥匙数量的紧凑写法（`蓝1` / `黄2 蓝1` / `无`）。
+ *
+ * 只列非零的：诊断报告里满屏 `黄0 蓝0 红0` 反而看不出「缺的是哪一把」——
+ * 而「缺哪一把」正是这些记录要回答的问题。
+ */
+function keysText(k: Record<KeyId, number>): string {
+  const parts: string[] = [];
+  if (k.yellowKey) parts.push(`黄${k.yellowKey}`);
+  if (k.blueKey) parts.push(`蓝${k.blueKey}`);
+  if (k.redKey) parts.push(`红${k.redKey}`);
+  return parts.length ? parts.join(' ') : '无';
+}
+
+/** NPC 的一行名字（诊断用；id 与坐标都带上，因为同一个 id 在不同层有不同作用） */
+function npcLabel(data: GameData, id: string, x: number, y: number): string {
+  return `NPC「${data.npcs[id]?.name ?? id}」(${x},${y})`;
+}
+
 
 /** 换层记账。必须在决策**之前**跑，否则「这一层白来」永远读不到 */
 function observe(mem: AutoMemory, state: GameState): void {
@@ -654,130 +824,244 @@ function bounced(mem: AutoMemory, state: GameState, target: number): boolean {
 }
 
 /**
+ * 「这个候选为什么没被选」的一条记录。
+ *
+ * ## 为什么必须有它
+ *
+ * 决策器有 **六段**（①保命 ②本层收割 ③上楼 ④传送器回溯 ⑤下楼补货 ⑥掉头兜底），
+ * 段与段之间靠「上一段没给出动作」串起来，而每一段内部又有 4~6 个 `continue`
+ * 闸门（够不着 / 钥匙不够 / 打不动 / 代价超上限 / 利润率不够 / 白来过…）。
+ *
+ * 于是「AI 不动了」这一句话对应十几种完全不同的病，**而报告里它们长得一样**。
+ * 2026-09-26 追那条「同一局势重复 31 次」的红判据时，只能靠 `--scores` 的分数、
+ * `--reach` 的 ASCII 格子图、`--verbose` 的日志三样东西**手工反推**，
+ * 花掉的力气比写这段代码多得多 —— 而且推出来的结论还不敢打包票
+ * （因为 `--reach` 走的是 `planner.reach`，贪心走的是另一份 `autoplay.reach`）。
+ *
+ * `Rejection` 把那段推理变成**机器输出**：挡在哪一段、挡的是谁、具体哪个数不够。
+ */
+/**
+ * 被挡掉的**原因种类**（机器可归并的短标签）。
+ *
+ * `why` 那句话里带着具体数字（`路上代价 120 > 行动上限 20`），所以它**不能当键**：
+ * 同一类病在不同局面下数字不同，归并出来的 Top-N 全是散条。
+ * 而「整局里被挡得最多的是哪一类」恰恰是最有用的那个问题 ——
+ * 2026-09-26 那一局 5000 步，答案就是「② 道具：代价超上限」这一个桶。
+ */
+export type RejectKind =
+  | 'unreachable'
+  | 'keys'
+  | 'cost'
+  | 'profit'
+  | 'cantwin'
+  | 'score'
+  | 'stale'
+  | 'bounce'
+  | 'nopath'
+  | 'nowork'
+  | 'nobacktrack'
+  | 'none';
+
+export interface Rejection {
+  /** 哪一段的哪一关挡的（`② 道具` / `③ 上楼` / `⑤ 下楼` …） */
+  stage: string;
+  /** 原因种类 —— 归并统计用的键（见 `RejectKind`） */
+  kind: RejectKind;
+  /** 被挡掉的那个候选（`道具「红宝石」(5,4)`） */
+  what: string;
+  /** 具体原因，尽量带数字（`路上代价 120 > 行动上限 20`） */
+  why: string;
+}
+
+/** 一次决策的完整交代 —— 只有 `explainDecision()` 会去填它 */
+export interface Decision {
+  /** 与 `decideAutoAction()` 返回的**同一个**动作（同一套代码，不是第二份实现） */
+  action: AutoAction;
+  /** 选中了什么；`stop` 时就是停止原因 */
+  chosen: string;
+  /** 每一处被挡掉的候选 + 原因，按检查顺序排列 */
+  rejected: Rejection[];
+}
+
+/**
  * 下一件事做什么。
  *
  * 返回 `stop` 表示这一局已经结束（通关 / 阵亡 / 走投无路）。
+ *
+ * ⚠️ 想知道**为什么不是别的**，用 `explainDecision()` —— 它就是在这里多带一个
+ *    `rejected` 数组进来的，**不是第二份实现**（写两份的话，某次改动之后
+ *    诊断说的和实际做的是两件事，而两边各自都对得上自己的期望值 —— 铁律 #23）。
  */
 export function decideAutoAction(state: GameState, data: GameData, mem: AutoMemory = createAutoMemory()): AutoAction {
+  return decide(state, data, mem, null).action;
+}
+
+/** 与 `decideAutoAction()` 完全同路，但额外交代每一处被挡掉的候选 */
+export function explainDecision(state: GameState, data: GameData, mem: AutoMemory = createAutoMemory()): Decision {
+  const rejected: Rejection[] = [];
+  const d = decide(state, data, mem, rejected);
+  return { action: d.action, chosen: d.chosen, rejected };
+}
+
+function decide(
+  state: GameState,
+  data: GameData,
+  mem: AutoMemory,
+  rej: Rejection[] | null
+): { action: AutoAction; chosen: string } {
+  /** 记一条「被这一关挡掉」。`rej === null`（正常决策）时是零开销 */
+  const block = (stage: string, kind: RejectKind, what: string, why: string) => {
+    rej?.push({ stage, kind, what, why });
+  };
+  /** 选定了 —— 顺手把「选的是什么」写下来，免得报告与动作两处各说各话 */
+  const pick = (action: AutoAction, chosen: string) => ({ action, chosen });
+
   observe(mem, state);
-  if (state.dead) return { kind: 'stop', reason: '勇者阵亡' };
-  if (isCleared(state, data)) return { kind: 'stop', reason: '通关：真魔王已被击败' };
+  if (state.dead) return pick({ kind: 'stop', reason: '勇者阵亡' }, 'stop：勇者阵亡');
+  if (isCleared(state, data)) return pick({ kind: 'stop', reason: '通关：真魔王已被击败' }, 'stop：通关');
 
   const floor = state.floor;
 
   // ── ① 保命：血线过低且身上有圣水就喝（HP 翻倍，越晚喝越亏，但先活着） ──
   if ((state.bag.holyWater ?? 0) > 0 && state.hp <= POLICY.HOLY_WATER_BELOW) {
-    return { kind: 'useItem', id: 'holyWater', goal: '生命过低，喝圣水翻倍' };
+    return pick(
+      { kind: 'useItem', id: 'holyWater', goal: '生命过低，喝圣水翻倍' },
+      `① 保命：喝圣水（hp ${state.hp} ≤ ${POLICY.HOLY_WATER_BELOW}）`
+    );
   }
 
-  // ── ② 本层有净收益的目标就先做（道具 / 值得打的怪 / 买属性） ──────────
-  const r = reach(state, data, true);
-  const p = statPrices(state);
-  const goals: Goal[] = [];
-
-  // 道具：不打架能拿到的最好；要打架才能拿的也算，代价已经在 cost 里
+  // ── ② 本层做什么：三类分数各按自己的刻度算，再按类别次序决定先后 ──────
   //
-  // 底线用 SURVIVE_RESERVE：见 POLICY 里那条长注释（比例闸门两头都踩过）。
-  const itemCap = spendCap(state);
+  // ⚠️ 三个分数**不能放在一张榜上排**（刻度不通用，见 `score.ts` 的文件头）。
+  // 允许的跨类依据只有 `CATEGORY_ORDER`：**类别次序为准，同类内按分数降序**。
+  //
+  // 唯一的例外是「同层顺便清理」：不掉血的怪分数为负（用户口径），
+  // 但清掉它是**免费**的（不掉血、可达、同层），所以单独拎出来排在最前面 ——
+  // 这不是分数比较，是一条明确的规则。
+  const r = reach(state, data, true);
+  const blocking = blockingMonsters(state, data, floor);
+  const goals: Goal[] = [];
+  const freeKills: Goal[] = [];
+
+  // ── 道具（刻度：省下的血）──
+  //
+  // 判据本身在 `gateItem()`：**⑤/⑥ 的 `floorHasWork()` 读的是同一个函数**
+  // （见「闸门」那一节的文件头注释）。这里只负责把 `kind`/`why` 变成报告的一行。
   for (const e of data.floors.get(floor)?.entities ?? []) {
     if (e.type !== 'item') continue;
     if (state.removed.has(`${floor}:${e.x}:${e.y}:item:${e.id}`)) continue;
-    const k = K(e.x, e.y);
-    const c = r.cost.get(k);
-    if (c === undefined) continue;
-    if (!affordWith(r.owned, r.keys.get(k)!)) continue;
-    if (c > itemCap) continue;
-    // 钥匙：只要这种钥匙还没过剩，就给一档**额外的**抢购价值。
-    //
-    // 为什么必须额外加一档：`keyValue()` 算的是稀缺度（几百到一千出头），
-    // 而开门的摩擦价只有 40 —— 于是在「眼前这只怪值几千血」的对比下，
-    // AI 会先去打怪，把钥匙留到最后。但钥匙是**通行权**：
-    // 没它，门后的宝石和剑盾根本进不了候选集。实测第一版就是这么死的 ——
-    // 揣着 1 把黄钥匙开了门就上路，第 1 层 11 件道具全锁在剩下的门后。
-    const hunger = isKeyId(e.id) && state.keys[e.id] < doorTotals(data)[e.id] ? POLICY.KEY_URGENT : 0;
-    const v = itemHpValue(state, data, e.id, p) + hunger;
-    if (v < c * POLICY.ITEM_PROFIT) continue;
+    const label = `道具「${data.items[e.id]?.name ?? e.id}」(${e.x},${e.y})`;
+    const g = gateItem(state, data, floor, e, r);
+    if (!g.ok) {
+      block('② 道具', g.kind, label, g.why);
+      continue;
+    }
+    const { sc, path } = g.value;
     goals.push({
+      label,
       kind: 'item',
+      cat: 'item',
       x: e.x,
       y: e.y,
       id: e.id,
-      gain: v - c,
-      path: pathOf(r, e.x, e.y),
-      note: `拾取 ${data.items[e.id]?.name ?? e.id}（价值 ${v.toFixed(0)}，代价 ${c.toFixed(0)}）`
+      gain: sc.total,
+      path,
+      note: `${sc.why}｜${sc.parts.map((x) => `${x.label} ${Math.round(x.value)}`).join(' · ')}`
     });
   }
 
-  // 怪物：金币折算成 HP 再减损失。为开路而战由第 ③ 步兜底，这里只管「划不划算」
+  // ── 怪物（刻度：优先级，可正可负）──
   for (const e of data.floors.get(floor)?.entities ?? []) {
     if (e.type !== 'monster') continue;
     if (state.removed.has(`${floor}:${e.x}:${e.y}:monster:${e.id}`)) continue;
-    const mon = data.monsters[e.id];
-    if (!mon) continue;
-    const pv = previewBattle(state, data, e.id);
-    if (!pv || !pv.canWin) continue;
-    if (pv.hpLoss > spendCap(state)) continue;
-    const k = K(e.x, e.y);
-    const c = r.cost.get(k);
-    if (c === undefined) continue;
-    if (!affordWith(r.owned, r.keys.get(k)!)) continue;
-    const gold = mon.gold * (state.passives.includes('bigGold') ? 2 : 1);
-    const worth = gold * p.goldHp;
-    if (worth < c * POLICY.MONSTER_PROFIT) continue;
-    const gain = worth - c;
+    const monName = data.monsters[e.id]?.name ?? e.id;
+    const label = `怪「${monName}」(${e.x},${e.y})`;
+    const g = gateMonster(state, data, floor, e, r, blocking);
+    if (!g.ok) {
+      block('② 怪物', g.kind, label, g.why);
+      continue;
+    }
+    const v = g.value;
+    if (v.free) {
+      // 同层顺便清理：不掉血、可达 ⇒ 免费，排在最前（规则，不是分数比较）
+      freeKills.push({
+        kind: 'monster',
+        cat: 'monster',
+        free: true,
+        x: e.x,
+        y: e.y,
+        id: e.id,
+        label,
+        gain: 0,
+        path: v.path,
+        note: `顺便清理 ${monName}（不掉血，免费）`
+      });
+      continue;
+    }
+    const sc = v.sc;
     goals.push({
+      label,
       kind: 'monster',
+      cat: 'monster',
       x: e.x,
       y: e.y,
       id: e.id,
-      gain,
-      path: pathOf(r, e.x, e.y),
-      note: `击败 ${mon.name}（金币 ${gold} 折 ${(gold * p.goldHp).toFixed(0)}，代价 ${c.toFixed(0)}）`
+      gain: sc.total,
+      path: v.path,
+      note: `${sc.why}｜${sc.parts.map((x) => `${x.label} ${Math.round(x.value)}`).join(' · ')}`
     });
   }
 
-  const bestOther = goals.filter((g) => g.gain > POLICY.MIN_GAIN).sort((a, b) => b.gain - a.gain)[0];
-
-  // 商店：金币攒够了就消费。档位越高越划算（价格只随次数涨、收益随楼层放大）
-  //
-  // ⚠️ 「前期别买」是原版最优解，但它是**有选择时**的最优解 ——
-  // 一旦本层没别的赚头、或眼前有打不动的怪，手里的金币就只剩「换属性」这一条路。
-  // 死守「30 层以上才买」会让 AI 拿着 71 金币在第 8 层干瞪眼（实测如此）。
-  const shopNpc = (data.floors.get(floor)?.entities ?? []).find((e) => e.type === 'npc' && e.id === 'shop');
-  if (shopNpc && state.gold >= shopCost(state.buyTimes)) {
-    const worthIt =
-      state.floor >= 30 || state.gold >= POLICY.SHOP_GOLD_TRIGGER || !bestOther || hasWall(state, data);
-    const spot = worthIt ? neighborSpot(state, data, r, shopNpc.x, shopNpc.y) : null;
-    if (spot) {
-      const stat = pickShopStat(state, data);
-      goals.push({
-        kind: 'npc',
-        x: shopNpc.x,
-        y: shopNpc.y,
-        id: 'shop',
-        gain: 5000 + state.gold * p.goldHp * 0.5,
-        path: pathOf(r, spot.x, spot.y),
-        bump: spot.dir,
-        note: `到商店买${stat === 'hp' ? '生命' : stat === 'atk' ? '攻击' : '防御'}（金币 ${state.gold}）`
-      });
+  // ── NPC（刻度：金币余量）──
+  for (const e of data.floors.get(floor)?.entities ?? []) {
+    if (e.type !== 'npc') continue;
+    const g = gateNpc(state, data, floor, e, r);
+    if (!g.ok) {
+      block('② NPC', g.kind, npcLabel(data, e.id, e.x, e.y), g.why);
+      continue;
     }
+    const { sc, spot } = g.value;
+    goals.push({
+      label: npcLabel(data, e.id, e.x, e.y),
+      kind: 'npc',
+      cat: 'npc',
+      x: e.x,
+      y: e.y,
+      id: e.id,
+      gain: sc.total,
+      path: pathOf(r, spot.x, spot.y),
+      bump: spot.dir,
+      offerIndex: sc.meta?.offerIndex,
+      stat: sc.meta?.stat,
+      note: `${sc.why}｜${sc.parts.map((x) => `${x.label} ${Math.round(x.value)}`).join(' · ')}`
+    });
   }
 
-  //
-  // ⚠️ 必须**按收益降序逐个试**，不能只试第一名就放弃。
-  // `stepToward` 在「路径算得出来、但第一步走不通」时返回 null（例如勇者正好
-  // 站在目标格上、而四周没有可挪的空地）。只试第一名会让 AI 直接掉到第 ③ 步
-  // 「上楼」—— 于是本层明明还有一堆东西没拿，它却走了。
-  const ranked = goals.filter((g) => g.gain > POLICY.MIN_GAIN).sort((a, b) => b.gain - a.gain);
+  const ranked = [...freeKills, ...goals].sort(
+    (a, b) =>
+      Number(b.free ?? false) - Number(a.free ?? false) ||
+      CATEGORY_ORDER.indexOf(a.cat) - CATEGORY_ORDER.indexOf(b.cat) ||
+      b.gain - a.gain
+  );
+  if (ranked.length === 0) {
+    block('② 本层', 'none', `第 ${floor} 层`, '一个候选都没通过闸门（逐条原因见上）');
+  }
   for (const g of ranked) {
+    const what = g.label ?? `${g.kind} ${g.id} (${g.x},${g.y})`;
     if (g.kind === 'npc' && g.id === 'shop' && g.path.length <= 1) {
       // 已经站在商店旁边 → 撞上去开商店
-      return { kind: 'buy', stat: pickShopStat(state, data), goal: g.note };
+      // 买哪一项由 `npcScore` 按边际价值挑好（`g.stat`），这里不再重算
+      return pick({ kind: 'buy', stat: g.stat ?? pickShopStat(state, data), goal: g.note }, `② 买属性：${what}`);
     }
-    const detour = keyDetour(state, data, r, K(g.x, g.y), floor);
-    if (detour) return detour;
+    if (g.kind === 'npc' && g.offerIndex !== undefined && g.path.length <= 1) {
+      // 已经站在商人旁边 → 直接把这一笔成交掉（报价下标就是这里那个）
+      return pick({ kind: 'trade', index: g.offerIndex, goal: g.note }, `② 商人成交：${what}`);
+    }
+    const detour = keyDetour(state, data, r, pathEndKey(g), floor);
+    if (detour) return pick(detour, `② 先去补钥匙（为了 ${what}）`);
     const a = stepToward(state, data, r, g.path, g.bump, g.note);
-    if (a) return a;
+    if (a) return pick(a, `② 走向 ${what}`);
+    block('② 本层', 'nopath', what, `路径第一步走不动（path ${g.path.length}，可能是换层落点或路径陈旧）`);
   }
 
   // ── ③ 本层没得赚了：往上走 ──────────────────────────────────────────
@@ -791,19 +1075,37 @@ export function decideAutoAction(state: GameState, data: GameData, mem: AutoMemo
   const ups = stairsOf(state, data, floor, 'up');
   let upGoal: Goal | null = null;
   for (const s of ups) {
-    if (bounced(mem, state, s.to)) continue;
-    if (isStale(mem, s.to, state)) continue;
+    const what = `上楼 → 第 ${s.to} 层（楼梯 ${s.x},${s.y}）`;
     const k = K(s.x, s.y);
     const c = r.cost.get(k);
-    if (c === undefined) continue;
-    if (!affordWith(r.owned, r.keys.get(k)!)) continue;
+    if (c === undefined) {
+      block('③ 上楼', 'unreachable', what, '楼梯够不着（不在可达图里 —— 中间隔着开不起的门或打不动的怪）');
+      continue;
+    }
+    if (!affordWith(r.owned, r.keys.get(k)!)) {
+      block('③ 上楼', 'keys', what, `钥匙不够：路上要 ${keysText(r.keys.get(k)!)}，本层捡完只有 ${keysText(r.owned)}`);
+      continue;
+    }
+    if (bounced(mem, state, s.to)) {
+      block('③ 上楼', 'bounce', what, '空着手掉头（刚从这一层下来，且进展与实力都没长）');
+      continue;
+    }
+    if (isStale(mem, s.to, state)) {
+      block('③ 上楼', 'stale', what, '这一层上次白来过（进去没收获、实力也没长）');
+      continue;
+    }
     // 这一趟不能把自己走死，也不能为了上楼把血打光
-    if (c > state.hp - POLICY.ROAD_RESERVE) continue;
+    if (c > state.hp - POLICY.ROAD_RESERVE) {
+      block('③ 上楼', 'cost', what, `路上代价 ${c} > hp ${state.hp} − 路上储备 ${POLICY.ROAD_RESERVE}`);
+      continue;
+    }
     const g: Goal = {
       kind: 'stairs',
+      cat: 'stairs',
       x: s.x,
       y: s.y,
       id: `up:${s.to}`,
+      label: what,
       gain: 1e6 - c,
       path: pathOf(r, s.x, s.y),
       note: `上楼前往第 ${s.to} 层`
@@ -812,10 +1114,11 @@ export function decideAutoAction(state: GameState, data: GameData, mem: AutoMemo
   }
   if (upGoal) {
     // 同上：手里钥匙不够就先去捡 —— 楼梯路线常常要开好几扇门
-    const detour = keyDetour(state, data, r, K(upGoal.x, upGoal.y), floor);
-    if (detour) return detour;
+    const detour = keyDetour(state, data, r, pathEndKey(upGoal), floor);
+    if (detour) return pick(detour, `③ 先去补钥匙（为了 ${upGoal.label ?? upGoal.id}）`);
     const a = stepToward(state, data, r, upGoal.path, upGoal.bump, upGoal.note);
-    if (a) return a;
+    if (a) return pick(a, `③ ${upGoal.label ?? upGoal.id}`);
+    block('③ 上楼', 'nopath', upGoal.label ?? upGoal.id, '路径第一步走不动');
   }
 
   // ── ④ 上不去：回头补强 ──────────────────────────────────────────────
@@ -823,7 +1126,8 @@ export function decideAutoAction(state: GameState, data: GameData, mem: AutoMemo
   // 打不动 / 没钥匙时，正确玩法是回低层把落下的东西清掉、把属性买上去再回来。
   // 楼层传送器是唯一的回溯工具（只能去到过的层）。
   const back = pickBacktrack(state, data);
-  if (back !== null) return { kind: 'travel', floor: back, goal: `回第 ${back} 层补强` };
+  if (back !== null) return pick({ kind: 'travel', floor: back, goal: `回第 ${back} 层补强` }, `④ 传送器回第 ${back} 层`);
+  block('④ 传送器回溯', 'nobacktrack', '楼层传送器', '未持有，或没有「还有活干」的层可回');
 
   // ── ⑤ 用下楼梯继续往下找活干（没有传送器时的回溯） ──────────────────
   //
@@ -838,14 +1142,28 @@ export function decideAutoAction(state: GameState, data: GameData, mem: AutoMemo
   //   · 下楼 = 补货，用 `floorHasWork`（下面确实还有东西）把关。
   const downs = stairsOf(state, data, floor, 'down');
   for (const s of downs) {
-    if (isStale(mem, s.to, state)) continue;
-    if (!floorHasWork(state, data, s.to)) continue;
+    const what = `下楼 → 第 ${s.to} 层（楼梯 ${s.x},${s.y}）`;
     const k = K(s.x, s.y);
     const c = r.cost.get(k);
-    if (c === undefined) continue;
-    if (!affordWith(r.owned, r.keys.get(k)!)) continue;
+    if (c === undefined) {
+      block('⑤ 下楼', 'unreachable', what, '楼梯够不着（不在可达图里）');
+      continue;
+    }
+    if (!affordWith(r.owned, r.keys.get(k)!)) {
+      block('⑤ 下楼', 'keys', what, `钥匙不够：路上要 ${keysText(r.keys.get(k)!)}`);
+      continue;
+    }
+    if (isStale(mem, s.to, state)) {
+      block('⑤ 下楼', 'stale', what, '这一层上次白来过（进去没收获、实力也没长）');
+      continue;
+    }
+    if (!floorHasWork(state, data, s.to)) {
+      block('⑤ 下楼', 'nowork', what, '这一层「没有够得着的活干」（floorHasWork 为假）');
+      continue;
+    }
     const a = stepToward(state, data, r, pathOf(r, s.x, s.y), undefined, `下楼到第 ${s.to} 层补货`);
-    if (a) return a;
+    if (a) return pick(a, `⑤ 下楼到第 ${s.to} 层补货`);
+    block('⑤ 下楼', 'nopath', what, '路径第一步走不动');
   }
 
   // ── ⑥ 兜底：走投无路时把「不掉头」放开 ────────────────────────────
@@ -855,25 +1173,47 @@ export function decideAutoAction(state: GameState, data: GameData, mem: AutoMemo
   // 第 ③⑤ 步的镜像副本，两层之间无限横跳（实测 3227 步仍在第 2 层）。
   // 所以兜底仍然要过「这一趟有意义吗」这一关：上楼看 `isStale`，下楼看 `floorHasWork`。
   for (const s of ups) {
-    if (isStale(mem, s.to, state)) continue;
+    const what = `上楼 → 第 ${s.to} 层（掉头兜底）`;
     const k = K(s.x, s.y);
     const c = r.cost.get(k);
-    if (c === undefined) continue;
-    if (!affordWith(r.owned, r.keys.get(k)!)) continue;
+    if (c === undefined) {
+      block('⑥ 兜底', 'unreachable', what, '楼梯够不着（不在可达图里）');
+      continue;
+    }
+    if (!affordWith(r.owned, r.keys.get(k)!)) {
+      block('⑥ 兜底', 'keys', what, `钥匙不够：路上要 ${keysText(r.keys.get(k)!)}`);
+      continue;
+    }
+    if (isStale(mem, s.to, state)) {
+      block('⑥ 兜底', 'stale', what, '这一层上次白来过');
+      continue;
+    }
     const a = stepToward(state, data, r, pathOf(r, s.x, s.y), undefined, `上楼到第 ${s.to} 层（掉头兜底）`);
-    if (a) return a;
+    if (a) return pick(a, `⑥ 掉头上楼到第 ${s.to} 层`);
+    block('⑥ 兜底', 'nopath', what, '路径第一步走不动');
   }
   for (const s of downs) {
-    if (!floorHasWork(state, data, s.to)) continue;
+    const what = `下楼 → 第 ${s.to} 层（掉头兜底）`;
     const k = K(s.x, s.y);
     const c = r.cost.get(k);
-    if (c === undefined) continue;
-    if (!affordWith(r.owned, r.keys.get(k)!)) continue;
+    if (c === undefined) {
+      block('⑥ 兜底', 'unreachable', what, '楼梯够不着（不在可达图里）');
+      continue;
+    }
+    if (!affordWith(r.owned, r.keys.get(k)!)) {
+      block('⑥ 兜底', 'keys', what, `钥匙不够：路上要 ${keysText(r.keys.get(k)!)}`);
+      continue;
+    }
+    if (!floorHasWork(state, data, s.to)) {
+      block('⑥ 兜底', 'nowork', what, '这一层「没有够得着的活干」（floorHasWork 为假）');
+      continue;
+    }
     const a = stepToward(state, data, r, pathOf(r, s.x, s.y), undefined, `下楼到第 ${s.to} 层（掉头兜底）`);
-    if (a) return a;
+    if (a) return pick(a, `⑥ 掉头下楼到第 ${s.to} 层`);
+    block('⑥ 兜底', 'nopath', what, '路径第一步走不动');
   }
 
-  return { kind: 'stop', reason: `第 ${floor} 层无路可走` };
+  return pick({ kind: 'stop', reason: `第 ${floor} 层无路可走` }, `stop：第 ${floor} 层无路可走`);
 }
 
 // ── 辅助 ────────────────────────────────────────────────────────────
@@ -1012,13 +1352,43 @@ function pickShopStat(state: GameState, data: GameData): Stat {
   return 'def';
 }
 
-/** 找一格「可达且紧邻 (tx,ty)」的落脚点，用来撞 NPC */
+/**
+ * 一条路径上「顺手能打掉的怪」的金币合计。
+ *
+ * 与 `itemScore` 的 `pathGold` 配对：路上打怪既掉血（路径代价）也进账（金币），
+ * 只记前者会让「顺路拿一颗宝石」看起来永远亏本（见 `ItemScoreInput.pathGold`）。
+ */
+function pathGoldAlong(
+  state: GameState,
+  data: GameData,
+  floor: number,
+  path: { x: number; y: number }[]
+): number {
+  let g = 0;
+  for (const cell of path) {
+    const ent = entityAt(state, data, floor, cell.x, cell.y);
+    if (!ent || ent.type !== 'monster') continue;
+    if (state.removed.has(`${floor}:${ent.x}:${ent.y}:monster:${ent.id}`)) continue;
+    g += data.monsters[ent.id]?.gold ?? 0;
+  }
+  return g;
+}
+
+/**
+ * 找一格「可达且紧邻 (tx,ty)」的落脚点，用来撞 NPC。
+ *
+ * ⚠️ `floor` 必须显式传：本函数会被 `floorHasWork()` 拿去问**别的层**
+ * （⑤ 下楼补货、`pickBacktrack` 回溯），而「相邻格能不能站」要查的是
+ * **那一层**的地形与实体。第一版写死了 `state.floor` ⇒ 问第 4 层商店时
+ * 查的是当前层的地图 —— 与铁律 #36 那个「记账必须用实体自己那一格」同族。
+ */
 function neighborSpot(
   state: GameState,
   data: GameData,
   r: Reach,
   tx: number,
-  ty: number
+  ty: number,
+  floor = state.floor
 ): { x: number; y: number; dir: Dir } | null {
   for (const [d, v] of Object.entries(DIRS) as [Dir, { dx: number; dy: number }][]) {
     const x = tx - v.dx;
@@ -1027,12 +1397,178 @@ function neighborSpot(
     if (!r.cost.has(K(x, y))) continue;
     if (!affordWith(r.owned, r.keys.get(K(x, y))!)) continue;
     // 相邻格必须真的能站：不能有实体（NPC / 怪 / 道具），也不能是门或楼梯
-    if (entityAt(state, data, state.floor, x, y)) continue;
-    const ch = tileAt(state, data, state.floor, x, y);
+    if (entityAt(state, data, floor, x, y)) continue;
+    const ch = tileAt(state, data, floor, x, y);
     if (ch !== '.') continue;
     return { x, y, dir: d };
   }
   return null;
+}
+
+// ── 闸门：② 与 ⑤/⑥ 共用的**同一份**判据 ─────────────────────────────
+//
+// 为什么必须共用（2026-09-26 定，铁律 #23 / #54 / #58）：
+//
+//   ② 决定「本层哪个目标值得做」，⑤ 下楼 / ⑥ 掉头 决定「值不值得去某一层」，
+//   两者问的其实是**同一个问题**：「到了那儿，真的会有东西可做吗？」
+//
+//   历史病：`floorHasWork()` 只查 `affordWith`（钥匙够不够），而 ② 还要查
+//   `spendCap` 与利润率 ⇒ 它说「够得着，下楼吧」，落到楼下 ② 说
+//   「路上代价 100 > 行动上限 20」⇒ 空手而归 ⇒ 上楼 ⇒ 再下楼 ……
+//   实测 20000 步里 19605 步是这种往返（`SimReport.maxCycle = 31`）。
+//   ⇒ **「够得着」与「真的会拿」是同一个概念的两处口径**，分开写就迟早不是
+//     同一件事，而表现是「安静的原地打转」而不是报错（铁律 #23 的老病）。
+//
+// 于是三类目标的闸门**收在这里**：`kind`/`why` 同时就是 `--why` 报告里的那两列
+// （`RejectKind` 是闭集，W4 守）。想改判据只有这一个地方可改 —— 这正是重点。
+
+/**
+ * 一道闸门的结论。
+ *
+ * `ok: false` 时给的是**可归并的 `kind`**（累计表的键）+ **一句人话**（给人看的）。
+ */
+type Gate<T> = { ok: true; value: T } | { ok: false; kind: RejectKind; why: string };
+
+/**
+ * 怪物闸门的两种成功形态。
+ *
+ * 写成**联合类型**（`free` 上的判别式）而不是「`sc: Score | null`」：
+ * 后者要求每个消费点自己写 `!` 或再判一次空 —— 而「免费怪没有分数」
+ * 是这条规则的一部分，不该让消费点各自记一遍。
+ */
+type MonsterGateValue =
+  | { c: number; free: true; path: Array<{ x: number; y: number }> }
+  | { c: number; free: false; sc: Score; path: Array<{ x: number; y: number }> };
+
+/**
+ * 道具闸门：可达 → 钥匙够 → 代价 ≤ 上限 → 利润率达标。
+ *
+ * 顺序即 `--why` 报告里的顺序：先报「够不着」，再报「钥匙不够」，
+ * 再报「代价太高」，最后才是「不划算」—— 越靠前越接近物理事实。
+ */
+function gateItem(
+  state: GameState,
+  data: GameData,
+  floor: number,
+  e: { x: number; y: number; id: string },
+  r: Reach
+): Gate<{ c: number; sc: Score; path: Array<{ x: number; y: number }> }> {
+  const k = K(e.x, e.y);
+  const c = r.cost.get(k);
+  if (c === undefined) return { ok: false, kind: 'unreachable', why: '够不着（不在可达图里）' };
+  if (!affordWith(r.owned, r.keys.get(k)!)) {
+    return {
+      ok: false,
+      kind: 'keys',
+      why: `钥匙不够：需 ${keysText(r.keys.get(k)!)}，本层捡完只有 ${keysText(r.owned)}`
+    };
+  }
+  if (c > spendCap(state)) {
+    return { ok: false, kind: 'cost', why: `路上代价 ${c} > 行动上限 ${spendCap(state)}（hp ${state.hp}）` };
+  }
+  // 被怪守着的道具：分数**降低**（另一半记到怪头上，见 `GUARD_SHARE`）
+  const path = pathOf(r, e.x, e.y);
+  const sc = itemScore(state, data, {
+    itemId: e.id,
+    costHp: c,
+    pathGold: pathGoldAlong(state, data, floor, path),
+    guarded: guardianAt(state, data, floor, e.x, e.y) !== null
+  });
+  // ★ 利润率闸门（`POLICY.ITEM_PROFIT`，血的经济学，不是数值微调）。
+  //   阈值与倍数取 `max`：`THRESHOLD` 是**本类刻度的下限**（三类各一个，不可合并）。
+  const need = Math.max(THRESHOLD.item, c * (POLICY.ITEM_PROFIT - 1));
+  if (sc.total < need) {
+    return {
+      ok: false,
+      kind: 'profit',
+      why: `利润率不够：得分 ${Math.round(sc.total)} < 需要 ${Math.round(need)}（代价 ${c} × 倍数 ${POLICY.ITEM_PROFIT}）`
+    };
+  }
+  return { ok: true, value: { c, sc, path } };
+}
+
+/**
+ * 怪物闸门：可达 → 钥匙够 → 打得动 → **免费怪先放行** → 代价 ≤ 上限 → 利润率达标。
+ *
+ * ⚠️ 「同层顺便清理」（不掉血 + 可达 ⇒ 免费）必须在这一份里判：
+ * 它在 ② 是「不看分数直接做」的规则，在 ⑤/⑥ 是「这层还有活干」的证据。
+ * 两边各写一次的话，「免费怪算不算活」会各答一遍，而答案迟早会分叉。
+ */
+function gateMonster(
+  state: GameState,
+  data: GameData,
+  floor: number,
+  e: { type: string; x: number; y: number; id: string },
+  r: Reach,
+  blocking: Set<string>
+): Gate<MonsterGateValue> {
+  const k = K(e.x, e.y);
+  const c = r.cost.get(k);
+  if (c === undefined) return { ok: false, kind: 'unreachable', why: '够不着（不在可达图里）' };
+  if (!affordWith(r.owned, r.keys.get(k)!)) {
+    return {
+      ok: false,
+      kind: 'keys',
+      why: `钥匙不够：需 ${keysText(r.keys.get(k)!)}，本层捡完只有 ${keysText(r.owned)}`
+    };
+  }
+  const pv = previewBattle(state, data, e.id);
+  if (!pv) return { ok: false, kind: 'cantwin', why: '战斗预估拿不到（怪 id 或数据有问题）' };
+
+  // ★ 同层顺便清理：不掉血 + 可达 ⇒ 免费，直接做（不看分数、不看利润率）
+  if (pv.canWin && pv.hpLoss === 0) {
+    return { ok: true, value: { c, free: true, path: pathOf(r, e.x, e.y) } };
+  }
+  if (!pv.canWin) return { ok: false, kind: 'cantwin', why: '打不动（会打死自己）' };
+  if (pv.hpLoss > spendCap(state)) {
+    return {
+      ok: false,
+      kind: 'cost',
+      why: `掉血 ${pv.hpLoss} > 行动上限 ${spendCap(state)}（hp ${state.hp}）`
+    };
+  }
+  const sc = monsterScore(state, data, e.id, {
+    guards: guardedItemAt(state, data, floor, e),
+    blocks: blocking.has(`${e.x},${e.y}`)
+  });
+  // ★ 同一道理：为金币而战要赚够 3 倍（`POLICY.MONSTER_PROFIT`）。
+  //   守道具 / 挡路的怪由分数里的战略项负责，不靠放低这道闸门。
+  const need = Math.max(THRESHOLD.monster, c * (POLICY.MONSTER_PROFIT - 1));
+  if (sc.total < need) {
+    return {
+      ok: false,
+      kind: 'profit',
+      why: `利润率不够：得分 ${Math.round(sc.total)} < 需要 ${Math.round(need)}（代价 ${c} × 倍数 ${POLICY.MONSTER_PROFIT}）`
+    };
+  }
+  return { ok: true, value: { c, sc, free: false, path: pathOf(r, e.x, e.y) } };
+}
+
+/**
+ * NPC 闸门：分数够门槛 → 旁边有一格站得住。
+ *
+ * ⚠️ 这里**不查 `spendCap`**：NPC 是「走过去撞一下」，不花血（买属性花的是金币，
+ * 而金币在 `npcScore` 里已经折进去了）。全局闸门都得是**这一类目标真的在乎的东西**，
+ * 把道具的闸门照抄过来只会让无害的目标消失。
+ */
+function gateNpc(
+  state: GameState,
+  data: GameData,
+  floor: number,
+  e: { x: number; y: number; id: string },
+  r: Reach
+): Gate<{ sc: Score; spot: { x: number; y: number; dir: Dir } }> {
+  const sc = npcScore(state, data, e.id, floor);
+  if (sc.total < THRESHOLD.npc) {
+    return {
+      ok: false,
+      kind: 'score',
+      why: `分数 ${Math.round(sc.total)} < 门槛 ${THRESHOLD.npc}（${sc.why}）`
+    };
+  }
+  const spot = neighborSpot(state, data, r, e.x, e.y, floor);
+  if (!spot) return { ok: false, kind: 'nopath', why: '四周没有站得住的格子（走不过去撞）' };
+  return { ok: true, value: { sc, spot } };
 }
 
 /**
@@ -1058,13 +1594,18 @@ function pickBacktrack(state: GameState, data: GameData): number | null {
 }
 
 /**
- * 这一层（或顺着它的下楼梯往下）还有没有**够得着**的活干。
+ * 这一层（或顺着它的下楼梯往下）还有没有**② 真的会做**的活干。
  *
- * 为什么「够得着」三个字必须加：第一版只判「道具/怪还在不在」，于是低层那些
- * **锁在黄门后、当前钥匙够不着**的黄钥匙也被算成「有活干」，AI 兴冲冲下楼，
- * 到了发现「要开黄门、没黄钥匙」，空手而归又上楼 —— 这是「缺黄钥匙上楼 →
- * 盲目下楼 → 空手而归 → 再上楼」死循环的最后一环（实测跑满 12 万步）。
- * 现在从该层的**落地位置**做一次 reach，够不着的就不算活。
+ * 注意措辞：**不是「够得着」，是「② 真的会拿」**。这两者曾经是两处口径：
+ *   · `floorHasWork` 只查 `affordWith`（钥匙够不够）；
+ *   · ② 还查 `spendCap`（路上代价 ≤ 行动上限）与利润率闸门。
+ * 于是它说「够得着，下楼吧」，落到楼下 ② 说「路上代价 100 > 行动上限 20」
+ * ⇒ 空手而归 ⇒ 上楼 ⇒ 再下楼 …… 实测 20000 步里 **19605 步**是这种往返
+ * （`SimReport.maxCycle = 31`；停下那一刻的报告里
+ * 「② 道具 · cost」累计 12112 次、居首位 —— 就是这个病的指纹）。
+ *
+ * ⇒ 现在直接调 `gateItem` / `gateMonster` / `gateNpc`（**与 ② 同一份实现**）。
+ *   想改判据只有那三个函数一个地方可改，两边不可能再分叉（铁律 #23 / #54）。
  *
  * `from` 是勇者到达这一层时的落脚点（上一层 down 楼梯的 arrive）。
  * 递归时传给下一层；入口（当前层）不传，用勇者当前位置。
@@ -1083,24 +1624,22 @@ function floorHasWork(
   if (!f) return false;
   // 从落地位置做一次可达性：锁在够不着的门后的东西不算「活」
   const r = reach(state, data, true, from, floor);
+  const blocking = blockingMonsters(state, data, floor);
   for (const e of f.entities) {
-    if (e.type === 'item' && !state.removed.has(`${floor}:${e.x}:${e.y}:item:${e.id}`)) {
-      const k = K(e.x, e.y);
-      if (r.cost.get(k) === undefined) continue; // 够不着
-      if (!affordWith(r.owned, r.keys.get(k)!)) continue; // 钥匙不够
-      return true;
+    if (e.type === 'item') {
+      if (state.removed.has(`${floor}:${e.x}:${e.y}:item:${e.id}`)) continue;
+      if (gateItem(state, data, floor, e, r).ok) return true;
+      continue;
     }
-    if (e.type === 'monster' && !state.removed.has(`${floor}:${e.x}:${e.y}:monster:${e.id}`)) {
-      const k = K(e.x, e.y);
-      if (r.cost.get(k) === undefined) continue;
-      const p = previewBattle(state, data, e.id);
-      // 打不动的怪不算「有活干」—— 回去也拿它没办法
-      if (p && p.canWin && p.hpLoss <= spendCap(state)) return true;
+    if (e.type === 'monster') {
+      if (state.removed.has(`${floor}:${e.x}:${e.y}:monster:${e.id}`)) continue;
+      if (gateMonster(state, data, floor, e, r, blocking).ok) return true;
+      continue;
     }
-  }
-  // 商店层：只要还能买一次就值得回去
-  if (f.entities.some((e) => e.type === 'npc' && e.id === 'shop') && state.gold >= shopCost(state.buyTimes)) {
-    return true;
+    if (e.type === 'npc') {
+      // 商店层：门槛（金币够不够买一次）也在 `npcScore` 里，不再另写一遍
+      if (gateNpc(state, data, floor, e, r).ok) return true;
+    }
   }
   // 往下递归：用 down 楼梯的 arrive 作为下一层落地位置
   for (const s of f.stairs.down) {

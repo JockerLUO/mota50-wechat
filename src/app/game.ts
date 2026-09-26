@@ -62,9 +62,29 @@ import {
 import { DialoguePanel } from '../render/dialogue-panel';
 import { MerchantPanel, ShopPanel } from '../render/trade';
 import { npcRole, realm, realmOf, setRealm } from '../render/theme';
+import {
+  createAutoMemory,
+  decideAutoAction,
+  explainStop,
+  isCleared,
+  type AutoAction,
+  type AutoMemory
+} from '../game/autoplay';
 import { buildDeathOverlay } from './death-overlay';
 import { dirToward, enterable, pathTo, type Cell } from './pathing';
 import { layoutSnapshot, panelsSnapshot, probeSnapshot, type LayoutSnapshot, type ProbeView } from './probe';
+
+/**
+ * 自动通关的**出手间隔**（毫秒）。
+ *
+ * 为什么不是「每帧一步」：60fps 下每帧一步等于每秒 60 格，屏幕上只剩一道残影，
+ * 玩家看不出它在干什么（而「看得见它在干什么」正是接界面的全部意义）。
+ * 110ms/步 ≈ 每秒 9 格 —— 与点击寻路的 95ms/格同量级，观感一致。
+ *
+ * 也不是越慢越好：全塔上千步，300ms 一步要五分钟以上。这个数是「看得清」
+ * 与「等得起」之间的取中。
+ */
+const AUTO_STEP_MS = 110;
 
 export class Game {
   private data: GameData;
@@ -88,6 +108,16 @@ export class Game {
   private deathLayer = new Container();
 
   private walking = false;
+  /**
+   * 自动通关的**短期记忆**；`null` 表示没在跑。
+   *
+   * 它是 `decideAutoAction` 的第三个参数（决策器本身是纯函数，记忆由调用方持有）。
+   * 用 `null`/非 `null` 兼作「是否运行中」这一个状态，不另设布尔 ——
+   * 两份状态迟早会不一致，而症状是「按钮亮着但不走了」。
+   */
+  private auto: AutoMemory | null = null;
+  /** 自动通关的出手计时器（累加 ticker 的 deltaMS） */
+  private autoAccum = 0;
   /**
    * 最近一次「棋盘收到点击」的格子坐标（不论后续是否真的走成）。
    *
@@ -131,6 +161,7 @@ export class Game {
       onToggleReveal: () => this.toggleReveal(),
       // 同一颗按钮两种语义：平时开楼层面板，浏览态下就是「返回」
       onBrowse: () => (this.browseFloor !== null ? this.returnFromBrowse() : this.openFloorPanel('browse')),
+      onAuto: () => this.toggleAuto(),
       onRestart: () => this.restart()
     });
     // 对话框自己会在关闭时回调 —— 编排层据此清掉 modal 状态，
@@ -169,7 +200,10 @@ export class Game {
 
     this.board.setFloor(this.state, this.data, this.state.floor);
     this.sync();
-    this.app.ticker.add((tk) => this.board.update(tk.deltaMS, this.state));
+    this.app.ticker.add((tk) => {
+      this.board.update(tk.deltaMS, this.state);
+      this.tickAuto(tk.deltaMS);
+    });
     this.fit();
   }
 
@@ -242,6 +276,9 @@ export class Game {
       lastBoardClick: this.lastBoardClick,
       dialogueOpen: this.dialogue.isOpen,
       toolbarBrowseLabel: this.toolbar.browseLabel,
+      toolbarAutoLabel: this.toolbar.autoLabel,
+      toolbarButtons: this.toolbar.buttonRects(),
+      autoRunning: this.auto !== null,
       renderer: this.app.renderer,
       backdrop: this.backdrop,
       rects: { hud: this.status.cardRect, detail: this.detail.cardRect, items: this.itemBar.cardRect },
@@ -312,6 +349,23 @@ export class Game {
   /** 开发用：以代码方式走一步，等价于按方向键（含开面板等副作用） */
   __step(dir: Dir): string {
     return this.doStep(dir);
+  }
+
+  /**
+   * 开发用：开始 / 停止自动通关，等价于点工具栏那颗按钮。
+   *
+   * 有它才谈得上**可断言的界面验收**：判据里既要能「开始」，也要能「停下」，
+   * 而靠 `tap()` 点按钮时，一旦几何变了（按钮数、宽度）就会点到缝里 ——
+   * 于是「功能坏了」和「测试点歪了」长得一模一样。所以两条路都要有：
+   * 判据用 `__auto` 做**行为**断言，另有一条用 `tap()` 做**按钮可达**断言。
+   *
+   * 不传参 = 切换；传 `true` / `false` = 明确开始 / 停止。
+   */
+  __auto(on?: boolean): string {
+    const want = on ?? this.auto === null;
+    if (want && !this.auto) this.startAuto();
+    else if (!want && this.auto) this.stopAuto('外部调用');
+    return this.auto ? 'running' : 'stopped';
   }
 
   /**
@@ -390,6 +444,8 @@ export class Game {
     };
     const dir = map[key];
     if (dir) {
+      // 玩家按方向键 = 接手。先停自动通关再走，免得两边抢同一个勇者
+      if (this.auto) this.stopAuto('玩家接管');
       if (this.walking || this.state.dead || this.browseFloor !== null || this.modal !== null) return;
       this.doStep(dir);
       return;
@@ -430,6 +486,7 @@ export class Game {
     // ⚠️ 记录必须放在所有提前 return **之前**：我们要的是「点击送到哪一格」，
     //    而不是「哪一格成功走了」。被守卫挡下的点击同样是有价值的证据。
     this.lastBoardClick = { x, y };
+    if (this.auto) this.stopAuto('玩家接管');
     if (this.walking || this.state.dead || this.browseFloor !== null || this.modal !== null) return;
 
     const path = pathTo(this.state, this.data, x, y);
@@ -464,7 +521,15 @@ export class Game {
 
   // ── 动作 ──────────────────────────────────────────────────────────
 
-  private doStep(dir: Dir): string {
+  /**
+   * 走一步。
+   *
+   * `suppressUi` 是给自动通关用的：AI 的目标是「走到商人**旁边**再成交」
+   * （见 `autoplay.ts` 的 `neighborSpot`），它**不由**撞 NPC 来触发交易，
+   * 所以撞到 NPC / 商店时不该弹面板 —— 一弹出来 `modal` 非空，自动通关那一支
+   * 就整块停住，表现是「走到商人面前不动了」。
+   */
+  private doStep(dir: Dir, suppressUi = false): string {
     const before = this.state.floor;
     const res = step(this.state, this.data, dir);
     if (this.state.floor !== before || res.floorChanged !== undefined) {
@@ -483,10 +548,120 @@ export class Game {
     if (res.kind === 'battle') this.board.playHeroAttack(dir);
     this.sync();
     // 引擎只「请求」打开界面，具体开哪块面板由编排层决定
+    if (suppressUi) return res.kind;
     if (res.npc) this.openDialogue(res.npc);
     else if (res.openUi === 'merchant') this.openMerchant();
     else if (res.openUi === 'shop') this.openShop();
     return res.kind;
+  }
+
+  // ── 自动通关 ──────────────────────────────────────────────────────
+  //
+  // 决策在 `src/game/autoplay.ts`（纯函数，不认 Pixi），这里**只是执行器** ——
+  // 和 `tools/autoplay/sim.ts` 的 switch 一一对应。两处保持同构是有意的：
+  // headless 判据能通关，界面上才谈得上「看一眼效果」。
+
+  private toggleAuto(): void {
+    if (this.auto) this.stopAuto('手动停止');
+    else this.startAuto();
+  }
+
+  private startAuto(): void {
+    if (this.state.dead) {
+      pushLog(this.state, '勇者已阵亡，先重开再自动通关。', 'warn');
+      this.sync();
+      return;
+    }
+    this.auto = createAutoMemory();
+    this.autoAccum = 0;
+    this.toolbar.setAuto(true);
+    pushLog(this.state, '自动通关开始（再点一次「停止自动」可随时接手）。', 'info');
+    this.sync();
+  }
+
+  /** `reason` 为 null 表示静默停止（重开时用，免得日志里留一句无意义的「已停止」） */
+  private stopAuto(reason: string | null): void {
+    if (!this.auto) return;
+    this.auto = null;
+    this.autoAccum = 0;
+    this.toolbar.setAuto(false);
+    if (reason) pushLog(this.state, `自动通关停止：${reason}`, 'info');
+    this.sync();
+  }
+
+  /**
+   * 按 `AUTO_STEP_MS` 的节奏出手一步。
+   *
+   * 暂停条件（`modal` / 浏览态）只是**跳过**而不是停止：那是玩家自己打开的浮层，
+   * 关掉之后自动通关应当接着跑 —— 玩家的预期是「它还在跑，只是我先看一眼」。
+   */
+  private tickAuto(deltaMS: number): void {
+    if (!this.auto) return;
+    if (this.state.dead) {
+      this.stopAuto('勇者阵亡');
+      return;
+    }
+    if (isCleared(this.state, this.data)) {
+      this.stopAuto('通关：真魔王已被击败');
+      return;
+    }
+    if (this.modal !== null || this.walking || this.browseFloor !== null) return;
+    this.autoAccum += deltaMS;
+    if (this.autoAccum < AUTO_STEP_MS) return;
+    this.autoAccum = 0;
+    this.performAutoAction();
+  }
+
+  private performAutoAction(): void {
+    const mem = this.auto;
+    if (!mem) return;
+    const action: AutoAction = decideAutoAction(this.state, this.data, mem);
+
+    switch (action.kind) {
+      case 'step':
+        this.doStep(action.dir, true);
+        break;
+      case 'buy': {
+        const res = buyStat(this.state, action.stat);
+        if (!res.ok) pushLog(this.state, res.message, 'warn');
+        this.sync();
+        break;
+      }
+      case 'useItem': {
+        const res = useItem(this.state, this.data, action.id);
+        if (!res.ok) pushLog(this.state, res.message, 'warn');
+        this.sync();
+        break;
+      }
+      case 'trade': {
+        const res = tradeAccept(this.state, this.data, this.state.floor, action.index);
+        if (!res.ok) pushLog(this.state, res.message, 'warn');
+        this.sync();
+        break;
+      }
+      case 'travel': {
+        const res = travelTo(this.state, this.data, action.floor);
+        if (res.ok) {
+          this.board.setFloor(this.state, this.data, this.state.floor);
+          this.board.setHeroVisible(true);
+          this.board.setHeroPos(this.state.pos.x, this.state.pos.y, false);
+        } else {
+          pushLog(this.state, res.message, 'warn');
+        }
+        this.sync();
+        break;
+      }
+      case 'stop': {
+        // 卡住时把 `explainStop` 的诊断也写进日志 —— 「走投无路」有四种成因，
+        // 只报一句结论没法定位（与 sim.ts 的 STOP 分支同规）
+        pushLog(this.state, `自动通关停下：${action.reason}`, 'warn');
+        for (const line of explainStop(this.state, this.data).slice(0, 4)) {
+          pushLog(this.state, `  ${line}`, 'warn');
+        }
+        this.stopAuto(action.reason);
+        break;
+      }
+    }
   }
 
   // ── NPC 对话 ─────────────────────────────────────────────────────
@@ -673,6 +848,8 @@ export class Game {
   }
 
   private restart(): void {
+    // 静默停（`null`）：重开是新的一局，日志里不该留一句上一局的「自动通关已停止」
+    this.stopAuto(null);
     this.state = createInitialState(this.data);
     this.browseFloor = null;
     this.walking = false;
@@ -685,6 +862,7 @@ export class Game {
     this.deathLayer.removeChildren().forEach((c) => c.destroy({ children: true }));
     this.toolbar.revealPill.setActive(false);
     this.toolbar.setBrowsing(false, this.state.floor);
+    this.toolbar.setAuto(false);
     this.board.revealHidden = false;
     pushLog(this.state, '回到第 1 层，重新开始。', 'floor');
     this.board.setFloor(this.state, this.data, this.state.floor);

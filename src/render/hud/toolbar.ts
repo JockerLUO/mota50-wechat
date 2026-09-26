@@ -1,5 +1,5 @@
 /**
- * 工具栏 —— 棋盘下方那三颗等宽按钮（编辑视图 / 楼层浏览 / 重开）。
+ * 工具栏 —— 棋盘下方那**四颗**等宽按钮（编辑视图 / 楼层浏览 / 自动通关 / 重开）。
  *
  * 从 `hud.ts` 拆出来的。这里的核心是一个**可复用按钮**（`Pill`）：
  * 工具栏用它、对话框脚部也用它，所以它必须和工具栏本身分得开
@@ -11,8 +11,13 @@
  * 删除后 `state.log` 仍在记录（引擎的事件台账，`__probe().lastLog` 与自动化
  * 校验都读它），只是**不再有任何一处把它画到屏幕上**。
  *
- * 工具栏本身也从「一排胶囊按钮 + 右侧一句灰色提示」改成三个等宽按钮：
+ * 工具栏本身也从「一排胶囊按钮 + 右侧一句灰色提示」改成等宽按钮：
  * 胶囊是 iOS 的语言，而这里的卡片是方角圆角，两者放一起就是「不像一个人做的」。
+ *
+ * ⚠️ 2026-09-26 从三颗扩到四颗（加「自动通关」）：每颗 120 → **87**。
+ *    横向几何变了，**凡抄过按钮坐标的地方都要跟着改** —— A13 就抄了
+ *    （`20 + 120 + 10 + 60`），改完之后那个点落在按钮之间的缝上、静默点空。
+ *    所以这里导出 `buttonRects()`，判据按 `id` 取真实几何。
  */
 
 import { Container, Graphics, Text } from 'pixi.js';
@@ -108,6 +113,16 @@ export class Pill extends Container {
   }
 
   /**
+   * 底板宽度（逻辑像素）。
+   *
+   * 单列一个 getter 而不是把 `w` 改公开：`w` 会被 `setLabel()` 重算，
+   * 直接暴露字段等于把「宽度只由本类决定」这条规矩交出去。
+   */
+  get boxW(): number {
+    return this.w;
+  }
+
+  /**
    * 当前文案。
    *
    * 不叫 `text` 是因为 `Container.label` 已经在 Pixi 里占了一格语义，
@@ -121,15 +136,26 @@ export class Pill extends Container {
 export class Toolbar extends Container {
   readonly revealPill: Pill;
   readonly browsePill: Pill;
+  readonly autoPill: Pill;
   readonly restartPill: Pill;
 
-  constructor(handlers: { onToggleReveal: () => void; onBrowse: () => void; onRestart: () => void }) {
+  constructor(handlers: {
+    onToggleReveal: () => void;
+    onBrowse: () => void;
+    onAuto: () => void;
+    onRestart: () => void;
+  }) {
     super();
     const { x, y, w } = LAYOUT.toolbar;
-    // 三个等宽按钮铺满整行：宽度由版面算出来，不跟着文字长度走 ——
-    // 「重开」只有两个字，跟着文字走会变成一个挤在左边的窄块，整行看着就散了
+    //
+    // 四颗等宽按钮铺满整行：宽度由版面算出来，不跟着文字长度走 ——
+    // 「重开」只有两个字，跟着文字走会变成一个挤在左边的窄块，整行看着就散了。
+    //
+    // ⚠️ 从三颗扩到四颗（2026-09-26，加「自动通关」）时，**横向几何变了**：
+    //    120 → 87。判据里凡硬编码过 `20 + 120 + 10 + 60` 这类坐标的都会点空，
+    //    所以这里同时提供 `buttonRects()`，让断言读**真实几何**而不是抄一份常数。
     const gap = 10;
-    const btnW = Math.floor((w - gap * 2) / 3); // 380 → 三个 120，正好铺满
+    const btnW = Math.floor((w - gap * 3) / 4); // 380 → 四个 87，正好铺满
     const mk = (text: string, i: number, fn: () => void, active = false): Pill => {
       const p = new Pill(text, btnW, fn, active);
       p.x = x + i * (btnW + gap);
@@ -139,7 +165,49 @@ export class Toolbar extends Container {
     };
     this.revealPill = mk('编辑视图', 0, handlers.onToggleReveal);
     this.browsePill = mk('楼层浏览', 1, handlers.onBrowse);
-    this.restartPill = mk('重开', 2, handlers.onRestart);
+    this.autoPill = mk('自动通关', 2, handlers.onAuto);
+    this.restartPill = mk('重开', 3, handlers.onRestart);
+  }
+
+  /**
+   * 四颗按钮的设计坐标与尺寸 —— 判据点按钮时读它，**不要硬编码**。
+   *
+   * 为什么会单列出来：A13（楼层浏览）原先写的是 `20 + 120 + 10 + 60`，
+   * 那是「三颗各 120」时代的几何。改成四颗之后那个坐标落在**按钮之间的缝**上，
+   * 点击静默失效 —— 而症状是「返回键失灵」，看起来像功能坏了，不是布局变了。
+   * 数字写两处的病，这里用一个取值接口治掉。
+   */
+  buttonRects(): Array<{ id: 'reveal' | 'browse' | 'auto' | 'restart'; label: string; x: number; y: number; w: number; h: number }> {
+    return [
+      { id: 'reveal', pill: this.revealPill },
+      { id: 'browse', pill: this.browsePill },
+      { id: 'auto', pill: this.autoPill },
+      { id: 'restart', pill: this.restartPill }
+    ].map(({ id, pill }) => ({
+      id: id as 'reveal' | 'browse' | 'auto' | 'restart',
+      label: pill.labelText,
+      x: pill.x,
+      y: pill.y,
+      w: pill.boxW,
+      h: LAYOUT.toolbar.h
+    }));
+  }
+
+  /**
+   * 自动通关状态：按钮就地变身 + 高亮。
+   *
+   * 与浏览态同一套做法（见 `setBrowsing`）：**不新增按钮、不重排版面**，
+   * 出口就留在玩家刚点的那一颗上。触摸设备没有 Esc，「开始」和「停止」
+   * 必须是同一个看得见、按得着的地方。
+   */
+  setAuto(on: boolean): void {
+    this.autoPill.setLabel(on ? '停止自动' : '自动通关');
+    this.autoPill.setActive(on);
+  }
+
+  /** 自动通关那颗按钮此刻的文案。供 `__probe()` 断言（同 `browseLabel` 的告诫：读 `labelText`） */
+  get autoLabel(): string {
+    return this.autoPill.labelText;
   }
 
   /**
@@ -147,14 +215,14 @@ export class Toolbar extends Container {
    *
    * ## 为什么让它就地变身，而不是新加一颗返回按钮
    *
-   * 三颗按钮正好铺满 380 宽（各 120 + 间距 10），加一颗就要重排整个版面，
+   * 四颗按钮正好铺满 380 宽（各 87 + 间距 10），加一颗就要重排整个版面，
    * 而版面是「模块间隙处处相等」的断言对象 —— 为了一个临时状态动版面不划算。
    * 更要紧的是**手指位置**：玩家点开浏览用的就是这一颗，返回键出现在同一位置，
    * 不用去找。这和「盖住屏幕的浮层用 Esc 返回」是两回事：
    * 触摸设备上没有 Esc，所以返回键必须是看得见、按得着的。
    *
    * 超过两位数的楼层文案会变长（「返回第 100 层」是不可能的，塔只有 51 层），
-   * 最长「返回第 51 层」≈ 6.2 个单位 × 12.5px ≈ 78px，稳在 120 里。
+   * 最长「返回第 51 层」≈ 6.2 个单位 × 12.5px ≈ 78px，稳在 87 里。
    */
   setBrowsing(on: boolean, floor: number): void {
     this.browsePill.setLabel(on ? `返回第 ${floor} 层` : '楼层浏览');

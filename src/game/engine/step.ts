@@ -118,6 +118,16 @@ export function step(state: GameState, data: GameData, dir: Dir): StepResult {
       };
       const msg = `${talk.name}：${talk.text}`;
       pushLog(state, msg, 'talk');
+      //
+      // 搭话也是**事件触发点**：第 2 层智者给「攻击/防御各 +10%」、第 3 层智者
+      // 送怪物书，参考源码都挂在搭话上（`eventHappened[1]` / `[3]`）。
+      //
+      // ⚠️ 坐标必须一起传：第 2 层有两个智者 (10,3)/(10,9)，只有前者给 +10%。
+      // 只传 id 与 floor 会让两个都触发（+10% 变成 +21%）。
+      //
+      // 放在 `pushLog` **之后**：这样对话框里显示的还是「搭话当时」的台词，
+      // 属性变化紧跟在后面记一条 —— 顺序反了的话，台词会晚一步。
+      applyTrigger(state, data, { op: 'talked', id: ent.id, floor, x: ent.x, y: ent.y });
       // NPC 不可踩踏：搭话后勇者留在原地。开不开面板由编排层决定（见 StepResult.npc）
       return { kind: 'talk', moved: false, message: msg, npc: talk };
     }
