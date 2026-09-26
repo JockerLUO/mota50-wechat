@@ -396,7 +396,7 @@ npm run verify:minigame   # 无 DOM 宿主（Web Worker），37 项常驻判据
 npm run verify:dom        # 有原生 DOM 宿主（IDE 模拟器同类），20 项判据
                           #   含「重现 IDE 处境」：宿主 baseURI 改成 about:blank → 垫片补齐
 npm run verify:url-shim   # URL 垫片 vs 原生对拍，2 条 —— 唯一直接测源码模块的一套
-npm run verify:all        # 以上三者 + verify:sandbox + verify:visual，共 103 条（14 + 30 + 37 + 20 + 2）
+npm run verify:all        # 以上三者 + verify:sandbox + verify:visual，共 104 条（14 + 31 + 37 + 20 + 2）
 ```
 
 **⚠️ 两类宿主的分工是「正交维度」，不是「各测一半」（2026-09-24 修正，理由见 §9.15(b)）：**
@@ -1844,10 +1844,10 @@ typeof document === "undefined"
 ```bash
 npm run build:minigame    # 构建产物（含 tsc --noEmit）；产物 = game.js + boot.js + data/*.json
 npm run verify:sandbox    # 干净 V8（node:vm）宿主实测，14 条判据（含裸标识符视图 ×8、拆包边界 ×4）
-npm run verify:visual     # 渲染层回归，30 条判据（A1–A23，含版面/位面/道具栏/手绘怪物、
+npm run verify:visual     # 渲染层回归，31 条判据（A1–A23 + A1b，含版面/位面/道具栏/手绘怪物、
                           #   脚下无标记 / 浏览出口 / 攻击动画 / 对话折行 / 上下楼梯 /
                           #   像素密度 / 文字分辨率 / 手绘墙 / 待机呼吸 / BOSS 占位块 /
-                          #   BOSS 图集来自当前源图）
+                          #   BOSS 图集来自当前源图 / 自动通关接进界面 / 调试传送不改背包）
 npm run verify:minigame   # 无 DOM 环境实测，37 条常驻判据（含禁 unsafe-eval ×3、图集逐字节一致、
                           #   包结构 ×6、语法地板 ×2、宿主缺失全局 URL/location ×2、
                           #   document.baseURI 能当基准 ×1、产物级「无 Node 分支 / 死实参已剥」×2、
@@ -1858,7 +1858,7 @@ npm run verify:dom        # 有原生 DOM 宿主实测，20 条判据（含触�
                           #   注：驱动 UI 的点击必须模拟真实节奏，见 §9.13
 npm run verify:url-shim   # URL 垫片 vs 原生 URL 对拍，2 条判据（25 用例 × 9 字段）
                           #   唯一**直接测源码模块**的一套（不加载产物），见 §9.15
-npm run verify:all        # 以上五套，共 103 条判据（14 + 30 + 37 + 20 + 2）
+npm run verify:all        # 以上五套，共 104 条判据（14 + 31 + 37 + 20 + 2）
 ```
 
 另有两个不在四套之列的取证工具 —— 它们读的都是**工具自己落盘的状态**，

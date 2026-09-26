@@ -138,6 +138,12 @@
    "id": "bluePotion",
    "x": 2,
    "y": 10
+  },
+  {
+   "type": "npc",
+   "id": "thief",
+   "x": 3,
+   "y": 4
   }
  ]
 }

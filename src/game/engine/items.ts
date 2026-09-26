@@ -12,12 +12,36 @@
  */
 
 import type { GameData, KeyId } from '../../data';
-import type { GameState } from '../state';
+import { entityAt, entityKey, pushLog, type GameState } from '../state';
 import { PERSISTENT_OPS, applyEffects } from './effects';
 import { keyName } from './naming';
 
 /** items.json 里钥匙类道具的 id 恰好就是 KeyId；钥匙不进背包，直接进 state.keys */
 const KEY_ITEM_IDS = new Set<string>(['yellowKey', 'blueKey', 'redKey']);
+
+/**
+ * 把**某一格上**的道具收进包里（「拾取」的唯一实现），返回给玩家看的那一行。
+ *
+ * 两个调用点：
+ *   · `step.ts` —— 玩家主动走上去（`ent.type === 'item'` 分支）；
+ *   · `travel.ts` 的 `arriveOnFloor()` —— **落地**（楼梯 / 层间传送器 / 事件的 teleport）。
+ *
+ * 为什么要抽出来：**落地也是一种走上去**。官方规则原文是「走到物品上自动拾起获得」，
+ * 而上一版只有「迈步」会拾取，落地不会 —— 于是被扔进第 2 层牢房的勇者会正好压在
+ * 那格黄钥匙上（牢房 4 格里 3 格各放着一把），钥匙留在原地、谁都不会发现它没被拿起：
+ * 不是报错，是**少了一件东西**。两个调用点共用这一份，才不会各写一遍再漂移。
+ */
+export function pickUpAt(state: GameState, data: GameData, floor: number, x: number, y: number): string | null {
+  const ent = entityAt(state, data, floor, x, y);
+  if (!ent || ent.type !== 'item') return null;
+  const item = data.items[ent.id];
+  if (!item) return null;
+  state.removed.add(entityKey(floor, x, y, 'item', ent.id));
+  const got = grantItem(state, data, ent.id, 1, floor);
+  const text = `拾得 ${item.name}${got.length ? `（${got.join('，')}）` : ''}`;
+  pushLog(state, text, 'loot');
+  return text;
+}
 
 /**
  * 把道具发给勇者，返回给玩家看的说明行。

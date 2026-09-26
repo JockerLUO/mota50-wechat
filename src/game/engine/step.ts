@@ -5,6 +5,7 @@
  * 也是原文件头那几条出处的落点：
  *  - 开门：撞门成功即消耗钥匙并**走上该格**（源码 event.js:386 清门后 player.x++）
  *  - 假墙：撞一次即变为空地并走上去（event.js:412）
+ *  - 地块剧情：走上某格自动触发（`enterTile`，本项目原创 —— 见 moveOnto 的注释）
  *
  * 它处于依赖链的顶端（依赖效果 / 道具 / 交易 / 换层 / 派生量），
  * 所以这一节不适合作任何人的上游 —— 想在这里被别处 import 说明分层错了。
@@ -15,7 +16,7 @@ import { DIRS, entityAt, entityKey, patchTile, pushLog, stairsOn, tileAt, type D
 import { bumpTalk, npcLine } from '../dialogue';
 import { applyTrigger } from './events';
 import { REUSABLE_OPS, applyEffects } from './effects';
-import { grantItem } from './items';
+import { pickUpAt } from './items';
 import { MERCHANT_SOURCE_ID, SHOP_SOURCE_ID, merchantOffers } from './merchant';
 import { keyName } from './naming';
 import { arriveOnFloor, nearestStandable } from './travel';
@@ -84,13 +85,9 @@ export function step(state: GameState, data: GameData, dir: Dir): StepResult {
   // ② 道具 / NPC
   if (ent) {
     if (ent.type === 'item') {
-      const item = data.items[ent.id];
-      if (!item) return { kind: 'blocked', moved: false, message: `未知道具 ${ent.id}` };
-      state.removed.add(entityKey(floor, ent.x, ent.y, 'item', ent.id));
-
-      const got = grantItem(state, data, ent.id, 1, floor);
-      const detail = got.length ? `（${got.join('，')}）` : '';
-      pushLog(state, `拾得 ${item.name}${detail}`, 'loot');
+      if (!data.items[ent.id]) return { kind: 'blocked', moved: false, message: `未知道具 ${ent.id}` };
+      // 拾取的实现在 `items.ts` 的 `pickUpAt()` —— 与「落地即拾取」共用同一份
+      pickUpAt(state, data, floor, ent.x, ent.y);
       checkDeath(state);
       return moveOnto(state, data, floor, nx, ny, 'pickup');
     }
@@ -164,7 +161,7 @@ export function step(state: GameState, data: GameData, dir: Dir): StepResult {
   return moveOnto(state, data, floor, nx, ny, 'move');
 }
 
-/** 走上某格，并按需触发楼梯 / 领域 */
+/** 走上某格，并按需触发楼梯 / 领域 / 地块剧情 */
 function moveOnto(state: GameState, data: GameData, floor: number, x: number, y: number, kind: StepKind): StepResult {
   state.pos = { x, y };
   state.stats.steps++;
@@ -180,8 +177,14 @@ function moveOnto(state: GameState, data: GameData, floor: number, x: number, y:
     return { kind: 'stairs', moved: true, floorChanged: target, message: `前往第 ${target} 层` };
   }
 
-  applyAura(state, data);
-  return { kind, moved: true };
+  // ⚠️ 顺序：**先**跑地块剧情，**再**结算领域。
+  //    地块剧情可能把勇者传送走（第 3 层的伏击就是），此时 `arriveOnFloor()`
+  //    已经在落地时结算过一次领域了；这里再调一次就是**两次扣血** ——
+  //    `applyAura` 会真的扣 HP（见 vitals.ts），它不幂等。所以按「还在不在原来
+  //    那一层」分流，而不是无条件调。
+  const talk = applyTrigger(state, data, { op: 'enterTile', floor, x, y });
+  if (state.floor === floor) applyAura(state, data);
+  return { kind, moved: true, npc: talk ?? undefined };
 }
 
 // ── 使用道具 ────────────────────────────────────────────────────────

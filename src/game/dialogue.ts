@@ -29,8 +29,15 @@ import type { GameState } from './state';
 
 export interface NpcLine {
   text: string;
-  /** 这一句是从哪一层含义里取出来的 —— 调试与校验时用来确认轮换真的发生了 */
-  from: 'floor' | 'greet' | 'repeat' | 'note' | 'fallback';
+  /**
+   * 这一句是从哪一层含义里取出来的 —— 调试与校验时用来确认轮换真的发生了。
+   *
+   * `story` 是**唯一的例外**：它不是从 `npcs.json` 的台词池里取出来的，
+   * 而是事件剧本（`say` 算子）写死的一整段，不参与轮换、也不计搭话次数。
+   * 放在同一个字段里是因为「这句话是谁说的、算哪一类」对界面来说只有一个问题：
+   * 标题下面那行小字该写什么。
+   */
+  from: 'floor' | 'greet' | 'repeat' | 'note' | 'fallback' | 'story';
 }
 
 /** 把数据里的 `string | string[]` 归一成数组 */

@@ -752,6 +752,66 @@ head('I · 参考源完整性');
     info('data/events.json 尚未重建（上一版 3 层草案的事件表已移入 data/_legacy-3floors/）');
     info('受影响的机制：第 10 层剧情生成楼梯、第 49→50 层通路、道具/道具赠予类事件');
   }
+
+  // ── I4 剧情算子的结构约束（say / enterTile）──────────────────
+  //
+  // 三条拦的都是「数据看着完全正常、功能永远不会发生」的静默失配（铁律 #23）：
+  //   ① 同一事件写两条 `say`：`applyTrigger()` 只把**最后一条**交回界面，
+  //      第一条被静静丢掉；
+  //   ② `say` 挂在非 `enterTile` 的事件上：另外三种触发点（开局 / 击败 / 搭话）
+  //      没有把台词交回界面的通路（`step.ts` 只在 `moveOnto()` 里接），
+  //      台词永远不会显示；
+  //   ③ `enterTile` 落在楼梯格或某条楼梯的落点上：换层走的是
+  //      `arriveOnFloor()`，**不经过** `moveOnto()`，踩上去那一次不触发。
+  if (events) {
+    const sayEvents = eventList.filter((ev) => (ev.effects ?? []).some((e) => e.op === 'say'));
+    const dupSay = sayEvents.filter((ev) => (ev.effects ?? []).filter((e) => e.op === 'say').length > 1);
+    if (dupSay.length) fail(`同一事件写了多条 say（只有最后一条会显示）：${dupSay.map((ev) => ev.id).join('、')}`);
+    else pass(`${sayEvents.length} 条剧情台词（say）事件，每条至多一条台词`);
+
+    const badHost = sayEvents.filter((ev) => ev.trigger?.op !== 'enterTile');
+    if (badHost.length) {
+      fail(`say 只允许挂在 enterTile 触发的事件上（其余触发点没有把台词交回界面的通路）：` +
+        badHost.map((ev) => `${ev.id}(${ev.trigger?.op})`).join('、'));
+    } else {
+      pass('剧情台词（say）都挂在「能把台词交回界面」的触发点上');
+    }
+
+    // 「踩不到」的格：数据里的楼梯 + 事件生成的楼梯，以及它们的落点
+    const dead = new Set();
+    for (const f of floors) {
+      for (const dir of ['up', 'down']) {
+        for (const s of f.stairs?.[dir] ?? []) {
+          dead.add(`${f.index}:${s.x},${s.y}`);
+          if (s.arrive) dead.add(`${f.index}:${s.arrive.x},${s.arrive.y}`);
+        }
+      }
+    }
+    for (const ev of eventList) {
+      for (const e of ev.effects ?? []) {
+        if (e.op !== 'addStair') continue;
+        dead.add(`${e.floor}:${e.x},${e.y}`);
+        if (e.arrive) dead.add(`${e.floor}:${e.arrive.x},${e.arrive.y}`);
+      }
+    }
+    const onStair = eventList.filter(
+      (ev) => ev.trigger?.op === 'enterTile' && dead.has(`${ev.trigger.floor}:${ev.trigger.x},${ev.trigger.y}`)
+    );
+    if (onStair.length) {
+      fail(`enterTile 落在楼梯格/落点上 —— 换层走 arriveOnFloor() 不经过 moveOnto()，那一次不会触发：` +
+        onStair.map((ev) => ev.id).join('、'));
+    } else {
+      pass('enterTile 触发点都不在楼梯格/落点上（那几格是踩不响的）');
+    }
+
+    // ⚠️ 这里**刻意不检查「触发格是不是必经格」**。那条看起来该由静态数据判，
+    // 其实判不了：「必经」问的是「玩家实际会怎么走」，而玩家有钥匙、会开门、
+    // 会撞假墙 —— 任何静态口径（按 `passable` 算还是按「只有墙算阻挡」算）
+    // 都会给出**误导性的红或绿**（第一版按 `passable` 算，把黄门也算阻挡，
+    // 于是第 3 层连不封触发格都到不了上楼梯，红的指向完全错了）。
+    // 这一条由 tools/autoplay/zone1.ts 的 **Z7** 用一条最不利口径的连通性检量：
+    // 「把触发格当永远过不去的地形，上楼梯必须变成不可达」。
+  }
 }
 
 // ── 汇总 ────────────────────────────────────────────────────────

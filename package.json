@@ -17,6 +17,8 @@
     "verify:visual": "node tools/verify-visual.cjs",
     "verify:url-shim": "node tools/verify-url-shim.cjs",
     "verify:autoplay": "node tools/verify-autoplay.cjs",
+    "probe:prison": "node tools/probe-prison-judgments.mjs",
+    "probe:score-unify": "node tools/probe-score-unify.mjs",
     "autoplay": "node tools/autoplay-sim.mjs",
     "autoplay:plan": "node tools/autoplay-plan.mjs",
     "verify:all": "npm run verify:sandbox && npm run verify:visual && npm run verify:minigame && npm run verify:dom && npm run verify:seal && npm run verify:url-shim",

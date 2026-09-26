@@ -26,7 +26,21 @@ const useBeam = argv.includes('--beam');
 const usePhases = argv.includes('--phases');
 const asJson = argv.includes('--json');
 
-const { runPlan, runBeam, runPhases, runTargets, runReach, runScores, runWhy } = await loadPlanner();
+const { runPlan, runBeam, runPhases, runTargets, runReach, runScores, runWhy, prisonDemo } =
+  await loadPlanner();
+
+// `--prison`：把「第 3 层伏击 → 第 2 层牢房 → 撞开暗道的越狱」走一遍，原样打出引擎 log 与楼层图。
+// 与 Z 段判据分工：判据管「会不会退化」（布尔），这里管「跑起来什么样」——
+// 剧情给玩家看的那几行 log **本身就是验收对象**，判据抓不到「台词是乱的」。
+{
+  if (argv.includes('--prison')) {
+    console.log('\n监牢剧情回放：第 3 层伏击 → 第 2 层牢房 → 撞开暗道越狱');
+    console.log('─'.repeat(56));
+    console.log(prisonDemo());
+    process.exit(0);
+  }
+}
+
 
 // `--why N [yXbYrZ] [hp] [atk] [def] [x y]`：**为什么不是别的** ——
 // 决策器六段闸门各自挡掉了什么、因为哪个数。与 `--scores` 互补：

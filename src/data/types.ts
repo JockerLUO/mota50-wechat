@@ -149,11 +149,17 @@ export interface RegionDef {
 }
 
 /**
- * 事件 —— 对参考源码「没写完的那部分」的补齐，而不是新玩法。
+ * 事件 —— 引擎的数据驱动剧情层。算子按**来路**分三组，别混（`data/events.json`
+ * 的 `$comment` 有完整交代）：
  *
- * 目前只有一类：`addStair`（在指定格生成一条楼梯）。
- * 它被用来补上楼梯图在三处区域边界的断点（docs/known-gaps.md §1），
- * 其中 49→50 那条是「游戏不可通关」的直接原因。
+ *   · **补断点** —— `addStair`：楼梯图在三处区域边界的断点
+ *     （`docs/known-gaps.md §1`），其中 49→50 那条是「游戏不可通关」的直接原因。
+ *   · **补漏转写** —— `clearTerrain` / `mulStat` / `grantItem` / `replaceMonster`：
+ *     参考源码**写好了**而本项目导入时没搬过来的那几条。
+ *   · **本项目原创** —— `setTerrain` / `teleport` / `say`：参考源码里根本没有的剧情玩法
+ *     （`say` 是**通用**算子：任何剧情都可以让人物说话，不专属这一条）。
+ *     这一类**必须**在 `why` 里写明「无源码依据」，否则下一个读的人会以为
+ *     「源码里查得到」而白找一遍（铁律 #50：派生项目里「源码写了」≠「本项目有」）。
  */
 export interface EventEffect extends Record<string, unknown> {
   op: 'addStair';
@@ -207,12 +213,92 @@ export interface GrantItemEventEffect extends Record<string, unknown> {
   count?: number;
 }
 
+/**
+ * 把某层**某一格**的地形精确改成指定字符。
+ *
+ * 与 `clearTerrain`（按编号把整层那种地形清空）是**反着的一对**：那一条是
+ * 「不关心在哪几格」，这一条是「只动这一格」。
+ *
+ * 第 3 层伏击（红魔王）的剧情用它做两件事（同一条事件的两个 effect）：
+ *   · 牢房左墙 (1,4) `#` → `w`（假墙）—— 撞开它才是唯一的越狱出路；
+ *   · 牢房正门 (4,4) → `D`（牢门）—— 无论玩家此前有没有打过两名中级卫兵
+ *     （`f2-prison-open` 是否已触发），被关进去时门都是**落锁**的。
+ *
+ * ⚠️ 只写进 `state.terrainPatch`，**不动 `data/`** —— 数据是静态的、全局面共享，
+ * 改它等于把「一条剧情的临时地形」变成「所有存档的地形」。
+ */
+export interface SetTerrainEventEffect extends Record<string, unknown> {
+  op: 'setTerrain';
+  floor: number;
+  x: number;
+  y: number;
+  /** 地形**字符**（`data/tiles.json` 的 char 列）：`w` = 假墙、`D` = 牢门 */
+  terrain: string;
+}
+
+/**
+ * 把勇者搬到**绝对**楼层与坐标。
+ *
+ * 与 `changeFloor`（`effects.ts` 里那个，只吃 `delta`，只能相对位移）不是一回事：
+ * 这一条是为了「剧情把人扔到某层某格」而存在的 —— 第 3 层伏击把勇者
+ * 打晕后扔进第 2 层牢房走的就是它。
+ *
+ * ⚠️ 落点必须走 `travel.ts` 的 `arriveOnFloor()`：那是**唯一**的落地入口，
+ * 负责 `visited` / `steps` 记账与领域结算。绕过去的话，「被传送落地不结算领域」
+ * 这类 bug 会只在这一条路径上出现（`travel.ts` 文件头写的就是这件事）。
+ * 落点被实体占着时由 `nearestStandable()` 就近修正，不静默把人塞进墙里。
+ */
+export interface TeleportEventEffect extends Record<string, unknown> {
+  op: 'teleport';
+  floor: number;
+  x: number;
+  y: number;
+  /** 落地时记一条 log —— 剧情台词 / 场面说明（省略则记「被带到了第 N 层」） */
+  say?: string;
+}
+
+/**
+ * 让某个人物**说一段话**（剧情演出），走的是撞 NPC 弹出**同一块对话框**。
+ *
+ * ## 为什么需要它
+ *
+ * 在这之前，事件对玩家说的话只有一条出口：`pushLog()`。而界面上那条「消息条」
+ * 已经按玩家要求整条删掉了（见 `src/render/hud/toolbar.ts` 的文件头）——
+ * 于是「事件说的话」**在屏幕上根本不存在**：玩家走到伏击点，只看见画面一跳就到了
+ * 牢房，没有任何交代。这条算子把剧情台词接回对话框，与 NPC 台词共用一套版式。
+ *
+ * ## 与 `TeleportEventEffect.say` 的分工
+ *
+ * `teleport.say` 只是落地时记一条 log（**没有**对话框，给调试/回放看的）；
+ * 这条是真的弹给玩家读的。两者不重复：一条剧情可以只有旁白、没有位移。
+ *
+ * ⚠️ **同一个事件里最多一条 `say`**：`applyTrigger()` 一次只带回一条台词
+ * （返回最后一条），写两条的话第一条会被静默丢掉。这条约束由
+ * `tools/validate-data.mjs` 的 E 段机器检查（铁律 #23：约束要有人检查）。
+ */
+export interface SayEventEffect extends Record<string, unknown> {
+  op: 'say';
+  /**
+   * 说话人 id —— 只用来取**职能章**（`src/render/theme.ts` 的 `NPC_ROLE`）。
+   * 它**不需要**是地图上真实存在的 NPC：首领与旁白也会说话，
+   * 给不存在的 id 会落到「路人」那一档（不报错，但也没颜色）。
+   */
+  speaker: string;
+  /** 对话框标题上的名字 */
+  name: string;
+  /** 正文，逐段显示；面板最多 7 行，超出的会被截断（篇幅由数据作者控制） */
+  lines: string[];
+}
+
 export type AnyEventEffect =
   | EventEffect
   | ReplaceMonsterEffect
   | ClearTerrainEventEffect
   | MulStatEventEffect
-  | GrantItemEventEffect;
+  | GrantItemEventEffect
+  | SetTerrainEventEffect
+  | TeleportEventEffect
+  | SayEventEffect;
 
 export interface GameEvent {
   id: string;
@@ -223,16 +309,23 @@ export interface GameEvent {
    *   - `defeated`     击败某怪
    *   - `allDefeated`  列表内的怪全部被击败（可限定楼层）
    *   - `talked`       与某 NPC 搭话（可限定楼层与坐标）
+   *   - `enterTile`    **走到某一格**时自动发生（可限定楼层）
    *
    * ⚠️ `talked` 的 `x`/`y` 不是可选的锦上添花：第 2 层**有两个智者**，
    * 参考源码靠 `pos===43` 区分（(10,3) 给 +10%，(10,9) 去 35 楼开暗道）。
    * 只按 `id + floor` 匹配会让**两个都触发**同一个事件 —— 那是 +10% 变 +21%。
+   *
+   * ⚠️ `enterTile` 的坐标必须验证「玩家真的会踩到」：它是**被动**触发，
+   * 玩家不会为了触发剧情特意去走某一格。放在一条不被经过的支路上，
+   * 剧情就变成「存在但永不发生」—— 数据齐备、判据全绿、玩家一辈子没见过。
+   * 所以第 3 层那条伏击的判据里有一条专门量「从入口到上楼梯的路径**必然**经过它」。
    */
   trigger:
     | { op: 'defeated'; id: string }
     | { op: 'start' }
     | { op: 'allDefeated'; ids: string[]; floor?: number }
-    | { op: 'talked'; id: string; floor?: number; x?: number; y?: number };
+    | { op: 'talked'; id: string; floor?: number; x?: number; y?: number }
+    | { op: 'enterTile'; floor: number; x: number; y: number };
   once: boolean;
   effects: AnyEventEffect[];
   /** 为什么要有这条 —— 必须指向证据，见 data/events.json */

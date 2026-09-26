@@ -47,6 +47,14 @@ export interface NpcTalk {
   text: string;
   /** 这句是从哪个来源取的（floor / greet / repeat / note / fallback） */
   from: NpcLine['from'];
+  /**
+   * **整段**正文（剧情演出用）。
+   *
+   * 与 `text` 的区别不是格式而是**来路**：`text` 是 NPC 的台词轮换算出来的
+   * 那一句，`lines` 是事件剧本写死的几段（`say` 算子）。给了 `lines` 就按它
+   * 逐段画，**不再**补「本层货品」那类功能性脚注 —— 剧情不是交易。
+   */
+  lines?: string[];
   /** 本层是否摆着摊（决定对话框要不要给「交易」按钮） */
   canTrade: boolean;
   /** 交易面板的种类：商人按层配货，商店是属性三选一 */

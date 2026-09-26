@@ -12,15 +12,26 @@
  *  2. 编排层（`src/app/game.ts`）只是「按一下走一步」的执行器，
  *     动画、输入互斥那些事不用污染决策逻辑。
  *
- * ## 决策模型：代价是 HP，收益折算成 HP
+ * ## 决策模型：**三套刻度**（估价）+ 代价是 HP
  *
- * 魔塔里真正稀缺的资源只有一个：**生命值**。金币、钥匙、属性最终都换算成
- * 「能少掉多少血 / 能多打多少怪」，所以这里统一用 **HP 当量**计价：
+ * 代价（走到某处要掉多少血）仍然是 HP —— 那是这座塔唯一不可再生的资源：
  *
  *   代价 = 战斗损失 + 开门的摩擦 + 巫师领域伤害
- *   收益 = 道具价值 + 怪物金币 × 金币汇率（见 `statPrices`）
  *
- * 于是「这一架该不该打」就是一道**减法**，而不是一堆 if。
+ * 但**收益不再折成同一个数**。2026-09-26 起按类别各算各的：
+ *
+ *   · 道具 → 血当量（拿它前后「打全塔剩余怪」的掉血差）
+ *   · 怪物 → 优先级（可正可负）
+ *   · NPC → 金币余量
+ *
+ * 三者**不可相加、不可直接比大小**，跨类只按 `score.ts` 的 `CATEGORY_ORDER`。
+ * 于是「这一架该不该打」是**两个问题**：划算吗（闸门）与先做哪个（排序）——
+ * 不再是一道减法。细节见 `score.ts` 文件头与 `docs/ui-prototype.md` §30。
+ *
+ * ⚠️ **这个文件里只有闸门与代价，没有估价。** 任何「这东西值多少分」的算法都属于
+ * `score.ts`（`itemScore` / `monsterScore` / `npcScore`）。2026-09-27 之前这里还留着
+ * 第一代估价（`Prices` / `statPrices` / `itemHpValue` / 重名 `keyValue` / `gateMonsters`），
+ * 与 `score.ts` 并存了两代 —— 现已删净，见 `POLICY` 后面那段说明。
  *
  * ## 为什么是「分层贪心」而不是全局最优解
  *
@@ -38,7 +49,7 @@
 
 import type { GameData, KeyId, Stat } from '../data';
 import { entityAt, livingMonsters, tileAt, type Dir, type GameState } from './state';
-import { footprintAt, inFootprint, touchesFootprint } from './footprint';
+import { touchesFootprint } from './footprint';
 import {
   CATEGORY_ORDER,
   THRESHOLD,
@@ -53,7 +64,7 @@ import {
 } from './score';
 import { previewBattle } from './engine/vitals';
 import { auraStepDamage } from '../../core/combat.mjs';
-import { hasAuraImmunity, shopCost, shopGain } from '../../core/shop.mjs';
+import { hasAuraImmunity, shopGain } from '../../core/shop.mjs';
 
 // ── 动作 ────────────────────────────────────────────────────────────
 
@@ -129,194 +140,32 @@ export const POLICY = {
   /** 身上金币超过这么多就先消费掉再推进（另有 `hasWall` 强制触发） */
   SHOP_GOLD_TRIGGER: 400,
   /**
-   * 「上楼缺这把钥匙」时给它的额外价值。
-   *
-   * 钥匙是**通行权**，价值取决于它能打开什么，而那要在规划时才知道。
-   * 定死一个价（比如 80）会在第 7 层这种地方卡死 —— 实测：拿 (8,0) 那把
-   * 黄钥匙要先开一扇门再打死挡路的骷髅，固定价刚好等于代价，AI 判「不值得」，
-   * 于是永远凑不齐开门的钥匙。
-   */
-  KEY_URGENT: 4000,
-  /** 钥匙的**底价**（HP 当量）。黄钥匙最多、红钥匙全塔只有几把，故单价递增 */
-  KEY_BASE: { yellowKey: 300, blueKey: 900, redKey: 2500 } as Record<KeyId, number>,
-  /**
    * 开一扇门的**摩擦成本**（HP 当量）。
    *
-   * ⚠️ 它不等于钥匙的**价值** —— 那由 `keyValue()` 按稀缺度算，可以高到几千。
-   * 这里只是「绕一下路」的量级，因为塔里的钥匙基本是「捡到就够用」，
+   * ⚠️ 它不等于钥匙的**价值** —— 那由 `score.ts` 的 `keyValue()` 按稀缺度算，
+   * 可以高到几千。这里只是「绕一下路」的量级，因为塔里的钥匙基本是「捡到就够用」，
    * 把开门记成「花掉一把稀缺钥匙」会让 AI 连眼前的门都不敢开（实测会卡死在第 1 层）。
-   */
-  DOOR_COST: { yellowKey: 40, blueKey: 120, redKey: 400 } as Record<KeyId, number>,
-  /**
-   * **1 金币折多少 HP —— 整套决策唯一的汇率旋钮。**
    *
-   * 属性点折多少血不再另外拍脑袋，而是**从商店价目表推出来**：
-   * 「买 1 点攻击要花多少金币」是 `shopCost(n) / shopGain(floor,'atk')`，
-   * 乘以这个汇率就是 1 点攻击的 HP 当量。于是全塔只有这一个可调的数，
-   * 而且它随楼层档位、已购买次数自动变化（后期钱更值钱 → 属性也更值钱）。
-   *
-   * 之前试过「把未来几百场战斗能省的血全折现到现在」那一套，结果算出
-   * 1 金币 = 600 HP，AI 为 1 个金币去付 24 点血，23 场打光 1810 血。
-   * 那是复利不是线性，拿来当线性汇率用必然过头。
+   * ⚠️ 它属于**路径代价模型**（`enterCost` → `reach()` 的 Dijkstra），不是估价，
+   * 所以留在 `POLICY` 而不搬去 `score.ts` —— 代价模型必须与执行逐字一致（铁律 #45）。
    */
-  GOLD_TO_HP: 25,
-  /** 楼层传送器 / 飞行器这类「回溯与机动」能力的价值 —— 没有它就没有第 ④ 步 */
-  MOBILITY: 2500,
-  /** 免疫巫师领域（神圣盾）额外值多少 —— 领域伤害是后期最大的隐性支出 */
-  AURA_IMMUNE: 3000
+  DOOR_COST: { yellowKey: 40, blueKey: 120, redKey: 400 } as Record<KeyId, number>
 };
 
-// ── 汇率：属性点 / 金币 折多少 HP ───────────────────────────────────
+// ── 第一代估价已删除（2026-09-27）───────────────────────────────────
 //
-// 这是整套决策最容易拍错的地方，而**拍错的表现有两种，方向相反**：
+// 这个文件里曾经还有一整套「全部折成 HP 当量」的估价：`Prices` / `statPrices`
+// （从商店价目表推汇率）、`keyValue` + `doorTotals`（与 `score.ts` 同名同逻辑的
+// 第二份）、`itemHpValue`（道具价目表）、`gateMonsters` / `guardsItem`。
 //
-//   · 估低了 → AI 一路冲塔什么都不捡（第一版手写价目表：红宝石 120，
-//     而开门 + 打怪的代价是 200+，「专程去拿宝石」被判成亏本）；
-//   · 估高了 → AI 为 1 个金币去付 24 点血，23 场战斗打光 1810 血。
-//
-// 两个都实测踩过，所以最后**不猜了**：属性与金币的汇率统一由商店价目表
-// 推导（见 `statPrices`），全塔只留 `GOLD_TO_HP` 一个可调旋钮。
-
-export interface Prices {
-  /** +1 攻击折多少 HP */
-  atkHp: number;
-  /** +1 防御折多少 HP */
-  defHp: number;
-  /** 1 金币折多少 HP */
-  goldHp: number;
-}
+// 它们与 `score.ts` 的三套刻度**并存**了很久：贪心早在第八轮就切到了第二代，
+// 而 `planner.ts` 一直 import 第一代 —— 同一个项目里两套刻度在跑，同一个
+// `keyValue` 有两个定义（改一边不红，铁律 #23 的典型）。现已统一到 `score.ts`，
+// 这里删净。**别再往这个文件里加估价函数**：估价只有分数该去的地方。
 
 /** 单个动作最多愿意付多少血：比例与「留一条命」取小（见 POLICY.MAX_SPEND_RATIO） */
 function spendCap(state: GameState): number {
   return Math.max(0, Math.min(state.hp * POLICY.MAX_SPEND_RATIO, state.hp - POLICY.SURVIVE_RESERVE));
-}
-
-/**
- * 当前局势下的汇率。
- *
- * 三个数都由**商店价目表**推出来，不是拍的：
- *
- *   · 1 点攻击 = 「买 1 点攻击要花多少金币」× 金币汇率
- *              = `shopCost(n) / shopGain(floor,'atk')` × GOLD_TO_HP
- *   · 1 点防御 = 同上，用 def 那一档
- *   · 1 金币   = GOLD_TO_HP（唯一的旋钮）
- *
- * 于是它会**随楼层档位与已购买次数自动变化**：高楼层同样的钱能买到 5 倍的属性，
- * 于是属性相对金币变便宜，AI 会更愿意为金币付血 —— 这正是原版攻略
- * 「前期别买、把钱留到后面」的另一面。
- */
-export function statPrices(state: GameState): Prices {
-  const cost = shopCost(state.buyTimes + 1);
-  const g = POLICY.GOLD_TO_HP;
-  const atkHp = (g * cost) / shopGain(state.floor, 'atk');
-  const defHp = (g * cost) / shopGain(state.floor, 'def');
-  return { atkHp, defHp, goldHp: g };
-}
-
-/** 全塔各颜色门的总数（静态，只算一次） */
-const doorCache = new WeakMap<GameData, Record<KeyId, number>>();
-
-function doorTotals(data: GameData): Record<KeyId, number> {
-  const cached = doorCache.get(data);
-  if (cached) return cached;
-  const out: Record<KeyId, number> = { yellowKey: 0, blueKey: 0, redKey: 0 };
-  for (const f of data.floors.values()) {
-    for (const row of f.terrain) {
-      for (const ch of row) {
-        const k = data.byChar[ch]?.key;
-        if (k) out[k] += 1;
-      }
-    }
-  }
-  doorCache.set(data, out);
-  return out;
-}
-
-/**
- * 一把钥匙现在值多少。
- *
- * 钥匙是**通行权**，它的价值取决于「还剩多少扇门、我手里有几把」——
- * 手里 30 把黄钥匙时第 31 把几乎不值钱，一把没有时它值一条命。
- * 所以按稀缺度缩放，而不是给一个固定价。
- */
-export function keyValue(state: GameState, data: GameData, key: KeyId): number {
-  const total = doorTotals(data)[key];
-  const held = state.keys[key];
-  const shortage = Math.max(0, total - held);
-  const scarcity = total > 0 ? shortage / total : 0;
-  return POLICY.KEY_BASE[key] * (1 + 3 * scarcity);
-}
-
-/**
- * 一件道具值多少 HP。
- *
- * ⚠️ 这里**从 `data.items[id].effects` 反推**，不再手写价目表。
- * 手写表的下场是「加了一件新道具，AI 却按默认值 60 当垃圾」——
- * 那和判据里写死一份名单是同一种病（见铁律 #23）。
- */
-export function itemHpValue(state: GameState, data: GameData, id: string, p: Prices): number {
-  const def = data.items[id];
-  if (!def) return 0;
-  let v = 0;
-  for (const eff of def.effects ?? []) {
-    switch (eff.op) {
-      case 'addStat': {
-        const n = Number(eff.value ?? 0);
-        if (eff.stat === 'hp') v += n;
-        else if (eff.stat === 'atk') v += n * p.atkHp;
-        else if (eff.stat === 'def') v += n * p.defHp;
-        break;
-      }
-      case 'mulStat':
-        if (eff.stat === 'hp') v += state.hp * (Number(eff.value ?? 2) - 1);
-        break;
-      case 'addKey':
-        v += keyValue(state, data, eff.key as KeyId);
-        break;
-      case 'mulGoldGain': {
-        // 金币翻倍：值「剩下还没拿到的金币」× 汇率
-        let left = 0;
-        for (const [idx, f] of data.floors) {
-          for (const e of f.entities) {
-            if (e.type !== 'monster') continue;
-            if (state.removed.has(`${idx}:${e.x}:${e.y}:monster:${e.id}`)) continue;
-            left += data.monsters[e.id]?.gold ?? 0;
-          }
-        }
-        v += left * p.goldHp;
-        break;
-      }
-      case 'immune':
-        if (eff.to === 'aura') v += POLICY.AURA_IMMUNE;
-        break;
-      case 'openFloorSelect':
-        v += POLICY.MOBILITY; // 回溯能力 —— 第 ④ 步全靠它
-        break;
-      case 'changeFloor':
-        v += POLICY.MOBILITY * 0.4;
-        break;
-      case 'teleportSymmetric':
-        v += POLICY.MOBILITY * 0.3;
-        break;
-      case 'traitCounter':
-        v += 800; // 对特定怪攻击翻倍：中后期是破 BOSS 的关键
-        break;
-      case 'clearTerrain':
-        v += 500;
-        break;
-      case 'breakWall':
-        v += 400;
-        break;
-      case 'bomb':
-        v += 300;
-        break;
-      default:
-        v += 30;
-    }
-  }
-  // 已经持有的被动道具（大金币、怪物书…）再拿一份没有意义
-  if (def.kind === 'passive' && state.passives.includes(id)) v = 0;
-  return v;
 }
 
 // ── 商人（sourceId 33）─────────────────────────────────────────────
@@ -333,52 +182,19 @@ export function itemHpValue(state: GameState, data: GameData, id: string, p: Pri
 
 
 
-// ── 「这怪该不该打」的两个硬判据 ────────────────────────────────────
+// ── 「这怪该不该打」的两个判据 —— 判定只有一份，在 `score.ts` ────────
 //
 // 用户口径（2026-09-26）：爬楼途中可以绕过的怪直接绕过；只有**它守着的东西**
 // 值回票价时才硬打。所以「打不打」先问两件事，而不是先问金币：
 //   ① 打它**会不会触发事件**（守门怪：开牢门 / 开自动门 / 开启区域通路）；
 //   ② 它**是不是守着道具**（同格或占位块内有道具，如大乌贼守铁锹）。
-
-/** 击败后会触发事件的怪 + 所有 BOSS —— 这些不是「可以跳过的怪」 */
-const gateCache = new WeakMap<GameData, Set<string>>();
-
-/**
- * 守门怪名单 —— **从 `data/events` 反推**，不手写。
- *
- * 手写名单的必然结局是「加了新事件忘了加名字」，而那不会报错，
- * 只会让 AI 把守门的怪当成普通杂兵绕过去、永远卡在门口（铁律 #23）。
- */
-export function gateMonsters(data: GameData): Set<string> {
-  const cached = gateCache.get(data);
-  if (cached) return cached;
-  const out = new Set<string>();
-  for (const ev of data.events) {
-    if (ev.trigger.op === 'defeated') out.add(ev.trigger.id);
-    else if (ev.trigger.op === 'allDefeated') for (const id of ev.trigger.ids) out.add(id);
-  }
-  for (const [id, m] of Object.entries(data.monsters)) if (m.boss) out.add(id);
-  gateCache.set(data, out);
-  return out;
-}
-
-/** 这只怪是否**守着道具**（道具与它同格，或落在它的占位块内） */
-export function guardsItem(
-  state: GameState,
-  data: GameData,
-  floor: number,
-  ent: { type: string; id: string; x: number; y: number }
-): boolean {
-  // 用 `footprintAt` 而不是 `entityFootprint`：调用方传进来的可能只是
-  // `{type,id,x,y}`（planner 的 `entitiesOn` 就只给这四样），不需要完整 FloorEntity
-  const fp = footprintAt(data, ent.x, ent.y, ent.type === 'monster' && !!data.monsters[ent.id]?.boss);
-  for (const e of data.floors.get(floor)?.entities ?? []) {
-    if (e.type !== 'item') continue;
-    if (state.removed.has(`${floor}:${e.x}:${e.y}:item:${e.id}`)) continue;
-    if (inFootprint(fp, e.x, e.y)) return true;
-  }
-  return false;
-}
+//
+// ⚠️ 2026-09-27 之前这两条在这里各有一份实现（`gateMonsters` / `guardsItem`），
+// 而 `score.ts` 另有一份语义相同的 `guardedItemAt` —— 同一件事写两处，
+// 改了一边不会红（铁律 #23，`keyValue` 也是同一个病）。现在统一：
+//   · ① → `score.gateMonsters(data)`（从 `data/events` 反推 + 所有 BOSS）；
+//   · ② → `score.guardedItemAt(state, data, floor, ent)`（返回守着的那件道具 id）。
+// 贪心与 planner 读同一份。
 
 // ── 可达性：加权 Dijkstra ───────────────────────────────────────────
 

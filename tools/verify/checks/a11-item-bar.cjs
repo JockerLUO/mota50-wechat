@@ -37,13 +37,19 @@ async function run(ctx) {
     const snap = () => {
       const l = g.__layout();
       const m = l.modules.find((x) => x.id === 'items');
+      const bag = g.__probe().bag;
       return {
         h: m.h,
         y: m.y,
         H: l.H,
         hidden: l.itemsHidden,
         placed: l.placed.join(','),
-        bag: g.__probe().bag.length
+        bag: bag.length,
+        // ⚠️ 光记个数不够：「空背包时本该是 0、实际是 1」这种失败，**必须当场说出
+        //    是哪一件**，否则要跨十几个判据去追是谁把东西塞进来的（2026-09-26 实测：
+        //    第 37 层 __goto 的落点压着炸弹，一路追到这里才看清）。同族的正面判据
+        //    是 A1b（调试传送不改背包）——这里只负责把话说清楚。
+        bagIds: bag.join('+')
       };
     };
     const none = snap();
@@ -76,7 +82,11 @@ async function run(ctx) {
     `A11 道具栏：空背包不占位（0px）、1 件 ${expectItemH(1)}px、10 件 ${expectItemH(10)}px 且底距 ${bottomGap}px`,
     noBagOk && oneOk && tenOk,
     !noBagOk
-      ? `空背包时：h=${itemFlow.none.h} hidden=${itemFlow.none.hidden} placed=${itemFlow.none.placed} bag=${itemFlow.none.bag}`
+      ? `空背包时：h=${itemFlow.none.h} hidden=${itemFlow.none.hidden} placed=${itemFlow.none.placed} ` +
+        `bag=${itemFlow.none.bag}（${itemFlow.none.bagIds || '空'}）` +
+        (itemFlow.none.bag
+          ? '　← 背包不该有东西：多半是前面某个判据把它弄脏了，先看 A1b'
+          : '')
       : !oneOk
         ? `1 件时：h=${itemFlow.one.h}（应 ${expectItemH(1)}）hidden=${itemFlow.one.hidden}`
         : !tenOk

@@ -332,11 +332,19 @@ export class Game {
    * 开发用：把勇者直接放到某层（跳过钥匙经济与楼梯）。
    * 全塔 12 个商人分散在 2/6/7/12/15/28/29/31/38/39/45/47 层，
    * 靠走位逐层验证交易界面是不现实的 —— 光是钥匙就够不着。
+   *
+   * ⚠️ 落点用 `{ avoidEntities: true }`：**调试传送只搬人，不动背包**。
+   * 不用这个口径的话，`arriveOnFloor()` 的「落地即拾取」会让 `__goto(37)`
+   * 落在放着炸弹的 (4,4) 上、顺手把炸弹收走 —— 而 `a01-terrain` 是逐层 `__goto`，
+   * 于是「看一眼全塔」就把背包弄脏，A11「空背包不占位」跟着变红。
+   * 那条链子跨了三个判据文件，靠人眼是追不回来的：A1b 现在正面钉住它。
    */
   __goto(floor: number, x?: number, y?: number): string {
     if (!this.data.floors.has(floor)) return `第 ${floor} 层不存在`;
     const spot =
-      x !== undefined && y !== undefined ? { x, y } : nearestStandable(this.state, this.data, floor, 5, 5);
+      x !== undefined && y !== undefined
+        ? { x, y }
+        : nearestStandable(this.state, this.data, floor, 5, 5, { avoidEntities: true });
     arriveOnFloor(this.state, this.data, floor, spot.x, spot.y);
     this.browseFloor = null;
     this.board.setFloor(this.state, this.data, this.state.floor);
@@ -672,7 +680,9 @@ export class Game {
   private openDialogue(talk: NpcTalk): void {
     this.modal = 'dialogue';
     const role = npcRole(talk.id);
-    const lines = [talk.text];
+    // 剧情台词（事件的 `say` 算子）是**整段**：给什么画什么，不补功能脚注 ——
+    // 「本层货品：…」这种话挂在一段伏击旁白下面只会让人出戏。
+    const lines = talk.lines ?? [talk.text];
 
     // 功能引导：NPC 的价值在于「告诉你现在能做什么」，所以第二段说明摊位状态。
     // 文案取自引擎算好的报价，不在渲染层重算价格。
@@ -691,7 +701,14 @@ export class Game {
       name: talk.name,
       role,
       lines: lines.filter(Boolean),
-      hint: talk.from === 'floor' ? '本层专说' : talk.from === 'greet' ? '初次见面' : '又见面了',
+      hint:
+        talk.from === 'story'
+          ? '剧情'
+          : talk.from === 'floor'
+            ? '本层专说'
+            : talk.from === 'greet'
+              ? '初次见面'
+              : '又见面了',
       tradeLabel: talk.tradeKind ? '交易' : undefined,
       onTrade: () => {
         this.modal = null;

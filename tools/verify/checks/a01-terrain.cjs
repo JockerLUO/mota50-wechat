@@ -12,7 +12,7 @@
 async function run(ctx) {
   const { page, check, MANIFEST, VARIANT_COUNT, variantIndex, terrainKeyFor, isWallChar, renderChar, floors, sorted, VERBOSE } = ctx;
 
-  // ── A1 / A2 / A3 / A4：逐层比对全部 121 格 ──────────────────────
+  // ── A1 / A2 / A3 / A4 / A1b：逐层比对全部 121 格 ──────────────────────
       const mismatches = [];
   const unknownCells = [];
   const fakeWallRows = [];
@@ -20,13 +20,23 @@ async function run(ctx) {
   const variantUse = ctx.variantUse;
   let cellCount = 0;
 
+  // A1b 的输入：`__goto` 绕塔一圈**不许改背包**（理由见下面的断言）
+  const bagAtStart = await page.evaluate(() => window.mota.game.__probe().bag.join());
+  let bagPrev = bagAtStart;
+  const bagLeaks = [];
+
   for (const floor of sorted) {
     const rows = floors.get(floor);
     const seen = await page.evaluate((f) => {
       const g = window.mota.game;
       const r = g.__goto(f);
-      return { log: r, sigs: g.board.terrainKeys.slice() };
+      return { log: r, sigs: g.board.terrainKeys.slice(), bag: g.__probe().bag.join() };
     }, floor);
+
+    if (seen.bag !== bagPrev) {
+      bagLeaks.push({ floor, from: bagPrev || '（空）', to: seen.bag || '（空）' });
+      bagPrev = seen.bag;
+    }
 
     if (/^未知|^没有|失败/.test(String(seen.log))) {
       mismatches.push({ floor, why: `__goto 失败：${seen.log}` });
@@ -104,6 +114,26 @@ async function run(ctx) {
     `MANIFEST 声明 地面 ${VARIANT_COUNT('0')} 种 / 墙身 ${VARIANT_COUNT('1')} 种；` +
       `实际各用到 ${floorVars} / ${wallVars} 种` +
       (floorVars < 2 || wallVars < 2 ? '（只用到 1 种说明变体路径没生效）' : '')
+  );
+
+  // ── A1b 调试传送不改背包 ──
+  //
+  // 为什么单独立一条：`__goto` 走的是 `nearestStandable()` + `arriveOnFloor()`，
+  // 而 `arriveOnFloor()` 会**落地即拾取**（官方规则「走到物品上自动拾起获得」。
+  // 见 travel.ts 的 pickUpAt）。两件事叠起来的时候，`__goto(37)` 正好落在放着
+  // 炸弹的 (4,4) 上 —— 于是「看一眼第 37 层」就把炸弹收进了背包。
+  //
+  // 而这条链子是**跨文件的**：A01 弄脏背包 → 十来个判据之后 A11 的
+  // 「空背包不占位」变红，报告上完全看不出是谁干的。本轮就是这么踩的：
+  // 排查从「道具栏坏了」一路追到「第 37 层的落点」才找到。
+  // ⇒ 调试钩子的契约是**只搬人**，这条把它钉在离事故最近的地方。
+  check(
+    `A1b 调试传送不改背包：逐层 __goto 走完 ${sorted.length} 层，背包始终为「${bagAtStart || '空'}」`,
+    bagLeaks.length === 0,
+    bagLeaks.length === 0
+      ? `起点「${bagAtStart || '空'}」→ 终点「${bagPrev || '空'}」全程未变`
+      : `有 ${bagLeaks.length} 层改变了背包：${JSON.stringify(bagLeaks.slice(0, 3))}` +
+        '（多半是 __goto 的落点压上了道具 —— 检查 nearestStandable 的 avoidEntities 口径）'
   );
 }
 

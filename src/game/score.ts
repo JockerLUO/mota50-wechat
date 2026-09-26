@@ -199,12 +199,31 @@ export function doorTotals(data: GameData): Record<KeyId, number> {
   return out;
 }
 
+// ── 估价常量：**单一来源** ─────────────────────────────────────────
+//
+// ⚠️ 这两个数原先**各存在两份**：
+//   · `KEY_BASE` 在 `autoplay.ts` 的 `POLICY` 里，而这里写成字面量 2500/900/300；
+//   · `MOBILITY` 在 `POLICY` 里，而这里把 `openFloorSelect` 写成字面量 2500。
+// 两份常量的必然结局是「改了一边、另一边静默用旧值」——铁律 #23 的原样场景
+// （那份「名单」写死在多处必漏）。所以收敛到 score.ts，autoplay 需要时从这里读。
+// 方向 autoplay → score 本来就有依赖，反过来没有，不会成环。
+
+/** 钥匙的**底价**：黄钥匙最多、红钥匙全塔只有几把，故单价递增 */
+export const KEY_BASE: Record<KeyId, number> = { yellowKey: 300, blueKey: 900, redKey: 2500 };
+
+/**
+ * 「回溯与机动」能力的价值 —— 楼层传送器 / 飞行器。
+ *
+ * 它不是可有可无的加分项：分层贪心的第 ④ 步（这一层打不动 → 回低层补强再回来）
+ * **全靠它**。给 0 的后果是「AI 上去了就再也下不来」，实测会卡死在高层。
+ */
+export const MOBILITY = 2500;
+
 /** 一把钥匙值多少血：按**稀缺度**缩放 —— 手里 30 把时第 31 把几乎不值钱 */
 export function keyValue(state: GameState, data: GameData, key: KeyId): number {
   const total = doorTotals(data)[key];
   const scarcity = total > 0 ? Math.max(0, total - state.keys[key]) / total : 0;
-  const base = key === 'redKey' ? 2500 : key === 'blueKey' ? 900 : 300;
-  return base * (1 + 3 * scarcity);
+  return KEY_BASE[key] * (1 + 3 * scarcity);
 }
 
 /** 1 金币折多少分：按「一次商店购买能换回多少血」推，**随楼层档位与当前属性变化** */
@@ -239,8 +258,28 @@ export function effectValue(state: GameState, data: GameData, effects: ItemEffec
       case 'immune':
         if (eff.to === 'aura') v += auraExposure(state, data);
         break;
+      //
+      // ★ 机动类三件套（`effectValue` 曾经**漏了后两条**，见下面的警告）。
+      //
+      // 三者是同一件事的不同程度，按灵活性打折：
+      //   · `openFloorSelect`（楼层传送器）任意层 ⇒ 全额；
+      //   · `changeFloor`（上/下飞行器 upFlyer / downFlyer）只能相对位移 ⇒ 四折；
+      //   · `teleportSymmetric`（镜像飞行器 mirrorFlyer）只换左右 ⇒ 三折。
+      //
+      // ⚠️ 迁移前这三条**只有第一代（`autoplay.itemHpValue`）有**，`effectValue`
+      // 只搬了第一条 ⇒ 飞行器一律掉进 `default`（0 分）。而数据里确实存在这三件
+      // （`upFlyer`/`downFlyer`/`mirrorFlyer`，见 `data/items.json`），
+      // 且「回低层补强」是分层贪心第 ④ 步的命脉 —— 少的这两条是**静默掉功能**：
+      // 不报错、不报警、只是 AI 从此不再专程去拿飞行器。
+      // ⇒ 这正是铁律 #15 说的「产出 / 消费 / 保护素材三方必须对齐」的评分版。
       case 'openFloorSelect':
-        v += 2500;
+        v += MOBILITY;
+        break;
+      case 'changeFloor':
+        v += MOBILITY * 0.4;
+        break;
+      case 'teleportSymmetric':
+        v += MOBILITY * 0.3;
         break;
       case 'traitCounter':
         v += traitGain(state, data, String(eff.trait));
@@ -566,6 +605,42 @@ export function blockingMonsters(state: GameState, data: GameData, floor: number
     if (state.removed.has(`${floor}:${e.x}:${e.y}:monster:${e.id}`)) continue;
     if (reachNoFight(state, data, floor, new Set([k])).has(`${ups[0].x},${ups[0].y}`)) out.add(k);
   }
+  return out;
+}
+
+// ── 守门怪 ──────────────────────────────────────────────────────────
+
+const gateCache = new WeakMap<GameData, Set<string>>();
+
+/**
+ * 击败后会**触发事件**的怪（`defeated` / `allDefeated`）+ 所有 BOSS。
+ *
+ * ⚠️ 它与 `blockingMonsters` 是**两件事**，不要互相替代：
+ *   · `blockingMonsters` 是**几何**判断 —— 「杀掉它，去上楼梯的路就通了」；
+ *   · `gateMonsters` 是**事件**判断 —— 「杀掉它，某条事件会触发」（开门 / 开区域 / 放道具）。
+ *
+ * 一只怪完全可能不在通往楼梯的几何路径上、却挡着一扇门：第 8 层那两只初级卫兵
+ * 就是（它们挡着的红钥匙在 `defeated` 事件后面，而尸体旁边的路本来就绕得过去）。
+ * 按几何判断会把它们当「可绕过的杂兵」，于是红钥匙永远拿不到 —— 实测最远层
+ * 就停在第 9 层（`z1-redkey` 卡点）。
+ *
+ * 名单**从 `data/events` 反推**，不手写：手写的必然结局是「加了新事件忘了加名字」，
+ * 而那不会报错，只会让 AI 把守门的怪当普通杂兵绕过去（铁律 #23）。
+ *
+ * 来路：本条从 `autoplay.ts` 搬来（那里是 2026-09-26 加的第一代实现）。
+ * 搬家的理由与 `keyValue` 同一个 —— 它是**估价体系**的一部分，而估价只有
+ * `score.ts` 一份（迁移前它只被 `planner.ts` 用，贪心早已改用 `blockingMonsters`）。
+ */
+export function gateMonsters(data: GameData): Set<string> {
+  const cached = gateCache.get(data);
+  if (cached) return cached;
+  const out = new Set<string>();
+  for (const ev of data.events) {
+    if (ev.trigger.op === 'defeated') out.add(ev.trigger.id);
+    else if (ev.trigger.op === 'allDefeated') for (const id of ev.trigger.ids) out.add(id);
+  }
+  for (const [id, m] of Object.entries(data.monsters)) if (m.boss) out.add(id);
+  gateCache.set(data, out);
   return out;
 }
 

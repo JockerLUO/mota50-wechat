@@ -34,8 +34,31 @@ import { entityAt, stairsOn, tileAt, type GameState } from './state';
 // 「最小的同源版」：两份价目表的必然结局是「改了一边、另一边静默用默认值」，
 // 而那正是铁律 #23 说的「名单写死在多处必漏」。
 // 依赖方向是 planner → autoplay（反向没有），所以不构成循环。
-import { POLICY, gateMonsters, guardsItem, itemHpValue, keyValue, statPrices } from './autoplay';
-import { npcOfferScore } from './score';
+// ⚠️ 估价**只有一份**，在 `score.ts`（道具 / 怪物 / NPC 各一套刻度）。
+// 这里刻意 import 它而不是另写一份「最小的同源版」：两份价目表的必然结局是
+// 「改了一边、另一边静默用默认值」，而那正是铁律 #23 说的「名单写死在多处必漏」。
+//
+// 从 `autoplay` 只取 `POLICY` —— 那是**参数与闸门**（倍数 / 上限 / 保留量），
+// 不是刻度。依赖方向 planner → { score, autoplay }，两者都不反向依赖 planner。
+//
+// 2026-09-27：迁移前这里 import 的是 `autoplay` 的**第一代估价**
+// （`statPrices` / `itemHpValue` / 重名 `keyValue` / `gateMonsters` / `guardsItem`），
+// 于是同一个项目里跑着两套刻度：贪心用第二代（三套刻度），planner 用第一代
+// （全部折成 HP 当量）。这一条把它们统一到 `score.ts` —— 见 docs/ui-prototype.md §34。
+import { POLICY } from './autoplay';
+import {
+  CATEGORY_ORDER,
+  blockingMonsters,
+  gateMonsters,
+  goldWeight,
+  guardedItemAt,
+  guardianAt,
+  itemScore,
+  keyValue,
+  monsterScore,
+  npcOfferScore,
+  type Category
+} from './score';
 
 // ── 状态克隆 ────────────────────────────────────────────────────────
 
@@ -79,8 +102,22 @@ interface Target {
   id: string;
   /** 到达这一格的路径（不含起点） */
   path: { x: number; y: number }[];
-  /** 净收益（HP 当量）。越大越优先探索 */
+  /**
+   * 净收益 —— ⚠️ **刻度的含义随 `category` 变**（见 `score.ts` 文件头）：
+   *   · `item`    → 血当量（道具刻度）；
+   *   · `monster` → 优先级（怪物刻度）；
+   *   · `npc`     → 金币余量（NPC 刻度）。
+   *
+   * 三者**不可直接比大小**，所以排序必须先看 `category`（`CATEGORY_ORDER`），
+   * 同类内才比 `gain`。这就是「统一到一套刻度」在目标排序上的落点 ——
+   * 与贪心（`autoplay.ts` 的目标排序）逐字同构。
+   *
+   * ⚠️ `up` / `down` / `use` 以及商店的 `gain` 是**搜索启发式**（推进 / 保命 /
+   * 买哪项属性），不是估价 —— 它们没有对应的 `Score`，也不参与三套刻度的比较。
+   */
   gain: number;
+  /** 跨类次序依据 —— 与贪心同一张表（`score.ts` 的 `CATEGORY_ORDER`） */
+  category: Category;
   /** 商店购买哪一项属性（kind === 'shop' 时用） */
   stat?: 'hp' | 'atk' | 'def';
   /** 商人报价下标（kind === 'merchant' 时用，成交要原样回传） */
@@ -372,7 +409,14 @@ function generateTargets(state: GameState, data: GameData, phase?: PhaseHint): T
   const r = reach(state, data);
   const out: Target[] = [];
   const fl = state.floor;
-  const prices = statPrices(state);
+  //
+  // 两份「本层的事实」——目标生成期各算一次（都是本层规模的 BFS / 集合推导）：
+  //   · `gates`    击败后会**触发事件**的怪（守门怪，事件口径）；
+  //   · `blocking` 杀掉它就通往上楼梯的怪（**几何**口径，按格）。
+  // 两者不可互相替代 —— 见 `score.ts` 的 `gateMonsters` 注释（第 8 层那两只初级卫兵
+  // 不在通往楼梯的几何路径上，却挡着红钥匙；只按几何判断会把它们当可绕过的杂兵）。
+  const gates = gateMonsters(data);
+  const blocking = blockingMonsters(state, data, fl);
   // 阶段提示目前只用于「束搜索的估价」，目标生成本身不据此裁剪 ——
   // 裁掉的分支无法在后续轮次里回来，而「哪些门该开」的局部判断很容易裁错。
   void phase;
@@ -384,32 +428,68 @@ function generateTargets(state: GameState, data: GameData, phase?: PhaseHint): T
     // 用钥匙不动点后的持有量判「够不够开门」（见 reach 的注释）
     if (!afford(r.owned, r.keys.get(k)!)) continue;
     if (e.type === 'item') {
-      // 价值走与 autoplay **同一个** `itemHpValue`（不是本文件里再写一份价目表）——
-      // 两处各写一份的后果是「改了一边、另一边静默用默认值」，见铁律 #23。
-      const v = itemHpValue(state, data, e.id, prices);
-      out.push({ kind: 'item', x: e.x, y: e.y, id: e.id, path: pathOf(r, e.x, e.y), gain: v - c });
-    } else if (e.type === 'monster') {
-      const pv = previewBattle(state, data, e.id);
-      if (!pv || !pv.canWin) continue;
+      // 估价与贪心**同一个函数**（`score.itemScore`）—— 分数、明细、守卫转移全一致。
+      // `costHp` 用到达这一格的路径代价 `c`（与 `executeTarget` 的实际走法同源）。
+      const sc = itemScore(state, data, {
+        itemId: e.id,
+        costHp: c,
+        guarded: guardianAt(state, data, fl, e.x, e.y) !== null
+      });
       //
-      // 「可以绕过的怪」不当作目标 —— 与贪心同一个口径（见 autoplay.ts 的
-      // `gateMonsters` / `guardsItem` 与 `POLICY.MONSTER_PROFIT`）：
-      // 爬楼途中绕过去，只有守门 / 守道具的怪才专程去打。
+      // ⚠️ 这里**刻意不加**贪心那道利润率闸门（`POLICY.ITEM_PROFIT`）。
       //
-      // ⚠️ 旧写法 `gain = gold*p - c - pv.hpLoss` 把战斗损失**算了两遍**
-      // （`c` 是 Dijkstra 代价，进入怪物格时已经把 `pv.hpLoss` 记进去了），
-      // 于是怪物目标被系统性低估。这里一并修掉。
-      const mustFight = gateMonsters(data).has(e.id) || guardsItem(state, data, fl, e);
-      const gold = (data.monsters[e.id]?.gold ?? 0) * (state.passives.includes('bigGold') ? 2 : 1);
-      const worth = gold * prices.goldHp;
-      if (!mustFight && worth < c * MONSTER_PROFIT_FOR_GOLD) continue;
+      // 贪心是「每步只做一个动作」，必须挡掉薄利交易（否则一层楼把血花光）；
+      // 而 planner 是**全局搜索**，分支越多越好，收敛交给 `beamScore` 与阶段目标。
+      // 提前剪掉「利润薄」的道具会**永久**删掉一条分支（裁掉的分支回不来，
+      // 见上面 `void phase` 的注释）。这是合并两代估价后**唯一保留的差异**。
       out.push({
-        kind: 'monster',
+        kind: 'item',
+        category: 'item',
         x: e.x,
         y: e.y,
         id: e.id,
         path: pathOf(r, e.x, e.y),
-        gain: (mustFight ? 4000 : 0) + worth - c
+        gain: sc.total
+      });
+    } else if (e.type === 'monster') {
+      const pv = previewBattle(state, data, e.id);
+      if (!pv || !pv.canWin) continue;
+      //
+      // 「可以绕过的怪」不当作目标 —— 与贪心同一个口径：
+      // 爬楼途中绕过去，只有守门（事件） / 守道具的怪才专程去打。
+      const guardsId = guardedItemAt(state, data, fl, e);
+      const mustFight = gates.has(e.id) || guardsId !== null;
+      //
+      // ★ 闸门与排序是**两件事，都要**：
+      //   ① 闸门 —— 「这笔划算吗」：金币收益 ≥ 代价 × 倍数（`POLICY.MONSTER_PROFIT`，
+      //      与贪心读同一个常量）。**口径一字不改**，只把换算率从第一代的固定
+      //      `GOLD_TO_HP = 25` 换成 `score.goldWeight()`（随楼层档位与当前属性变的那个）。
+      //   ② 排序 —— 「先做哪一个」：`monsterScore` 给的优先级分数。
+      //
+      // ⚠️ 合并成一个数实测过会出事：「勉强不亏就开打」让爬楼途中一路清怪，
+      // 血是**一次性存量**（铁律 #55 记的是同一个病）。
+      const gold = (data.monsters[e.id]?.gold ?? 0) * (state.passives.includes('bigGold') ? 2 : 1);
+      const worth = gold * goldWeight(state, data);
+      if (!mustFight && worth < c * MONSTER_PROFIT_FOR_GOLD) continue;
+      //
+      // ⚠️ `c` 是 Dijkstra 代价，**进入怪物格时已经把 `pv.hpLoss` 记进去了**；
+      // 而 `monsterScore` 也会自己算一遍战斗损失。所以把战斗那一份从 `c` 里
+      // 剥出来当 `approachHp`（除打它之外的沿路掉血），否则战斗损失算两遍
+      // —— 旧写法 `gold*p - c - pv.hpLoss` 就是这么系统性低估怪物目标的。
+      const hpLoss = Number.isFinite(pv.hpLoss) ? pv.hpLoss : 0;
+      const sc = monsterScore(state, data, e.id, {
+        guards: guardsId,
+        blocks: blocking.has(`${e.x},${e.y}`),
+        approachHp: Math.max(0, c - hpLoss)
+      });
+      out.push({
+        kind: 'monster',
+        category: 'monster',
+        x: e.x,
+        y: e.y,
+        id: e.id,
+        path: pathOf(r, e.x, e.y),
+        gain: sc.total + (mustFight ? 4000 : 0)
       });
     } else if (e.type === 'npc' && e.id === 'shop' && state.gold >= shopCostOf(state.buyTimes)) {
       // 商店拆成三个独立目标（买 atk / def / hp）——「属性购买时机」是全局约束之一，
@@ -419,7 +499,21 @@ function generateTargets(state: GameState, data: GameData, phase?: PhaseHint): T
         let g = 5000;
         if (stat === 'atk') g += hasUnpierceable(state, data) ? 8000 : 0;
         if (stat === 'def') g += 2000;
-        out.push({ kind: 'shop', x: e.x, y: e.y, id: 'shop', path: pathOf(r, e.x, e.y), gain: g, stat });
+        //
+        // ⚠️ 这里的 `g` 是**搜索启发式**（同一个商店拆成三项，让束搜索保留
+        // 「这轮该不该买 atk」的分歧），**不是** `npcScore` 的金币余量刻度。
+        // 两者的分工见 `score.ts` 的 `npcScore`：那个回答「值不值得买」，
+        // 这个回答「先买哪一项」。`category: 'npc'` 只表达「它归 NPC 这一类」。
+        out.push({
+          kind: 'shop',
+          category: 'npc',
+          x: e.x,
+          y: e.y,
+          id: 'shop',
+          path: pathOf(r, e.x, e.y),
+          gain: g,
+          stat
+        });
       }
     }
   }
@@ -439,6 +533,7 @@ function generateTargets(state: GameState, data: GameData, phase?: PhaseHint): T
         if (!Number.isFinite(g) || g <= 0) continue;
         out.push({
           kind: 'merchant',
+          category: 'npc',
           x: merchantNpc.x,
           y: merchantNpc.y,
           id: `merchant:${offer.index}`,
@@ -455,6 +550,8 @@ function generateTargets(state: GameState, data: GameData, phase?: PhaseHint): T
   if ((state.bag.holyWater ?? 0) > 0 && state.hp <= 500) {
     out.push({
       kind: 'use',
+      // 归 `item` 类：它是道具刻度里最高的一档（`1e6`），排在首位不被别的类别抢。
+      category: 'item',
       x: state.pos.x,
       y: state.pos.y,
       id: 'holyWater',
@@ -472,9 +569,11 @@ function generateTargets(state: GameState, data: GameData, phase?: PhaseHint): T
     const up = s.to > fl;
     out.push({
       kind: up ? 'up' : 'down',
+      // `stairs` 在 `CATEGORY_ORDER` 里排最后：上面三类都没得做才推进。
+      category: 'stairs',
       x: s.x, y: s.y, id: `stair:${s.to}`,
       path: pathOf(r, s.x, s.y),
-      gain: up ? 10000 : -1000 // 上楼是推进，下楼是回溯
+      gain: up ? 10000 : -1000 // 上楼是推进，下楼是回溯（启发式，不是估价）
     });
   }
 
@@ -513,7 +612,18 @@ function generateTargets(state: GameState, data: GameData, phase?: PhaseHint): T
       }
       return true;
     })
-    .sort((a, b) => b.gain - a.gain);
+    //
+    // ★ 排序必须**两级**：先类别（`CATEGORY_ORDER`），同类内才比 `gain`。
+    //
+    // 三个 `gain` 量纲不同（血当量 / 优先级 / 金币余量），直接比大小就是
+    // 把它们偷偷当成同一个刻度用 —— 那正是第二代评分存在的理由
+    // （见 `score.ts` 文件头）。这张表与贪心的目标排序是**同一张**，
+    // 也就是「统一到一套刻度」在排序上的落点。
+    .sort(
+      (a, b) =>
+        CATEGORY_ORDER.indexOf(a.category) - CATEGORY_ORDER.indexOf(b.category) ||
+        b.gain - a.gain
+    );
 }
 
 /**
@@ -662,7 +772,16 @@ export function debugTargets(
 ): {
   kind: string;
   id: string;
+  /**
+   * 净收益。⚠️ **刻度的含义随 `category` 变**（血当量 / 优先级 / 金币余量），
+   * 所以这一列不能跨类比大小 —— 判据与诊断都要先看 `category`。
+   */
   gain: number;
+  /** 跨类次序依据（`score.ts` 的 `CATEGORY_ORDER`）；诊断时按它分组看 */
+  category: string;
+  /** 目标格的坐标（同一层可能有同 id 的多件道具，坐标才分得清） */
+  x: number;
+  y: number;
   pathLen: number;
   orderOk: boolean;
   blockedAt: string | null;
@@ -676,6 +795,9 @@ export function debugTargets(
       kind: t.kind,
       id: t.id,
       gain: Math.round(t.gain),
+      category: t.category,
+      x: t.x,
+      y: t.y,
       pathLen: t.path.length,
       orderOk: f.ok,
       blockedAt: f.at,

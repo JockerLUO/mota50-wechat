@@ -198,7 +198,16 @@ export const NPC_ROLE: Record<string, { label: string; color: number }> = {
   shop: { label: '属性', color: 0x15a34a },
   thief: { label: '情报', color: 0x6b7280 },
   fairy: { label: '祝福', color: 0x38bdf8 },
-  princess: { label: '主线', color: 0xdb5a9a }
+  princess: { label: '主线', color: 0xdb5a9a },
+  /**
+   * 红魔王 —— **地图上没有他的实体**，这个条目只服务剧情台词（事件的 `say` 算子
+   * 用 `speaker: 'redKing'` 取这里的颜色）。
+   *
+   * 为什么照样写进这张表：对话框的职能章是按 id 取色的，漏了这一条不会报错，
+   * 只会静静地掉进「路人 / 灰」那一档 —— 于是首领开口说话，头上顶着一个
+   * 「路人」。颜色取 `demon` 一族（见 `monsterPalette`），一眼认得出是敌方首领。
+   */
+  redKing: { label: '首领', color: 0xa32a3a }
 };
 
 export function npcRole(id: string): { label: string; color: number } {

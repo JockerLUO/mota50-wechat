@@ -14,6 +14,8 @@ export { zone1Verifications } from './zone1';
 export { scoreVerifications } from './score-verify';
 // 决策器「为什么不是别的」的 headless 断言（`verify:autoplay` 的 W 段用）
 export { whyVerifications } from './why-verify';
+// 监牢剧情的剧本回放（`--prison` 用）：判据管「会不会退化」，它管「跑起来什么样」
+export { prisonDemo } from './prison-demo';
 import type { GameData, GameState } from '../../src/data';
 
 /**
