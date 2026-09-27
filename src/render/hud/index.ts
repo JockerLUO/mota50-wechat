@@ -40,3 +40,4 @@ export { DetailPanel, describeEffect, statCn, type BattleLike, type DetailTarget
 export { ItemBar, itemBoxHeight } from './item-bar';
 export { Pill, Toolbar } from './toolbar';
 export { FloorPanel } from './floor-panel';
+export { RunStrip, type RunInfo } from './run-strip';

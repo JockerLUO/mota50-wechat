@@ -34,7 +34,7 @@ import { shopCost, shopGain } from '../../core/shop.mjs';
 import { shopOptions } from './engine/shop';
 import { merchantOffers } from './engine/merchant';
 import { previewBattle } from './engine/vitals';
-import { DIRS, entityAt, tileAt, type GameState } from './state';
+import { DIRS, entityAt, entityKey, tileAt, type GameState } from './state';
 import { footprintAt, inFootprint } from './footprint';
 
 // ── 分数：带明细，便于诊断与调参 ────────────────────────────────────
@@ -504,7 +504,7 @@ export function monsterScore(state: GameState, data: GameData, monId: string, ct
     return !!pv && Number.isFinite(pv.hpLoss) && pv.hpLoss === 0;
   })();
   const parts: { label: string; value: number }[] = [
-    { label: noThreatPeek ? '金币（不构成理由）' : '金币', value: noThreatPeek ? 0 : goldScore }
+    { label: noThreatPeek ? '金币（不算收益）' : '金币', value: noThreatPeek ? 0 : goldScore }
   ];
 
   const guards = ctx.guards !== undefined ? ctx.guards : null;
@@ -516,7 +516,7 @@ export function monsterScore(state: GameState, data: GameData, monId: string, ct
       value: rawItemWorth(state, data, guards) * GUARD_SHARE
     });
   }
-  if (ctx.blocks) parts.push({ label: '挡路（通往下一层）', value: BLOCK_BONUS });
+  if (ctx.blocks) parts.push({ label: '主路径拦路', value: BLOCK_BONUS });
 
   if (!Number.isFinite(hpLoss)) {
     parts.push({ label: '打不动', value: UNREACHABLE_SCORE });
@@ -525,7 +525,7 @@ export function monsterScore(state: GameState, data: GameData, monId: string, ct
 
   const noThreat = hpLoss === 0;
   if (noThreat) {
-    parts.push({ label: '无威胁（不掉血）', value: NO_THREAT_SCORE });
+    parts.push({ label: '无威胁', value: NO_THREAT_SCORE });
   } else {
     parts.push({ label: '掉血代价', value: -hpLoss * m.hp });
   }
@@ -783,7 +783,99 @@ export const THRESHOLD = {
   npc: 0
 } as const;
 
-// ── 诊断 ────────────────────────────────────────────────────────────
+/**
+ * 三套刻度各自的一句话口径 —— 给**界面**读的。
+ *
+ * 为什么要放进 `score.ts` 而不是写在对话框组件里：它是刻度的定义，
+ * 而刻度的定义只有这一份。写在界面上就多出一个「改了 score.ts 忘了改文案」的
+ * 位置，而那种失配是**静默**的 —— 画面照旧好看，只是它说的已经不是算法在做的事。
+ *
+ * （与 `POLICY.ITEM_PROFIT` 那段注释同族：换了刻度必须同步问「谁还在读旧口径」。）
+ */
+export const SCALE_NOTE: Record<ScoreCategory, string> = {
+  item: '省下的血 —— 拿它前后，「接下来几层要打的怪」总掉血之差',
+  monster: '优先级 —— 金币 × 金价 − 掉血 × 血急迫度 + 守护 + 拦路（可正可负）',
+  npc: '金币余量 —— 手上金币 − 下一次成交价'
+};
+
+// ── 按层算分（唯一的「摊开一整层分数」实现）──────────────────────────
+//
+// ⚠️ 这一节的定位：**诊断、界面徽标、点击明细三处都必须从这里取数**。
+// 「分数在界面上是多少、诊断里是多少、AI 实际按多少行动」如果是三条路径，
+// 它们迟早会分叉，而分叉的表现是「看着都对、就是不一致」—— 最难查的一类。
+// 铁律 #54（判据的输入必须与决策的输入是同一个数）在界面上的那一半。
+
+export interface FloorScore {
+  /**
+   * 实体键 —— 与 `state.removed` / 棋盘 `EntityView.key` **同一套拼法**
+   * （用的是 `state.ts` 的 `entityKey()`，不是在别处再拼一遍字符串）。
+   */
+  key: string;
+  x: number;
+  y: number;
+  type: 'item' | 'monster' | 'npc';
+  id: string;
+  score: Score;
+}
+
+/**
+ * 把某一层「能看到的东西」的分数全算出来。
+ *
+ * `floor` 单列出来而不是用 `state.floor`：界面上「楼层浏览」时显示的层与勇者
+ * 所在层不同，而分数要跟着**画面**走。
+ *
+ * `costAt` 由调用方给（用**同一个** `reach`，别在这里重写一遍 Dijkstra）——
+ * 它在「显示的不是勇者所在层」时应当是 undefined：那一层的路上代价从勇者的
+ * 位置算出来是没有意义的。
+ */
+export function floorScores(
+  state: GameState,
+  data: GameData,
+  floor: number,
+  costAt?: (x: number, y: number) => number | undefined
+): FloorScore[] {
+  const out: FloorScore[] = [];
+  const blocking = blockingMonsters(state, data, floor);
+  for (const e of data.floors.get(floor)?.entities ?? []) {
+    const key = entityKey(floor, e.x, e.y, e.type, e.id);
+    if (state.removed.has(key)) continue;
+    if (e.type === 'item') {
+      out.push({
+        key,
+        x: e.x,
+        y: e.y,
+        type: 'item',
+        id: e.id,
+        score: itemScore(state, data, {
+          itemId: e.id,
+          // ⚠️ 这里曾经硬编码成 0 —— 于是诊断里每件道具都显示「路上代价 0」，
+          // 分数看着漂亮，而 AI 实际按带代价的分数行动。诊断与实际**必须**同一个数。
+          costHp: costAt?.(e.x, e.y) ?? 0,
+          guarded: guardianAt(state, data, floor, e.x, e.y) !== null
+        })
+      });
+    } else if (e.type === 'monster') {
+      out.push({
+        key,
+        x: e.x,
+        y: e.y,
+        type: 'monster',
+        id: e.id,
+        score: monsterScore(state, data, e.id, {
+          guards: guardedItemAt(state, data, floor, e),
+          blocks: blocking.has(`${e.x},${e.y}`)
+        })
+      });
+    } else if (e.type === 'npc') {
+      out.push({ key, x: e.x, y: e.y, type: 'npc', id: e.id, score: npcScore(state, data, e.id, floor) });
+    }
+  }
+  return out.sort(
+    (a, b) =>
+      CATEGORY_ORDER.indexOf(a.score.category) - CATEGORY_ORDER.indexOf(b.score.category) ||
+      b.score.total - a.score.total
+  );
+}
 
 /** 把当前层能看到的道具 / 怪 / NPC 的分数全算出来（`npm run autoplay:plan -- --scores` 用它） */
 export function scoreDump(
@@ -792,33 +884,5 @@ export function scoreDump(
   /** 「走到这一格要掉多少血」——由调用方给（用**同一个** `reach`，别在这里重写一遍） */
   costAt?: (x: number, y: number) => number | undefined
 ): Score[] {
-  const out: Score[] = [];
-  const floor = state.floor;
-  const blocking = blockingMonsters(state, data, floor);
-  for (const e of data.floors.get(floor)?.entities ?? []) {
-    if (state.removed.has(`${floor}:${e.x}:${e.y}:${e.type}:${e.id}`)) continue;
-    if (e.type === 'item') {
-      out.push(
-        itemScore(state, data, {
-          itemId: e.id,
-          // ⚠️ 这里曾经硬编码成 0 —— 于是诊断里每件道具都显示「路上代价 0」，
-          // 分数看着漂亮，而 AI 实际按带代价的分数行动。诊断与实际**必须**同一个数。
-          costHp: costAt?.(e.x, e.y) ?? 0,
-          guarded: guardianAt(state, data, floor, e.x, e.y) !== null
-        })
-      );
-    } else if (e.type === 'monster') {
-      out.push(
-        monsterScore(state, data, e.id, {
-          guards: guardedItemAt(state, data, floor, e),
-          blocks: blocking.has(`${e.x},${e.y}`)
-        })
-      );
-    } else if (e.type === 'npc') {
-      out.push(npcScore(state, data, e.id, floor));
-    }
-  }
-  return out.sort(
-    (a, b) => CATEGORY_ORDER.indexOf(a.category) - CATEGORY_ORDER.indexOf(b.category) || b.total - a.total
-  );
+  return floorScores(state, data, state.floor, costAt).map((e) => e.score);
 }

@@ -75,3 +75,20 @@ export interface BoardHooks {
   // 那颗指示点 2026-09-23 被玩家要求移除（见 Board.makeEntityView 里 standY 的说明），
   // hook 随之删掉 —— 留一个没人读的回调，下次读代码的人会以为脚下还有点。
 }
+
+/**
+ * 一枚分数徽标 —— 棋盘**消费**的形状，与 `game/score.ts` 的 `Score` 无关。
+ *
+ * 分开是有意的：渲染层只该知道「这里要画一个什么颜色的短字」，
+ * 不该知道「这个分是怎么算出来的」。算式属于 `app/score-overlay.ts`，
+ * 棋盘的职责边界仍然只到「画」为止 —— 同 `dialogue-panel.ts` 顶上的那段约定：
+ * 台词是引擎算好的，面板只负责摆好看。
+ */
+export interface ScoreBadgeView {
+  /** 与 `EntityView.key` 同一套拼法，供渲染层把徽标挂到对应的那一格 */
+  key: string;
+  /** 徽标上的短字（`-1000` / `2.5k` / `∞`）。渲染层只管画，不解释 */
+  text: string;
+  /** 文字色 —— 类别色，来自 `theme.ts` 的 `SCORE_STYLE[cat].chip` */
+  color: number;
+}

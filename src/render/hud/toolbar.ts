@@ -1,5 +1,5 @@
 /**
- * 工具栏 —— 棋盘下方那**四颗**等宽按钮（编辑视图 / 楼层浏览 / 自动通关 / 重开）。
+ * 工具栏 —— 棋盘下方那**四颗**等宽按钮（计分 / 楼层浏览 / 自动通关 / 重开）。
  *
  * 从 `hud.ts` 拆出来的。这里的核心是一个**可复用按钮**（`Pill`）：
  * 工具栏用它、对话框脚部也用它，所以它必须和工具栏本身分得开
@@ -18,6 +18,13 @@
  *    横向几何变了，**凡抄过按钮坐标的地方都要跟着改** —— A13 就抄了
  *    （`20 + 120 + 10 + 60`），改完之后那个点落在按钮之间的缝上、静默点空。
  *    所以这里导出 `buttonRects()`，判据按 `id` 取真实几何。
+ *
+ * ⚠️ 2026-09-27：第一颗从「编辑视图」改成 **「计分」**（用户要求）。
+ *    **横向几何没动**（还是四颗各 87），但语义整个换了：
+ *    以前它只是「把埋在墙里的隐藏道具显示出来」，现在是「真实关卡审核视图」——
+ *    每只怪物 / NPC / 道具脚下显示自动通关算法给出的分数。隐藏实体顺带一起显示
+ *    （它们是**有分数的**，不显示就永远看不到那一行的分）。见
+ *    `src/app/score-overlay.ts` 与 `docs/ui-prototype.md §35`。
  */
 
 import { Container, Graphics, Text } from 'pixi.js';
@@ -134,13 +141,13 @@ export class Pill extends Container {
 }
 
 export class Toolbar extends Container {
-  readonly revealPill: Pill;
+  readonly scorePill: Pill;
   readonly browsePill: Pill;
   readonly autoPill: Pill;
   readonly restartPill: Pill;
 
   constructor(handlers: {
-    onToggleReveal: () => void;
+    onToggleScore: () => void;
     onBrowse: () => void;
     onAuto: () => void;
     onRestart: () => void;
@@ -163,7 +170,7 @@ export class Toolbar extends Container {
       this.addChild(p);
       return p;
     };
-    this.revealPill = mk('编辑视图', 0, handlers.onToggleReveal);
+    this.scorePill = mk('计分', 0, handlers.onToggleScore);
     this.browsePill = mk('楼层浏览', 1, handlers.onBrowse);
     this.autoPill = mk('自动通关', 2, handlers.onAuto);
     this.restartPill = mk('重开', 3, handlers.onRestart);
@@ -177,20 +184,37 @@ export class Toolbar extends Container {
    * 点击静默失效 —— 而症状是「返回键失灵」，看起来像功能坏了，不是布局变了。
    * 数字写两处的病，这里用一个取值接口治掉。
    */
-  buttonRects(): Array<{ id: 'reveal' | 'browse' | 'auto' | 'restart'; label: string; x: number; y: number; w: number; h: number }> {
+  buttonRects(): Array<{ id: 'score' | 'browse' | 'auto' | 'restart'; label: string; x: number; y: number; w: number; h: number }> {
     return [
-      { id: 'reveal', pill: this.revealPill },
+      { id: 'score', pill: this.scorePill },
       { id: 'browse', pill: this.browsePill },
       { id: 'auto', pill: this.autoPill },
       { id: 'restart', pill: this.restartPill }
     ].map(({ id, pill }) => ({
-      id: id as 'reveal' | 'browse' | 'auto' | 'restart',
+      id: id as 'score' | 'browse' | 'auto' | 'restart',
       label: pill.labelText,
       x: pill.x,
       y: pill.y,
       w: pill.boxW,
       h: LAYOUT.toolbar.h
     }));
+  }
+
+  /**
+   * 计分视图：按钮高亮 + 文案就地变身。
+   *
+   * ⚠️ 文案**必须**跟着变（「计分」↔「关闭计分」）。只高亮不改字的话，
+   *    判据与玩家都只能靠颜色猜当前是开还是关 —— 而颜色在灰度截图里是看不见的。
+   *    与 `setAuto` / `setBrowsing` 同一套做法。
+   */
+  setScore(on: boolean): void {
+    this.scorePill.setLabel(on ? '关闭计分' : '计分');
+    this.scorePill.setActive(on);
+  }
+
+  /** 计分那颗按钮此刻的文案。供 `__probe()` 断言（读 `labelText`，不是 Pixi 的 `label`） */
+  get scoreLabel(): string {
+    return this.scorePill.labelText;
   }
 
   /**

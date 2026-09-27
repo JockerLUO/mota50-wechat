@@ -183,6 +183,29 @@ export const GRADE_STYLE: Record<string, { label: string; color: number }> = {
 };
 
 /**
+ * 计分视图的类别配色 —— **分数按类别上色**，三类刻度不共用颜色。
+ *
+ * ## 为什么要两个颜色而不是一个
+ *
+ * 同一份类别色要在两种底色上出现，而它们的明度要求是相反的：
+ *   · `color`  画在**白卡片**上（对话框的职能章、算式行的强调）—— 要够深，否则糊成一片；
+ *   · `chip`   画在**深色徽标底**上（棋盘格子里那枚 32px 的小牌子）—— 要够亮，
+ *     否则深压深，缩到手机上就是一个看不清的黑块。
+ *
+ * 一个颜色顶两处，必然有一处不合格，而「不合格」在这里是**看不清分数** ——
+ * 那正是这个功能存在的理由。所以宁可多一个字段。
+ *
+ * 三类的取色与别处**同源**（不另立一套）：
+ *   道具 = 道具栏的主题色（金）、怪物 = 危险色（红）、NPC = 安全色（绿，金币刻度）。
+ * 于是「棋盘上金色的数字是道具分」这条规律，和面板配色是同一套语言。
+ */
+export const SCORE_STYLE: Record<'item' | 'monster' | 'npc', { label: string; color: number; chip: number }> = {
+  item: { label: '道具', color: T.gold, chip: 0xfbbf24 },
+  monster: { label: '怪物', color: T.danger, chip: 0xfca5a5 },
+  npc: { label: 'NPC', color: T.ok, chip: 0x6ee7a8 }
+};
+
+/**
  * NPC 职能标识 —— 颜色与职能名的**单一来源**。
  *
  * 三处消费它：棋盘上 NPC 脚下的名牌底、棋盘上的职能徽章、对话框头部的职能章。
