@@ -154,10 +154,10 @@ dist-minigame/           小游戏产物（不入库）：game.js 入口 + boot.
 | `npm run assets` | 由 `assets/raw` 重建图集与 `MANIFEST.json` |
 | `npm run import` | 由归档参考源码重建 `data/` |
 | `npm run validate` | 数据校验器 |
-| `npm run verify:minigame` | 无 DOM 环境实测（26 项判据 = 21 常驻 + 5 取证，退出码 0/1） |
-| `npm run verify:dom` | 有原生 DOM 宿主实测（14 项判据，退出码 0/1） |
-| `npm run verify:all` | 以上两套 + `verify:visual` 一键跑完 |
-| `npm run verify:visual` | 真实 WebGL 渲染回归（8 项判据，退出码 0/1） |
+| `npm run verify:minigame` | 无 DOM 环境实测（37 项常驻判据；取证构建下另加 6 项 = 43，退出码 0/1） |
+| `npm run verify:dom` | 有原生 DOM 宿主实测（20 项判据，退出码 0/1） |
+| `npm run verify:all` | 五套一键跑完（`sandbox` 14 + `visual` 36 + `minigame` 37 + `dom` 20 + `url-shim` 2 = 109） |
+| `npm run verify:visual` | 真实 WebGL 渲染回归（36 项判据 = A1–A25 + A1b，退出码 0/1） |
 | `npm run shot` | 真机渲染截图取证 |
 | `npm run typecheck` | `tsc --noEmit` |
 

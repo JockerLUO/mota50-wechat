@@ -19,7 +19,7 @@ import { newGame, step } from '../../src/game/engine';
 import { applyTrigger } from '../../src/game/engine/events';
 import { debugReach } from '../../src/game/planner';
 import { arriveOnFloor } from '../../src/game/engine/travel';
-import { npcPool } from '../../src/game/dialogue';
+import { npcLines } from '../../src/game/dialogue';
 import { DIRS, entityKey, tileAt } from '../../src/game/state';
 import type { GameData, GameState } from '../../src/data';
 
@@ -429,33 +429,53 @@ export function zone1Verifications(): Zone1Check[] {
     );
   }
 
-  // ── Z12 小偷就在那间牢房里，且「对话两次」正是两句关键信息 ──
+  // ── Z12 小偷就在那间牢房里，且他**唯一的那一段**必须四类关键信息齐全 ──
   //
   // 原版台词与攻略：勇者「被扔到我这个房间」，小偷先说越狱、再说铁剑 5 楼/铁盾 9 楼。
-  // 这里三条一起验：① 实体真的在第 2 层牢房内；② 两次搭话分别给出「暗道/越狱」与
-  // 「铁剑/铁盾」；③ 撞得通（NPC 在牢房里，四周全是墙+道具，落脚点必须算上道具格）。
+  //
+  // ⚠️ 2026-09-27 复核改写。他标了 `lifecycle: 'once'`（说完就从地图上消失）——
+  //    **没有第二次搭话**，所以判据不能再验「两次分别说什么」，而要验
+  //    **那唯一的一段有没有一次说全**。
+  //
+  //    改写的原因是一次实测踩到的真事：上一版把「暗道就在这屋子左边那面墙上」
+  //    当成「与剧情第 2 句重复」删了，而剧情句只说「我刚完成逃跑的**暗道**」、
+  //    **从没说它在哪面墙** —— 玩家被关在四面是墙的牢房里（上/左/下是墙，右是牢门），
+  //    删掉这句就只能挨个撞墙试（这正是「缺了会导致卡关」那一类）。已恢复。
+  //    ⇒ 所以**位置信息必须单独占一条断言**：它与「是什么」不是同一条信息。
+  //
+  //    信源用 `npcLines()`（引擎真正走的取值链）而不是 `npcPool()` —— 后者是
+  //    **常驻** 的分支（取模轮换），对 `once` 来说根本不是它跑的代码。
   {
     const ent = data.floors.get(2)!.entities.find((e) => e.type === 'npc' && e.id === 'thief');
     const inCell = !!ent && CELL.some(([x, y]) => x === ent.x && y === ent.y);
-    const pool = npcPool(data, 'thief', 2);
-    const first = pool[0]?.text ?? '';
-    const second = pool[1]?.text ?? '';
     // ⚠️ 找不到小偷要**报红**，不能靠 `ent!.x` 崩掉：抛错会把 Z6–Z13 整组一起打断，
     //    于是「一条数据被改坏了」看起来像「八条判据都不见了」—— 而缺失的判据在报告里
     //    是**看不见**的（`--prison` 之外的调用方只遍历返回值）。同一族问法见铁律 #16
     //    （反向断言必须带探针，探针为 0 要报红不是跳过）。
-    const name = 'Z12 小偷就在第 2 层牢房里，两次搭话分别给出「暗道越狱」与「铁剑 5 楼 / 铁盾 9 楼」';
+    const name =
+      'Z12 小偷就在第 2 层牢房里，且那唯一的一段里「越狱 / 暗道在哪面墙 / 铁剑 5 楼 / 铁盾 9 楼」四类信息齐全';
     if (!ent) {
       add(name, false, `第 2 层没有任何 thief 实体 —— 他本该和勇者关在同一间牢房 ${JSON.stringify(CELL)} 里`);
     } else {
       const s = newGame(data);
+      const key = entityKey(2, ent.x, ent.y, 'npc', 'thief');
+      const seg = npcLines(s, data, 'thief', 2, key);
+      const all = seg.map((l) => l.text).join('');
       const talk = talkTo(s, data, 2, ent.x, ent.y);
+      // 四类信息各是一条独立的「位置 / 是什么」，缺哪条就在 detail 里点名
+      const need: [string, string][] = [
+        ['越狱', '越狱引导'],
+        ['左边那面墙', '暗道在**哪一面墙** —— 全塔只有这一句说，删了他就没法从别处补'],
+        ['铁剑', '铁剑在第 5 层'],
+        ['铁盾', '铁盾在第 9 层']
+      ];
+      const missing = need.filter(([kw]) => !all.includes(kw)).map(([kw, why]) => `「${kw}」（${why}）`);
       add(
         name,
-        inCell && first.includes('暗道') && first.includes('越狱') &&
-          second.includes('铁剑') && second.includes('铁盾') && talk.startsWith('talk'),
-        `小偷在 (${ent.x},${ent.y})（在牢房内 ${inCell ? '✓' : '✗'}）· ` +
-          `第 1 句「${first.slice(0, 22)}…」· 第 2 句「${second.slice(0, 22)}…」· 撞他：${talk}`
+        inCell && missing.length === 0 && talk.startsWith('talk') && seg.length > 1,
+        `小偷在 (${ent.x},${ent.y})（在牢房内 ${inCell ? '✓' : '✗'}）· 段 ${seg.length} 句 · ` +
+          `缺 ${missing.length ? missing.join('、') : '（无）'} · 撞他：${talk}\n` +
+          seg.map((l, i) => `         ${i + 1}. ${l.text}`).join('\n')
       );
     }
   }

@@ -23,16 +23,19 @@
  *      同时看到「该走的走了」和「该留的还在」**（#16：反向断言要带探针）。
  *      只有一边成立时这条报红，而不是静静通过。
  *
- *   ③ **整段被截断**：一次性 NPC 的段是**多句**（小偷的越狱三句实测 7 行），
+ *   ③ **整段被截断**：一次性 NPC 的段是**多句**（小偷的越狱段 = 4 句 / 实测 8 行），
  *      对话框 `MAX_LINES` 放不下就切尾巴 —— 玩家看不到「后面还有」。
  *      所以这里把**真正画出来的那几行**（`dialogueLines`）拼起来，与数据库里的
  *      整段逐字对撞：折行只切位置、不丢字符，所以两者必须逐字相等。
  *      ⚠️ 这一条不抄 `MAX_LINES`：写死上限会在卡片改高之后变成一条假绿。
+ *      ⚠️ 但 A25a 只验**最长的那一个**段（取最长的才能把①③顶到极限），
+ *      所以另外有 **A25d** 把**每一段**都过一遍 —— 见那里的注释。
  *
  * ## 为什么用「最长的那一段」当靶子
  *
  * 整段长度是本判据最关心的量，取最长的那个实体才能把①③顶到极限。目标在 Node 侧
  * 从 `data/npcs.json` 选（不写死 id：台词一改，写死的靶子就悄悄不再是最长的那一个）。
+ * （2026-09-27 实测：31 个一次性段里最长的就是第 2 层小偷的 4 句 / 8 行。）
  */
 
 const fs = require('node:fs');
@@ -164,14 +167,18 @@ async function run(ctx) {
   const gotSeg = onceRes.lines.join('');
   if (!onceRes.opened) onceBad.push(`撞上去没开对话框（__talk 返回「${onceRes.ret}」）`);
   if (gotSeg !== wantSeg) {
-    // 只差尾巴 = 截断；完全不同 = 台词取值链走错了
+    // 只差尾巴 = 截断；完全不同 = 台词取值链走错了。
+    // ⚠️ 这里**不**下「就是截断」的结论：本条读不到容量（它有意不抄 `MAX_LINES`），
+    //    而**数据不同步**（改了 data 忘了 build，铁律 #60）也会长成「旧数据是前缀」的样子。
+    //    所以措辞只说事实 + 指向能分辨的那一条（A25d 带容量对照）。
     onceBad.push(
       gotSeg.startsWith(wantSeg)
         ? `框里比数据库多出内容（${gotSeg.length} > ${wantSeg.length} 字）`
         : !gotSeg.length
           ? `框里一行都没有`
-          : `整段被截断/取错了：应 ${wantSeg.length} 字，实际画出 ${gotSeg.length} 字 —— ` +
-            `多出来或丢掉的那部分：「${wantSeg.startsWith(gotSeg) ? wantSeg.slice(gotSeg.length) : gotSeg.slice(0, 40) + '…'}」`
+          : `整段对不上：应 ${wantSeg.length} 字，画出 ${gotSeg.length} 字 —— 差的是「` +
+            `${wantSeg.startsWith(gotSeg) ? wantSeg.slice(gotSeg.length, gotSeg.length + 40) : gotSeg.slice(0, 40)}…」` +
+            `（是「装不下被切了尾巴」还是「取错了数据」看 A25d，它带容量对照）`
     );
   }
   if (!onceRes.spriteBefore) onceBad.push(`搭话之前渲染树里就没有这个 NPC（key=${onceRes.key}）—— 前提取错了，断言无效`);
@@ -259,6 +266,102 @@ async function run(ctx) {
     `一次性 ${onceList.length} / 常驻 ${persistList.length} —— 任一边太少都说明地图或 NPC 表变了：` +
       `本判据只在「足够多」时才谈得上有代表性`
   );
+
+  // ══════════════════════════════════════════════════════════════════
+  // ④ 每一段都塞得进卡片（不只是最长的那一个）
+  // ══════════════════════════════════════════════════════════════════
+  //
+  // 为什么单独一条：① 只验**最长**的那一个段，而面板是 `rows.slice(0, MAX_LINES)`
+  // —— 超出的部分**静默丢掉**（玩家看不到「后面还有」）。日后把卡片改矮一点，
+  // 最先捅破上限的**不一定**是当时最长的那个段，而 ① 的靶子是按长度自动选的，
+  // 只会跟着「最长」跑。
+  //
+  // 做法上有意避开两件容易腐坏的事：
+  //   · **容量不硬编码** —— 拿 40 行长台词喂给真面板，数它画出几行；上限
+  //     从此由系统自己报出。写死 9 会在卡片改高之后变成一条**假绿**。
+  //   · **折行不重写** —— 把每一段原样交给面板 `open()`，再读它真正画出来的
+  //     行（`dialogue.lines`）。在判据里再写一份 wrap 就是同一件事的第二份实现
+  //     （#66：动态判据看不见「以后又写了第二份」，而两份各自都能跑通）。
+  //
+  // ⚠️ 这一条**不用** `__talk`、也不经过 `__goto`：它只碰面板，不碰棋盘与背包，
+  //    所以不会污染后面任何判据的状态（对照 #63：调试钩子搬人会弄脏背包）。
+  const allSegs = onceList.map((p) => ({
+    at: `${p.floor} 层 ${p.id}(${p.x},${p.y})`,
+    sentences: p.seg
+  }));
+  const fitRes = await page.evaluate((segs) => {
+    const g = window.mota.game;
+    const synthetic = { role: { label: '—', color: 0x888888 } };
+    // ① 让面板自己报出容量
+    g.dialogue.open({
+      ...synthetic,
+      name: '容量探针',
+      lines: Array.from({ length: 40 }, (_, i) => `容量探针第 ${i + 1} 行`)
+    });
+    const cap = g.dialogue.body.children.length;
+    g.dialogue.close();
+    // ② 每一段原样过一遍，逐字对撞
+    const over = [];
+    let maxRows = 0;
+    let maxAt = '';
+    for (const s of segs) {
+      g.dialogue.open({ ...synthetic, name: '整段探针', lines: s.sentences });
+      const rows = g.dialogue.lines;
+      const drawn = rows.join('');
+      const want = s.sentences.join('');
+      g.dialogue.close();
+      if (rows.length > maxRows) {
+        maxRows = rows.length;
+        maxAt = s.at;
+      }
+      if (drawn !== want) {
+        over.push({
+          at: s.at,
+          rows: rows.length,
+          got: drawn.length,
+          want: want.length,
+          missingTail: want.startsWith(drawn)
+        });
+      }
+    }
+    return { cap, over, n: segs.length, maxRows, maxAt };
+  }, allSegs);
+
+  check(
+    `A25d 每一段都塞得进对话框：${fitRes.n} 个一次性段全部逐字画出（容量 ${fitRes.cap} 行由面板自己报出；` +
+      `最长 ${fitRes.maxRows} 行 —— ${fitRes.maxAt}）`,
+    fitRes.over.length === 0,
+    fitRes.over
+      .slice(0, 3)
+      .map(
+        (o) =>
+          `${o.at}：画了 ${o.rows} 行 ${o.got}/${o.want} 字` +
+          (o.missingTail ? '（**尾巴被截断**，玩家看不到「后面还有」）' : '（取错了，不是截断）')
+      )
+      .join(' ｜ ') || `容量 ${fitRes.cap}、最长 ${fitRes.maxRows}`
+  );
+
+  // ── 探针验收（2026-09-27，铁律 #38/#59：新判据必须证明它会红）──────────────
+  //
+  // 造法 —— 把**两段**同时加长到超过容量：`thief.talkByFloor["2"]` 8 → 10 行、
+  // `princess.talkByFloor["26"]` 2 → ≥10 行。⚠️ 改 data 之后**必须 rebuild**：
+  // 期望值在 Node 侧读 `data/npcs.json`，而 A25a 让**浏览器里**的人说话、读的是
+  // `dist/` 里打包的那份副本（#30）—— 不 rebuild 只会量到「数据不同步」这个假红。
+  // 探针脚本 `tools/probe-a25d-dialogue-fit.mjs`（`npm run probe:dialogue-fit`；
+  // 快照 + 多重还原 + 逐字节复查，铁律 #64）—— 它会写 `data/npcs.json`，
+  // 所以**刻意不进 `verify:all`**（同 `probe:prison` / `probe:score-unify`）。
+  //
+  // 实测：
+  //
+  //   ❌ A25a 只报 **1** 条 —— 第 26 层 princess(5,5)（靶子按长度**自动换到它**了）
+  //   ❌ A25d 报 **2** 条 —— 2 层 thief(3,4)：画 9 行 203/220 字 ｜
+  //                          26 层 princess(5,5)：画 9 行 153/221 字
+  //                          两条都点出「**尾巴被截断**，玩家看不到『后面还有』」
+  //
+  // ⇒ 这就是 A25d 不可替代的证据：A25a 的靶子只有**一个**（当下最长的那段），
+  //   超限的有两条时它也只说得出第一条；而「**哪几段**装不下」正是修的时候要的清单。
+  //   反过来说：若探针下两条报的是**同一条**，那 A25d 就该删掉（#38）。
+  //   （同一次探针顺带证明 A25a 的措辞原本把「切了尾巴」与「取错数据」混成一句，已分开。）
 }
 
 module.exports = { id: 'a25-npc-lifecycle', title: 'A25 NPC 生命周期：一次性说完就走，常驻留着', run };
