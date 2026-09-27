@@ -30,7 +30,7 @@
 import { Application, Container } from 'pixi.js';
 import { host } from '../host';
 import { loadData, type GameData, type Stat } from '../data';
-import { createInitialState, entityAt, pushLog, tileAt, type Dir, type GameState } from '../game/state';
+import { createInitialState, entityAt, entityKey, pushLog, tileAt, type Dir, type GameState } from '../game/state';
 import {
   arriveOnFloor,
   buyStat,
@@ -53,6 +53,7 @@ import {
   FloorPanel,
   ItemBar,
   LAYOUT,
+  RunStrip,
   StatusBar,
   Toolbar,
   setTextResolution,
@@ -72,6 +73,15 @@ import {
 } from '../game/autoplay';
 import { buildDeathOverlay } from './death-overlay';
 import { dirToward, enterable, pathTo, type Cell } from './pathing';
+import {
+  badgesOf,
+  scoreExplain,
+  scoreList,
+  scoreName,
+  scoreRole
+} from './score-overlay';
+import type { FloorScore } from '../game/score';
+import type { ScoreBadgeView } from '../render/board/types';
 import { layoutSnapshot, panelsSnapshot, probeSnapshot, type LayoutSnapshot, type ProbeView } from './probe';
 
 /**
@@ -105,6 +115,8 @@ export class Game {
   private dialogue: DialoguePanel;
   private merchantPanel: MerchantPanel;
   private shopPanel: ShopPanel;
+  /** 底部那条「自动跑了多少步」—— 见 `hud/run-strip.ts` */
+  private runStrip: RunStrip;
   private deathLayer = new Container();
 
   private walking = false;
@@ -118,6 +130,33 @@ export class Game {
   private auto: AutoMemory | null = null;
   /** 自动通关的出手计时器（累加 ticker 的 deltaMS） */
   private autoAccum = 0;
+  /**
+   * 自动通关**已经出手多少步** —— 这是界面上那条「自动 128 步」读的数。
+   *
+   * 为什么不直接用 `state.stats.steps`：那个数里混着玩家自己走的步，
+   * 而这条读数要回答的是「AI 走到第几步时做错了」—— 混进玩家的步数就对不上了。
+   * 每一次 `performAutoAction()` 记 1（暂停的拍子不计，见 `tickAuto`）。
+   */
+  private autoTicks = 0;
+  /**
+   * 这一局有没有跑过自动通关。
+   *
+   * 与 `auto !== null` 分开：**停下之后读数不能消失**。自动通关判定
+   * 「走投无路」自己停下时，玩家正要读这个数 —— 那一刻把它清掉等于擦掉证据。
+   */
+  private autoRan = false;
+  /** 计分视图的分数清单（徽标与点击明细共用这一份，见 `syncScores`） */
+  private scoreEntries: FloorScore[] = [];
+  private scoreBadges: ScoreBadgeView[] = [];
+  /**
+   * 上一份分数清单是按什么局面算的。
+   *
+   * `sync()` 每走一步都会被调到，而分数的输入是「整层的怪 + 属性 + 位置 + 钥匙」——
+   * 没有这个签名的话，每一步都要跑一遍 121 格的 Dijkstra 与几十次战斗预览。
+   * 签名里少列一项的症状是「吃了宝石，AI 的分变了、界面上的分没变」——
+   * 所以宁可多列：`removed` / `terrainPatch` / `monsterSwap` 都进签名。
+   */
+  private scoreSig: string | null = null;
   /**
    * 最近一次「棋盘收到点击」的格子坐标（不论后续是否真的走成）。
    *
@@ -158,7 +197,7 @@ export class Game {
     this.detail = new DetailPanel();
     this.itemBar = new ItemBar((id) => this.onUseItem(id));
     this.toolbar = new Toolbar({
-      onToggleReveal: () => this.toggleReveal(),
+      onToggleScore: () => this.toggleScore(),
       // 同一颗按钮两种语义：平时开楼层面板，浏览态下就是「返回」
       onBrowse: () => (this.browseFloor !== null ? this.returnFromBrowse() : this.openFloorPanel('browse')),
       onAuto: () => this.toggleAuto(),
@@ -180,6 +219,7 @@ export class Game {
       (s) => this.onShopBuy(s),
       () => this.closeModal()
     );
+    this.runStrip = new RunStrip();
 
     // 顺序即层序：背景在最底，两个交易浮层与对话框必须排在棋盘与 HUD 之后，
     // 遮罩才挡得住下层点击
@@ -190,6 +230,9 @@ export class Game {
       this.toolbar,
       this.detail,
       this.itemBar,
+      // 底部读数条排在道具栏之后（它贴在屏幕底边）、但在浮层之前 ——
+      // 浮层弹出时要把整屏盖住，读数条不该浮在遮罩之上
+      this.runStrip,
       this.floorPanel,
       this.dialogue,
       this.merchantPanel,
@@ -275,10 +318,18 @@ export class Game {
       browseFloor: this.browseFloor,
       lastBoardClick: this.lastBoardClick,
       dialogueOpen: this.dialogue.isOpen,
+      dialogueLines: this.dialogue.lines,
       toolbarBrowseLabel: this.toolbar.browseLabel,
       toolbarAutoLabel: this.toolbar.autoLabel,
+      toolbarScoreLabel: this.toolbar.scoreLabel,
       toolbarButtons: this.toolbar.buttonRects(),
       autoRunning: this.auto !== null,
+      autoSteps: this.autoTicks,
+      scoreView: this.board.scoreView,
+      scoreBadges: this.scoreBadges,
+      runStrip: this.runStrip.visible
+        ? { text: this.runStrip.labelText, visible: true }
+        : { text: '', visible: false },
       renderer: this.app.renderer,
       backdrop: this.backdrop,
       rects: { hud: this.status.cardRect, detail: this.detail.cardRect, items: this.itemBar.cardRect },
@@ -377,6 +428,58 @@ export class Game {
   }
 
   /**
+   * 开发用：开 / 关计分视图，等价于点工具栏第一颗「计分」。
+   *
+   * 与 `__auto` 同一个理由：判据里既要能「开始」也要能「停下」，
+   * 而靠 `tap()` 点按钮时，一旦几何变了就会点到缝里 ——
+   * 于是「功能坏了」和「测试点歪了」长得一模一样。
+   * 所以「按钮够得着」由 A24 用真实点击验一次，「视图行为」由这条验。
+   */
+  __scoreView(on?: boolean): string {
+    const want = on ?? !this.board.scoreView;
+    if (want !== this.board.scoreView) this.toggleScore();
+    return this.board.scoreView ? 'on' : 'off';
+  }
+
+  /**
+   * 开发用：点棋盘某一格（与玩家点下去**同一条路**）。
+   *
+   * 返回点完之后 `modal` 是什么 —— 判据据此断言「计分视图下点目标会弹出算式」，
+   * 而不用去猜对话框是不是真的开了。
+   */
+  async __click(x: number, y: number): Promise<string> {
+    await this.onBoardClick(x, y);
+    return this.modal ?? 'none';
+  }
+
+  /**
+   * 开发用：当前显示层的**三类分数原始清单**（徽标与点击明细共用的那一份）。
+   *
+   * 判据拿它与 `board.__scoreBadges()`（画出来的）对撞：数字对不上、
+   * 或者某一枚漏画了，都会在这里露出来。返回的是**明细**而不是只有总分 ——
+   * 算式的每一段也要能被断言（用户点名要的就是「看得见怎么算的」）。
+   */
+  __scores(): Array<{
+    key: string;
+    type: string;
+    id: string;
+    x: number;
+    y: number;
+    total: number;
+    parts: Array<{ label: string; value: number }>;
+  }> {
+    return this.scoreEntries.map((e) => ({
+      key: e.key,
+      type: e.type,
+      id: e.id,
+      x: e.x,
+      y: e.y,
+      total: e.score.total,
+      parts: e.score.parts.map((p) => ({ ...p }))
+    }));
+  }
+
+  /**
    * 开发用：直接给金币。
    * 45 层商人要 1000、47 层地震卷轴要 3000 —— 靠打怪攒够这些钱要通掉大半座塔，
    * 而这几层恰恰是交易界面最需要验证的地方。
@@ -407,26 +510,64 @@ export class Game {
    * 所以截图里看到的就是玩家会看到的那一帧。
    */
   __talk(npcId: string): string {
+    // ⚠️ 要滤掉**已经离场**的实体：`lifecycle: 'once'` 的 NPC 搭过话就从地图上
+    // 消失了（`step.ts`）。不滤的话这里会挑中那个已经不在的人 —— 勇者「撞」过去
+    // 只是走到那一格上，对话框根本没开，而返回值照旧写着「搭话 xxx（第 2 次）」，
+    // 于是读 `dialogue.body` 的判据量到的是**上一个 NPC 的残留行**（A15 就踩这个）。
+    // 滤掉之后同一层的两个同类 NPC（第 2 层两个智者）也能各自被量到。
     const es = (this.data.floors.get(this.state.floor)?.entities ?? []).filter(
-      (e) => e.type === 'npc' && e.id === npcId
+      (e) =>
+        e.type === 'npc' &&
+        e.id === npcId &&
+        !this.state.removed.has(entityKey(this.state.floor, e.x, e.y, 'npc', e.id))
     );
-    if (es.length === 0) return `${npcId} 不在这层`;
+    if (es.length === 0) return `${npcId} 不在这层（或已离场）`;
     const e = es[0];
-    const before = this.state.talked[npcId] ?? 0;
-    // 先站到它旁边。相邻四格可能被墙/门占着，能站哪格就站哪格
-    const spots = [
+    const key = entityKey(this.state.floor, e.x, e.y, 'npc', e.id);
+    const before = this.state.talked[key] ?? 0;
+    //
+    // 先站到它旁边。相邻四格可能被墙 / 门 / 假墙 / 别的实体占着，能站哪格就站哪格。
+    //
+    // ⚠️ 这里要**三档**，缺一档就会有 NPC **永远采不到**（2026-09-27 实测 5 个：
+    // 第 2 层小偷、第 12 层塔角的商人+智者、第 26 层公主、第 38 层智者）。
+    // 而「采不到」的后果不是报错，是**判据静默少采一位** —— A15 只管「采到的那些
+    // 折不折行」，少采一个人它照样绿。
+    //
+    //   ① 玩家**当下**真能站：`enterable(..., false)`（非假墙、非楼梯、没人占）；
+    //   ② 玩家破开假墙 / 绕开门之后能站：`enterable(..., true)`，即**目标格口径**
+    //      （只查地形可通行）。第 12 层那两位卡在塔角：左 / 上出界、下是墙、
+    //      右是**假墙**（`w` 在 tiles.json 里 `passable: true`，撞一下即破）——
+    //      ① 档四邻全空，② 档正好给出「破墙之后站的那一格」这个终态；
+    //   ③ 四周连地形都不通，只能**直接放过去**。第 26 层的公主被一圈岩浆封着
+    //      （(4,5)(6,5)(5,4)(5,6) 四格全是 `~`），她是有解的 —— 第 35 层的
+    //      **雪花**（`clearTerrain terrain:5 scope:currentFloor`）清掉那圈岩浆后，
+    //      这一格就是玩家站的位置。③ 档复现的正是那个终态，不是「走进岩浆」。
+    //
+    // 三档都空才算真站不下（那说明这个实体压根没有相邻格，比如落点在棋盘外）。
+    const nbrs = [
       { x: e.x - 1, y: e.y },
       { x: e.x + 1, y: e.y },
       { x: e.x, y: e.y - 1 },
       { x: e.x, y: e.y + 1 }
-    ].filter((s) => enterable(this.state, this.data, s.x, s.y, false));
-    if (spots.length === 0) return `${e.id} 四周都站不下人`;
-    this.state.pos = { ...spots[0] };
+    ];
+    const pick = (isTarget: boolean) =>
+      nbrs.find((s) => enterable(this.state, this.data, s.x, s.y, isTarget));
+    const r1 = pick(false);
+    const r2 = r1 ? null : pick(true);
+    const spot =
+      r1 ??
+      r2 ??
+      nbrs.find((s) => s.x >= 0 && s.y >= 0 && s.x <= 10 && s.y <= 10) ??
+      null;
+    if (!spot) return `${e.id} 四周都站不下人`;
+    // 降档要在返回值里看得见 —— 否则「采到了」分不清是站在地上采的还是越位采的
+    const off = !r1 ? (r2 ? `（越位站位：${spot.x},${spot.y} 需先破墙/开门）` : `（越位站位：${spot.x},${spot.y} 需先清地形）`) : '';
+    this.state.pos = { ...spot };
     this.board.setHeroPos(this.state.pos.x, this.state.pos.y, false);
     const d = dirToward(this.state.pos, { x: e.x, y: e.y });
     if (!d) return '站不到身侧';
     this.doStep(d);
-    return `搭话 ${npcId}（第 ${before + 1} 次）`;
+    return `搭话 ${npcId}（第 ${before + 1} 次）${off}`;
   }
 
   // ── 输入 ──────────────────────────────────────────────────────────
@@ -496,6 +637,22 @@ export class Game {
     this.lastBoardClick = { x, y };
     if (this.auto) this.stopAuto('玩家接管');
     if (this.walking || this.state.dead || this.browseFloor !== null || this.modal !== null) return;
+
+    //
+    // 计分视图下，点到**有东西的格子**就是「看它的分」—— 不驱动勇者。
+    //
+    // 这条改的是点击的语义，值得写清楚为什么可以这么改：计分视图本身是
+    // **审核模式**（看算法给的价，而不是玩），此时「点一下把勇者挪过去」既不是
+    // 玩家想要的，还会顺手改变局面、把刚才读到的那一批分全部作废。
+    // 点空格仍然照常寻路 —— 想挪人就去点空地。
+    //
+    if (this.board.scoreView) {
+      const entry = this.scoreAtCell(x, y);
+      if (entry) {
+        this.openScoreDialog(entry);
+        return;
+      }
+    }
 
     const path = pathTo(this.state, this.data, x, y);
     if (!path || path.length === 0) {
@@ -582,6 +739,10 @@ export class Game {
     }
     this.auto = createAutoMemory();
     this.autoAccum = 0;
+    // 底部读数从 0 起算（「已自动运行多少步」是**这一次**的），
+    // 但 `autoRan` 一旦为真就再也不回到 false —— 停下的那一刻读数要留着
+    this.autoTicks = 0;
+    this.autoRan = true;
     this.toolbar.setAuto(true);
     pushLog(this.state, '自动通关开始（再点一次「停止自动」可随时接手）。', 'info');
     this.sync();
@@ -623,6 +784,10 @@ export class Game {
   private performAutoAction(): void {
     const mem = this.auto;
     if (!mem) return;
+    // 先记数再出手：这样底部读数里的 N 就是**正在执行的这一步**的序号，
+    // 「第 N 步做错了」可以直接对着它复现（headless 报告也是这个口径）。
+    // 只在 `tickAuto` 真正出手时累加 —— 被浮层/浏览态挡下的拍子不计（那里提前 return 了）。
+    this.autoTicks += 1;
     const action: AutoAction = decideAutoAction(this.state, this.data, mem);
 
     switch (action.kind) {
@@ -770,13 +935,127 @@ export class Game {
     this.sync();
   }
 
-  private toggleReveal(): void {
-    const on = !this.board.revealHidden;
-    this.board.revealHidden = on;
-    this.board.setRevealHidden(this.state, this.data, on);
-    this.toolbar.revealPill.setActive(on);
-    pushLog(this.state, on ? '编辑视图开启：显示埋在墙内的隐藏道具' : '编辑视图关闭', 'info');
+  // ── 计分视图 ──────────────────────────────────────────────────────
+  //
+  // 「每只怪 / NPC / 道具值多少分」在 headless 侧早就有眼睛（`--scores` 诊断），
+  // 但那要求你先在脑子里把坐标对上。这一块把它搬到棋盘上：格子脚下直接写数，
+  // 点一下给出算式。数据全部来自 `app/score-overlay.ts`（它又只用 `score.ts`）——
+  // 界面上**不允许**出现第二套估价。
+
+  private toggleScore(): void {
+    const on = !this.board.scoreView;
+    // 顺序要紧：先让棋盘把隐藏实体补出来（重建实体视图），再算分 ——
+    // 否则第 14 层那颗埋在墙里的红钥匙拿不到徽标，而它恰恰是「该不该专程来拿」
+    // 这件事的现场。
+    this.board.setScoreView(this.state, this.data, on);
+    this.toolbar.setScore(on);
+    // 强制重算：签名没变不代表「这一批分已经在手上」
+    this.scoreSig = null;
+    pushLog(
+      this.state,
+      on
+        ? '计分视图开启：每只怪 / NPC / 道具脚下显示自动通关算法的分数，点一下看算式。'
+        : '计分视图关闭',
+      'info'
+    );
     this.sync();
+    // 开的时候顺手把「本层最值得打的那个」摊开一次：光有一片数字，
+    // 读的人不知道它们是按什么算的，而算式正是这个视图存在的意义。
+    if (on) this.openScoreDialog(this.introTarget());
+  }
+
+  /**
+   * 开视图时先看哪一个：**本层优先级最高的怪**。
+   *
+   * 挑怪而不是挑道具，是因为怪物分的算式分行最多（金币 / 守护 / 拦路 / 掉血），
+   * 一次就能把「三种刻度、可正可负」这件事讲清楚；本层没有怪时退而取第一个。
+   */
+  private introTarget(): FloorScore | null {
+    return this.scoreEntries.find((e) => e.type === 'monster') ?? this.scoreEntries[0] ?? null;
+  }
+
+  /** 点到的格子上有什么（用**已经算好的那一份**清单，保证与徽标上的数逐字一致） */
+  private scoreAtCell(x: number, y: number): FloorScore | null {
+    return this.scoreEntries.find((e) => e.x === x && e.y === y) ?? null;
+  }
+
+  private openScoreDialog(entry: FloorScore | null): void {
+    this.modal = 'dialogue';
+    if (!entry) {
+      // 本层没有可计分的东西（楼梯口、空房间）—— 给一段说明而不是弹一块空白
+      this.dialogue.open({
+        name: '计分视图',
+        role: { label: '说明', color: 0x64748b },
+        lines: [
+          '本层没有怪物 / NPC / 道具可分。',
+          '棋盘上每一格脚下的小牌子，就是这个格子里的东西按自动通关算法值多少分。',
+          '金色 = 道具分（血当量）、红色 = 怪物分（优先级）、绿色 = NPC 分（金币余量）。',
+          '三种刻度不通用，只在同类内比大小；点任意一个目标看它的算式。'
+        ],
+        hint: '点目标看算式'
+      });
+      return;
+    }
+    this.dialogue.open({
+      name: scoreName(this.data, entry),
+      role: scoreRole(entry),
+      lines: scoreExplain(entry),
+      hint: '点目标看算式'
+    });
+  }
+
+  /**
+   * 分数随局面重算 —— 由 `sync()` 每步调用。
+   *
+   * 两个输入：`board.scoreView`（开着吗）与 `scoreSig`（局面变了吗）。
+   * 只在两者都成立时才算，且算完的**同一份**清单同时喂给徽标与点击明细。
+   */
+  private syncScores(): void {
+    if (!this.board.scoreView) {
+      if (this.scoreEntries.length) {
+        this.scoreEntries = [];
+        this.scoreBadges = [];
+        this.board.setScoreBadges([]);
+      }
+      return;
+    }
+    const sig = this.scoreSignature();
+    if (sig === this.scoreSig) return;
+    this.scoreSig = sig;
+    this.scoreEntries = scoreList(this.state, this.data, this.displayFloor);
+    this.scoreBadges = badgesOf(this.scoreEntries);
+    this.board.setScoreBadges(this.scoreBadges);
+  }
+
+  /**
+   * 「这一批分是按什么局面算的」。
+   *
+   * ⚠️ 少列一项的症状是**静默的**：徽标不刷新，而界面看起来一切正常
+   * （数字还在那儿，只是已经过期）。所以宁可多列：三围、金币、钥匙、
+   * 被动、已清理实体数、地形覆盖、换怪表、事件生成的楼梯、显示层与勇者坐标
+   * —— 后面几样看着与估价无关，但它们决定**哪些东西还在、路通不通**，
+   * 而 `blockingMonsters` / `reachCosts` 正是读这些的。
+   */
+  private scoreSignature(): string {
+    const s = this.state;
+    return [
+      this.displayFloor,
+      s.pos.x,
+      s.pos.y,
+      s.hp,
+      s.atk,
+      s.def,
+      s.gold,
+      s.buyTimes,
+      s.keys.yellowKey,
+      s.keys.blueKey,
+      s.keys.redKey,
+      s.passives.join(','),
+      s.removed.size,
+      Object.keys(s.terrainPatch[this.displayFloor] ?? {}).length,
+      Object.keys(s.monsterSwap).length,
+      s.extraStairs.length
+    ].join('|');
   }
 
   private openFloorPanel(mode: 'teleport' | 'browse'): void {
@@ -877,10 +1156,18 @@ export class Game {
     this.floorPanel.close();
     this.hoverTarget = { kind: 'none' };
     this.deathLayer.removeChildren().forEach((c) => c.destroy({ children: true }));
-    this.toolbar.revealPill.setActive(false);
+    // 计分视图与底部读数都属于**这一局**：重开必须一起归零，
+    // 否则新的一局一上来就顶着一堆上一局的数字 —— 而那比没有数字更坏
+    // （它会**看起来是对的**）。
+    this.board.setScoreView(this.state, this.data, false);
+    this.toolbar.setScore(false);
+    this.scoreEntries = [];
+    this.scoreBadges = [];
+    this.scoreSig = null;
+    this.autoTicks = 0;
+    this.autoRan = false;
     this.toolbar.setBrowsing(false, this.state.floor);
     this.toolbar.setAuto(false);
-    this.board.revealHidden = false;
     pushLog(this.state, '回到第 1 层，重新开始。', 'floor');
     this.board.setFloor(this.state, this.data, this.state.floor);
     this.board.setHeroVisible(true);
@@ -912,10 +1199,39 @@ export class Game {
     this.syncRealm(this.displayFloor);
     this.board.refresh(this.state, this.data);
     this.board.update(0, this.state);
+    // 计分徽标要**跟着实体走**：`refresh()` 会把被打死的怪、被拿走的道具
+    // 从实体视图里摘掉，所以这一步必须排在它后面（`syncScores` 里的
+    // `setScoreBadges` 会按新的实体视图重摆一遍）。
+    this.syncScores();
     this.status.update(this.state, this.data, this.displayFloor, this.browseFloor !== null);
     this.refreshDetail();
     this.itemBar.update(this.state, this.data);
+    this.syncRunStrip();
     if (this.state.dead && this.deathLayer.children.length === 0) this.showDeath();
+  }
+
+  /**
+   * 底部读数条 —— 「自动跑过没有」决定显不显示，不是「正在跑」。
+   *
+   * 理由见 `autoRan` 的注释：自动通关自己判定走投无路停下时，
+   * 玩家正要读这个数。
+   */
+  private syncRunStrip(): void {
+    const show = this.auto !== null || this.autoRan;
+    this.runStrip.update(
+      show
+        ? {
+            steps: this.autoTicks,
+            floor: this.state.floor,
+            x: this.state.pos.x,
+            y: this.state.pos.y,
+            hp: this.state.hp,
+            atk: this.state.atk,
+            def: this.state.def,
+            running: this.auto !== null
+          }
+        : null
+    );
   }
 
   /**

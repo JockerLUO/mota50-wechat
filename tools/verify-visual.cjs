@@ -53,6 +53,18 @@
  *   A23 自动通关**接进界面**之后的三件事：按钮点得着（四颗等宽不重叠、不出界）、
  *       真的会走（步数在涨，不是只亮了个灯）、说停就停（停下后再等 1s 步数不动）
  *       —— `verify:autoplay` 只管决策器，这条管**执行器**接没接上
+ *   A24 计分视图：每格脚下的分徽标**真的画出来了**、按类别上色、位置在那一格脚下，
+ *       而且与引擎算出来的那一份逐条对得上（数字 / 颜色 / 挂在哪一格）；
+ *       算式进对话框（读折行之后真正画出来的正文）；底部自动步数条的 N 与真实
+ *       计数器逐字一致、停下后不消失
+ *       —— 前者是「把 score.ts 的三套刻度接进界面」，后者是「让界面跑出来的问题
+ *       能回到 headless 报告里」(同一套 步数/楼层/坐标 定位口径)
+ *   A25 NPC 生命周期：一次性 NPC（智者/小偷/公主）撞一次**整段列完**然后从
+ *       **渲染树**上消失、那一格随即走得动、离开再回来不复活；常驻 NPC（商人/
+ *       商店/仙子）连撞两次都还在且两次台词不同
+ *       —— 「消失没接上」（引擎记了、画面还画着）与「消失接得太宽」（商人也
+ *       一起没了）都只在界面上出现。前一半必须有后一半当**探针**，否则把
+ *       「撞过就消失」写成无条件也能通过
  *
  * 用法：node tools/verify-visual.cjs [--verbose]（先 npm run build）
  *
@@ -92,7 +104,9 @@ const CHECKS = [
   require('./verify/checks/a20-idle-bob.cjs'),
   require('./verify/checks/a21-boss-footprint.cjs'),
   require('./verify/checks/a22-boss-source.cjs'),
-  require('./verify/checks/a23-autoplay-ui.cjs')
+  require('./verify/checks/a23-autoplay-ui.cjs'),
+  require('./verify/checks/a24-score-overlay.cjs'),
+  require('./verify/checks/a25-npc-lifecycle.cjs')
 ];
 
 runAll(CHECKS).catch((err) => {

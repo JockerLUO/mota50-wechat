@@ -37,15 +37,26 @@ export interface DialogueScript {
 
 /**
  * 卡片高度与最多行数要一起算：正文首行在 CARD_Y+56，行距 18，
- * 脚部按钮占最后 50px。7 行 × 18 = 126 → 56+126 = 182 < 236-50 = 186 ✓
+ * 脚部按钮占最后 50px。9 行 × 18 = 162 → 56+162 = 218 < 272-50 = 222 ✓（余 4px）。
+ *
+ * 2026-09-27 由 7 行 / 236 提到 9 行 / 272：`lifecycle: 'once'` 的 NPC
+ * 撞一次就要把**整段**列完（如小偷的越狱三句 = 实测 7 行），7 行会让最长的
+ * 那一段顶满、下一个字就被截断。改高之后最长为 7/9，留 2 行余量。
+ * ⚠️ 底边仍然安全：CARD_Y = 940 − 20 − 272 = 648 > 工具栏底 616。
  */
 // 与主面板同栏（左右边距 LAYOUT.pad），底边留 LAYOUT.pad —— 弹出时正好
 // 压在道具栏上，与它左右对齐，看着是"从底部升起来的一张卡"
-const CARD = { x: LAYOUT.pad, w: LAYOUT.W - LAYOUT.pad * 2, h: 236 };
+const CARD = { x: LAYOUT.pad, w: LAYOUT.W - LAYOUT.pad * 2, h: 272 };
 const CARD_Y = LAYOUT.H - LAYOUT.pad - CARD.h;
-/** 正文行距与最多行数：再长的台词会被截断，篇幅由数据作者控制 */
+/**
+ * 正文行距与最多行数：再长的台词会被截断，篇幅由数据作者控制。
+ *
+ * ⚠️ 这个上限与 `data/npcs.json` 是**一对**：一次性 NPC 的整段太长就会被静默切掉
+ * 尾巴（玩家看不到「后面还有」）。`npm run verify:visual` 的 A25 拿真数据量过
+ * 每个段的折行数，超限即报红 —— 所以调这里要同步看那边。
+ */
 const LINE_H = 18;
-const MAX_LINES = 7;
+const MAX_LINES = 9;
 /**
  * 正文每行最多多少「单位」—— **算出来的，不是猜的**。
  *
@@ -125,6 +136,20 @@ export class DialoguePanel extends Container {
 
   get isOpen(): boolean {
     return this.visible;
+  }
+
+  /**
+   * 正文**此刻真正画出来的**那些行（折行之后、截断之后）。
+   *
+   * 判据断言「算式真的出现在框里」时必须读它，而不是「我们调用 open() 时传了什么」——
+   * `wrap()` 会把长句切碎、`slice(0, MAX_LINES)` 会把溢出部分整段丢掉。
+   * 只断言入参的话，「传进去了但排不下、看不见」这种失败会静默通过。
+   * （同 `Toolbar.browseLabel` 那条告诫：读画出来的字，不是意图。）
+   */
+  get lines(): string[] {
+    return this.body.children
+      .map((c) => (c as Text).text ?? '')
+      .filter((s) => s.length > 0);
   }
 
   open(script: DialogueScript): void {

@@ -37,7 +37,7 @@ data/
   tiles.json              地形图例（12 种，字符 ↔ 原版编号双向）
   monsters.json           34 只怪物 + traitsReference
   items.json              32 项道具 / 钥匙 / 剑盾 + effectOps 词汇表
-  npcs.json               6 个 NPC（智慧老人/商人/小偷/仙子/公主/商店）
+  npcs.json               6 个 NPC（智慧老人/商人/小偷/仙子/公主/商店）；智者 28 层 + 商人 10 层分楼层对白；`lifecycle` 决定「说完走不走」
   combat-cases.json       战斗黄金用例（21 条 + 领域 4 + 商店 9）
   floor-notes.json        特殊楼层机制说明（含依据来源）
   monster-placement.json  怪物出现层索引 + neverPlaced（自动生成）
@@ -46,6 +46,8 @@ data/
     floor-00.json ~ floor-50.json
 tools/
   import-mota50.mjs       参考源码 → 本项目楼层 JSON（唯一的地图数据入口）
+  import-deluxe-dialogue.mjs  h5mota 原版复刻数据 → npcs.json 的分楼层对白（默认 dry-run）
+  analyze-deluxe-dialogue.mjs 上者的「人读对照表」（逐层比对本项目有没有那个 NPC）
   validate-data.mjs       8 大类校验，含连通性求解与内联副本防漂移
   build-balance-check.mjs 由 data/ 生成可交互数值校验台（消除内联副本漂移）
   balance-check.html      生成的校验台产物，双击即开，自带公式自检
@@ -191,6 +193,53 @@ hpLoss   = (rounds − 1) × perRound         勇者的生命损失
 ```
 
 共 2 处 BOSS 守道具（15 层大乌贼守铁锹、35 层魔龙守雪花）、2 处墙内隐藏道具（14 层红钥匙、41 层下楼器）。
+
+### NPC 的台词与生命周期（`npcs.json`）
+
+```jsonc
+"merchant": {
+  "sourceId": 33,
+  "name": "商人",
+  "lifecycle": "persistent",     // ⚠️ 必填，无默认值 —— 见下
+  "greet":  "……",
+  "repeat": ["……", "……"],        // 常驻：greet 之后的轮换句，至少 2 句
+  "talkByFloor": { "2": ["……"] }  // 本层特供，键 = 楼层号字符串
+}
+```
+
+`lifecycle` 只有两个取值，决定**撞完话之后这个人还在不在**：
+
+| 取值 | 谁 | 撞一次发生什么 | 台词怎么取 |
+|---|---|---|---|
+| `once` | 智者 `sage`、小偷 `thief`、公主 `princess` | 把 `greet` + `talkByFloor[本层]` 作为**一段**一次列完，然后**从地图上消失** | 不看计数，一次全给 |
+| `persistent` | 商人 `merchant`、商店 `shop`、仙子 `fairy` | 留在原地 | 每次出一句，按**已搭话次数**在池子里轮换 |
+
+三条配套约束（都由 `tools/validate-data.mjs` 的 **J 段**守着）：
+
+1. **`lifecycle` 必填、无默认值。** 猜错的一侧是**静默丢内容**：给一个只会说
+   `repeat` 的 NPC 标上 `once`，那几句玩家永远读不到（不存在「第二次搭话」）。
+   运行时 `npcLifecycle()` 对缺字段/拼错取值一律按 `persistent` 兜底 —— 那是**不会丢内容**
+   的一侧；但这不等于允许写错，J 段会先把这种情况判 FAIL。
+2. `once` 不得有 `repeat`（没有第二次，写了就是死数据）；`persistent` 必须有 `greet` 且 `repeat ≥ 2`
+   （否则「轮换」只剩一句，等于常驻了个复读机）。
+3. `talkByFloor` 的键必须落在**真的有这个 NPC** 的楼层上（否则那几句永远无人可说）。
+
+**消失复用 `removed` 机制**，与「打死怪」「捡走道具」同一套：引擎往
+`state.removed` 里加一个**实体键**（`楼层:x:y:类型:id`，`state.ts:entityKey()`），
+`entityAt()` 与渲染层（`board.syncEntities`）都按同一个键过滤 —— 所以渲染层一行没改。
+
+**台词计数键也是实体键**，不是 NPC id。这一条曾经是错的、且错得完全看不见：
+按 id 计数时全塔 **12 个商人共用 `talked['merchant']`**，从第二个商人起
+`次数 % 池长 ≠ 0`，他那一层的特供台词被**静默跳过**（对话框照常打开、只是永远说不全）。
+
+> **⚠️ 这条规则是本项目原创的 —— 原版没有。**
+> 原版《魔塔50层》里的 NPC 说完话都留在原地。核对方式：解析第二参考源
+> `reference/mota50-deluxe/` 全部 26 种事件算子的出现次数，`hide`（删除实体）出现 11 次，
+> **逐处核对后全部作用于怪物与道具**（8 只大蝙蝠汇聚成吸血鬼、机关门……），
+> **没有一处作用于 NPC**。所以「说完就走」是**本项目的设计选择**，不是复刻 ——
+> 排查「这个 NPC 怎么不见了」时，不要往回追原版。
+> 副作用：一次性 NPC 的**落点**变成了消耗品，判据与调试钩子都不该假设它一直在场
+> （`A15` 因此加了采样守卫、`A20` 采样前先复位，见 `docs/ui-prototype.md`）。
 
 ---
 
@@ -443,7 +492,7 @@ interface GameState {
 | `data/tiles.json` | 12 种地形，含原版编号双向映射与通行性依据 |
 | `data/monsters.json` | 34 只怪物 + 6 类 trait 说明 |
 | `data/items.json` | 32 项道具 + 14 个 effect op 词汇表 |
-| `data/npcs.json` | 6 个 NPC（含 `sourceId` 与行为依据）；商人含**分楼层商品清单**（12 层） |
+| `data/npcs.json` | 6 个 NPC（含 `sourceId` 与行为依据）；商人含**分楼层商品清单**（12 层）；**对白按楼层**：`talkByFloor` 智者 28 层 / 商人 10 层（源自 h5mota 原版复刻数据，见 `reference/mota50-deluxe/ATTRIBUTION.md`）；`lifecycle`（`once`/`persistent`）决定撞完话**还在不在**（本项目原创，见 §四「NPC 的台词与生命周期」） |
 | `data/combat-cases.json` | 21 条战斗 + 4 条领域 + 9 条商店黄金用例 |
 | `data/floor-notes.json` | 15 条特殊楼层机制 + 4 条机制汇总 |
 | `data/monster-placement.json` | 怪物出现层索引 + `neverPlaced` |

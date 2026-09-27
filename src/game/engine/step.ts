@@ -6,6 +6,8 @@
  *  - 开门：撞门成功即消耗钥匙并**走上该格**（源码 event.js:386 清门后 player.x++）
  *  - 假墙：撞一次即变为空地并走上去（event.js:412）
  *  - 地块剧情：走上某格自动触发（`enterTile`，本项目原创 —— 见 moveOnto 的注释）
+ *  - NPC 生命周期：`once` 的 NPC 搭话后从地图上消失（本项目原创 —— **原版没有这条**，
+ *    deluxe 的 `hide` 算子只作用于怪与道具。见 `data/npcs.json` 的 `lifecycle`）
  *
  * 它处于依赖链的顶端（依赖效果 / 道具 / 交易 / 换层 / 派生量），
  * 所以这一节不适合作任何人的上游 —— 想在这里被别处 import 说明分层错了。
@@ -13,7 +15,7 @@
 
 import type { GameData } from '../../data';
 import { DIRS, entityAt, entityKey, patchTile, pushLog, stairsOn, tileAt, type Dir, type GameState } from '../state';
-import { bumpTalk, npcLine } from '../dialogue';
+import { bumpTalk, npcKey, npcLifecycle, npcLines } from '../dialogue';
 import { applyTrigger } from './events';
 import { REUSABLE_OPS, applyEffects } from './effects';
 import { pickUpAt } from './items';
@@ -93,9 +95,11 @@ export function step(state: GameState, data: GameData, dir: Dir): StepResult {
     }
     if (ent.type === 'npc') {
       const npc = data.npcs[ent.id];
-      // 台词在**搭话之前**取，然后再记一次搭话 —— 否则这次就会跳到下一句
-      const line = npcLine(state, data, ent.id, floor);
-      bumpTalk(state, ent.id);
+      // 台词在**搭话之前**取，然后再记一次搭话 —— 否则这次就会跳到下一句。
+      // 键用**实体**（与 `removed` 同一套）：全塔同类 NPC 不共用计数器。
+      const key = npcKey(floor, ent.x, ent.y, ent.id);
+      const seg = npcLines(state, data, ent.id, floor, key);
+      bumpTalk(state, key);
 
       // 交易入口：商人只在本层真的配了货时才摆摊；商店（sourceId 39）永远可以做属性买卖
       const tradeKind: NpcTalk['tradeKind'] =
@@ -108,8 +112,11 @@ export function step(state: GameState, data: GameData, dir: Dir): StepResult {
       const talk: NpcTalk = {
         id: ent.id,
         name: npc?.name ?? ent.id,
-        text: line.text,
-        from: line.from,
+        text: seg[0].text,
+        // 一次性 NPC 的「整段」可能是多句（如小偷的越狱三句）——
+        // 编排层读到 `lines` 就会把它们一次铺开（见 app/game.ts `openDialogue`）
+        lines: seg.length > 1 ? seg.map((l) => l.text) : undefined,
+        from: seg[0].from,
         canTrade: tradeKind !== null,
         tradeKind
       };
@@ -125,6 +132,26 @@ export function step(state: GameState, data: GameData, dir: Dir): StepResult {
       // 放在 `pushLog` **之后**：这样对话框里显示的还是「搭话当时」的台词，
       // 属性变化紧跟在后面记一条 —— 顺序反了的话，台词会晚一步。
       applyTrigger(state, data, { op: 'talked', id: ent.id, floor, x: ent.x, y: ent.y });
+
+      // ── 一次性 NPC：说完就走 ────────────────────────────────────
+      //
+      // 和「打死怪」「捡走道具」是**同一套机制**（`removed` 集合 + 实体自己的那一格），
+      // 所以渲染层（`board.syncEntities`）与 `entityAt` 都不用改一行：
+      // 下一次刷新它就不在棋盘上了，勇者再撞那一格是「走上去」。
+      //
+      // ⚠️ 位置：必须在 `applyTrigger` **之后**。事件是「搭话时发生了什么」，
+      //    它需要读得到这个 NPC 还在不在场（例如把玩家传送走的那种剧本）；
+      //    先移除会让事件看到一张已经变过的地图。
+      //
+      // ⚠️ 不在这里判「要不要弹面板」：`StepResult.npc` 照旧返回，编排层决定。
+      //    自动通关（`suppressUi`）也走同一条分支，所以「AI 撞完 NPC 它也会消失」——
+      //    这是对的：AI 与玩家必须同规，否则 headless 判据通关而界面上卡住。
+      if (npcLifecycle(data, ent.id) === 'once') {
+        state.removed.add(key);
+        // 明说一句：精灵是在对话框升起的那一瞬消失的，玩家不一定看得见
+        pushLog(state, `${talk.name}说完就离开了。`, 'info');
+      }
+
       // NPC 不可踩踏：搭话后勇者留在原地。开不开面板由编排层决定（见 StepResult.npc）
       return { kind: 'talk', moved: false, message: msg, npc: talk };
     }

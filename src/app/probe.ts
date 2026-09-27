@@ -34,9 +34,18 @@ export interface ProbeView {
   browseFloor: number | null;
   lastBoardClick: Cell | null;
   dialogueOpen: boolean;
+  /**
+   * 对话框正文**此刻真正画出来的**行（折行与截断之后）。
+   *
+   * 与 `dialogueOpen` 是两个问题：前者是「框开着没有」，后者是「框里写了什么」。
+   * 计分视图要求「对话框里显示分值的计算过程」—— 只断言前者等于没断言。
+   */
+  dialogueLines: string[];
   toolbarBrowseLabel: string;
   /** 自动通关那颗按钮的文案（「自动通关」/「停止自动」） */
   toolbarAutoLabel: string;
+  /** 计分那颗按钮的文案（「计分」/「关闭计分」）—— 断言「按钮真的变身了」用它 */
+  toolbarScoreLabel: string;
   /**
    * 工具栏四颗按钮的**真实几何**。
    *
@@ -47,6 +56,29 @@ export interface ProbeView {
   toolbarButtons: Array<{ id: string; label: string; x: number; y: number; w: number; h: number }>;
   /** 自动通关是否运行中 */
   autoRunning: boolean;
+  /**
+   * 自动通关**出手过多少步**（底部那条读数读的就是它）。
+   *
+   * 单列出来是为了让判据能断言「条上那个数与真实计数器逐字一致」——
+   * 只看条上写了「自动 21 步」证明不了 21 是真的（可能是上一局的残留）。
+   */
+  autoSteps: number;
+  /**
+   * 计分视图是否开着，以及**此刻喂给棋盘的**徽标清单。
+   *
+   * 这里报的是「算出来的那一批」，**不是**「画出来的那一批」——
+   * 后者的眼睛在 `board.__scoreBadges()`（读渲染树）。两者都要有：
+   * 只读前者会漏掉「算出来了但没画」，只读后者会漏掉「画的不是算的那个数」。
+   */
+  scoreView: boolean;
+  scoreBadges: Array<{ key: string; text: string; color: number }>;
+  /**
+   * 底部自动步数条此刻的文案。
+   *
+   * ⚠️ 读的是**条上真正画出来的那行字**（`RunStrip.labelText`），不是
+   *    「我们打算写什么」—— `clip()` 会按宽度截断，而截断掉的部分玩家看不见。
+   */
+  runStrip: { text: string; visible: boolean };
   /** 只取渲染器上被探针读到的四个值，不把整个 Renderer 递进来 */
   renderer: { type: number; resolution: number; width: number; height: number };
   backdrop: { horizon: number; paintedFloor: number };
@@ -79,7 +111,9 @@ export function probeSnapshot(v: ProbeView): Record<string, unknown> {
     modal: v.modal,
     /** 对话框是否开着 —— 自动化截图要单独摆这个状态 */
     dialogue: v.dialogueOpen,
-    /** 每个 NPC 已搭话次数：台词轮换的输入，也是「对话真的在变」的证据 */
+    /** 框里真正画出来的原文（见 dialogueLines 的说明） */
+    dialogueLines: [...v.dialogueLines],
+    /** 每个 NPC **实体**已搭话次数（键形如 `2:10,3:npc:sage`）：台词轮换的输入，也是「对话真的在变」的证据 */
     talked: { ...state.talked },
     keys: { ...state.keys },
     bag: Object.keys(state.bag),
@@ -107,6 +141,21 @@ export function probeSnapshot(v: ProbeView): Record<string, unknown> {
     toolbarAutoLabel: v.toolbarAutoLabel,
     toolbarButtons: v.toolbarButtons.map((b) => ({ ...b })),
     autoRunning: v.autoRunning,
+    /** 自动出手步数 —— 底部读数条上的那个数的**真值** */
+    autoSteps: v.autoSteps,
+    /** 计分那颗按钮的文案 —— 与 `toolbarAutoLabel` 同一条纪律：读按钮上真正的字 */
+    toolbarScoreLabel: v.toolbarScoreLabel,
+    /**
+     * 计分视图：开关 + 这一刻喂给棋盘的徽标清单。
+     *
+     * `scoreBadges` 是**算出来的**（`app/score-overlay.ts` 的产物），
+     * 而画出来的是不是这一批，得看 `board.__scoreBadges()` —— 判据两边都要读，
+     * 只读一边等于没验（见 ProbeView 里那段说明）。
+     */
+    scoreView: v.scoreView,
+    scoreBadges: v.scoreBadges.map((b) => ({ ...b })),
+    /** 底部自动步数条：文案读的是条上真正画出来的那行字 */
+    runStrip: { ...v.runStrip },
     // 渲染器信息：小游戏端要确认拿到的**不是**降级后的 CanvasRenderer。
     //
     // ⚠️ 这里返回**名字**，而不是 `renderer.type` 的原始数字，是踩过之后的决定：

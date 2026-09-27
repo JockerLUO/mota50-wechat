@@ -69,11 +69,15 @@ export interface GameState {
   claimed: Set<string>;
 
   /**
-   * 搭话次数：NPC id → 已经说过几句。
+   * 搭话次数：**实体键**（`floor:x:y:npc:id`）→ 已经说过几句。
    *
    * 这是「NPC 只会说同一句」这个问题的解药 —— 台词按它轮换
-   * （见 `src/game/dialogue.ts`）。按 **NPC id** 而不是实体坐标计数，
-   * 所以同一个 NPC 站在哪一格、你从哪个方向撞上去都不影响。
+   * （见 `src/game/dialogue.ts`）。
+   *
+   * ⚠️ 键是**实体**而不是 NPC id，这是 2026-09-27 修的：原先按 id 计数，
+   * 于是全塔同类 NPC 共用一个计数器 —— 12 个商人共用 `talked['merchant']`，
+   * 从第二个商人起 `n % 池长` 已经不是 0，他那一层的特供台词被静默跳过。
+   * 键空间与 `removed` 完全一致（都由 `entityKey` 生成），两处记账不会错位。
    */
   talked: Record<string, number>;
 

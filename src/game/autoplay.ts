@@ -48,7 +48,7 @@
  */
 
 import type { GameData, KeyId, Stat } from '../data';
-import { entityAt, livingMonsters, tileAt, type Dir, type GameState } from './state';
+import { entityAt, entityKey, livingMonsters, tileAt, type Dir, type GameState } from './state';
 import { touchesFootprint } from './footprint';
 import {
   CATEGORY_ORDER,
@@ -789,7 +789,7 @@ function decide(
   // ── 怪物（刻度：优先级，可正可负）──
   for (const e of data.floors.get(floor)?.entities ?? []) {
     if (e.type !== 'monster') continue;
-    if (state.removed.has(`${floor}:${e.x}:${e.y}:monster:${e.id}`)) continue;
+    if (state.removed.has(entityKey(floor, e.x, e.y, 'monster', e.id))) continue;
     const monName = data.monsters[e.id]?.name ?? e.id;
     const label = `怪「${monName}」(${e.x},${e.y})`;
     const g = gateMonster(state, data, floor, e, r, blocking);
@@ -829,8 +829,14 @@ function decide(
   }
 
   // ── NPC（刻度：金币余量）──
+  //
+  // ⚠️ 必须像上面的怪物循环一样先问 `removed`：`lifecycle: 'once'` 的 NPC
+  // 搭过话就从地图上消失了（`step.ts`），不筛的话这里会一直把它算成候选 ——
+  // 表现是「AI 反复走向一个已经不在的人」。2026-09-27 之前 NPC 永远不会消失，
+  // 所以怪物循环有这一行、NPC 循环没有，差异一直没暴露。
   for (const e of data.floors.get(floor)?.entities ?? []) {
     if (e.type !== 'npc') continue;
+    if (state.removed.has(entityKey(floor, e.x, e.y, 'npc', e.id))) continue;
     const g = gateNpc(state, data, floor, e, r);
     if (!g.ok) {
       block('② NPC', g.kind, npcLabel(data, e.id, e.x, e.y), g.why);

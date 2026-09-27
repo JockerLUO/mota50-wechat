@@ -62,6 +62,24 @@ async function run(ctx) {
       if (monFloor !== null && npcFloor !== null) break;
     }
   }
+
+  // ⚠️ 采样前**必须复位**。
+  //
+  // 这条判据量的对象是「屏幕上的精灵」，而精灵属于**局面** —— 前面的断例会把局面
+  // 改掉：A15 要逐个 NPC 撞过去量台词，而 `lifecycle: 'once'` 的 NPC 撞完就离场。
+  // 全塔「第一个有 NPC 的层」与「第一个有怪物的层」**都是第 1 层**，而第 1 层的
+  // NPC 正是智者（`once`）⇒ A15 一走完，A20 就会报「只采到 monster」。
+  //
+  // 那不是实现坏了，是**采样对象被前面的断例消耗掉了**。这类红非常难读：
+  // 消息说的是「NPC 呼吸没验到」，而真因在另一条判据的副作用里。复位之后就与
+  // 生命周期无关了 —— 这条判据守的是刚性位移，不该跟着「谁先跑」红绿。
+  //
+  // `r` 走的是游戏自己的重开路径（`restart()` → `createInitialState()` 清空
+  // `removed` / `talked` → `board.setFloor()` 重建实体视图），与 A13 / A21 / A23 /
+  // A24 是同一个手法。
+  await page.keyboard.press('r');
+  await page.waitForTimeout(120);
+
   const bobProbe =
     monFloor !== null && npcFloor !== null
       ? await page.evaluate(
@@ -133,7 +151,16 @@ async function run(ctx) {
       }
     }
     if (!kinds.has('monster') || !kinds.has('npc')) {
-      bobBad.push(`只采到 ${[...kinds].join('/')} —— 怪物与 NPC 两种都要验`);
+      // 消息要自带「在哪一层采的、采到了谁」—— 只写「只采到 monster」的话，
+      // 读者分不清是「这一层本来就没 NPC」还是「有、但没被渲染出来」。
+      const nMon = bobProbe.filter((s) => s.kind === 'monster').length;
+      const nNpc = bobProbe.filter((s) => s.kind === 'npc').length;
+      const seen = [...new Set(bobProbe.map((s) => `${s.kind}:${s.id}`))];
+      bobBad.push(
+        `只采到 ${[...kinds].join('/')}（怪物 ${nMon} 个 / NPC ${nNpc} 个）—— 怪物与 NPC 两种都要验；` +
+          `采样层：怪物第 ${monFloor} 层、NPC 第 ${npcFloor} 层；` +
+          `该层实体视图 = ${seen.slice(0, 12).join(' ')}${seen.length > 12 ? ' …' : ''}`
+      );
     }
   }
   const bobN = bobProbe ? bobProbe.length : 0;

@@ -31,9 +31,9 @@
  * 判断标准同 `app/`：**搬出去之后它还需不需要 `this`**。
  */
 
-import { Container, Graphics, Rectangle, Sprite, Texture, TilingSprite } from 'pixi.js';
+import { Container, Graphics, Rectangle, Sprite, Text, Texture, TilingSprite } from 'pixi.js';
 import type { FloorEntity, GameData } from '../../data';
-import { entityFootprint, tileAt, type GameState } from '../../game/state';
+import { entityFootprint, entityKey, tileAt, type GameState } from '../../game/state';
 import { singleFootprint } from '../../game/footprint';
 import { atlas, fitSize, isWallChar, terrainKeyFor, variantIndex } from '../atlas';
 import {
@@ -46,10 +46,10 @@ import {
   itemColorOf
 } from '../icons';
 import { STONE, T, UI, monsterPalette, npcRole } from '../theme';
-import { LAYOUT } from '../hud';
+import { LAYOUT, label } from '../hud';
 import { ATTACK_MS, attackFrameIdx, drawAttackFx } from './attack';
 import { MONSTER_BOB_MS, NPC_BOB_MS, bobPhase, bobPx } from './bob';
-import type { BoardHooks, EntityView, Facing } from './types';
+import type { BoardHooks, EntityView, Facing, ScoreBadgeView } from './types';
 
 /** 每步走路前进一帧：一步一格 = 一个完整步态循环 */
 const WALK_FRAMES = 4;
@@ -75,6 +75,19 @@ export class Board extends Container {
   private parapetTex: Texture | null = null;
   private terrainLayer = new Container();
   private entityLayer = new Container();
+  /**
+   * 分数徽标层 —— **夹在实体层与勇者层之间**。
+   *
+   * 为什么不挂在实体自己的容器里（`entityViews[i].node` 的子节点）：
+   *   · A5b 断言「怪物精灵之外不许有任何多余绘制物」，徽标会成为它抓到的残留 ——
+   *     而那条断言守的是**素材自带**的装饰（曾经那颗脚下评级点），徽标是
+   *     **可开关的仪表**，不是同一件事，混在一起两条都说不清；
+   *   · 徽标要按「块」居中（BOSS 是 3×3），而实体容器也被挪到块的左上角 ——
+   *     挂在里面会得到一份「局部坐标系里再算一次块中心」的重复逻辑。
+   *
+   * 排在勇者**之下**：勇者站在徽标下方一格时，头不该被邻格的分挡住。
+   */
+  private scoreLayer = new Container();
   private overlay = new Graphics();
   private heroLayer = new Container();
 
@@ -122,8 +135,26 @@ export class Board extends Container {
   private clock = 0;
   private hoverCell: { x: number; y: number } | null = null;
   private floorShown = -1;
-  /** 编辑视图：显示埋在墙内的隐藏道具与实体清单 */
-  revealHidden = false;
+  /**
+   * 计分视图：**显示分数徽标 + 显示埋在墙内的隐藏实体**。
+   *
+   * 两件事共用一个开关是有意的：隐藏实体（第 14 层的红钥匙、第 41 层的下飞行器）
+   * **也有分数**，不显示出来就永远看不到它们那一行的分 —— 而它们是「AI 会不会
+   * 专程来拿」这件事的现场。一个开发仪表把「有分的东西」藏着不显示，说不通。
+   *
+   * ⚠️ 它只在**真·开发态**下为真（工具栏那颗「计分」按出来的），不进入正常玩法。
+   */
+  scoreView = false;
+  /** 现在要画哪些徽标（key 与 `entityViews[i].key` 同源）。null / 关掉视图 ⇒ 一枚不画 */
+  private scoreBadges: Map<string, ScoreBadgeView> | null = null;
+  /**
+   * 徽标节点池 —— **不重复 new**。
+   *
+   * `sync()` 每走一步就会被调到，而一层的实体有二三十个：每次重建 Text
+   * 会造成肉眼可见的 GC 抖动（`hud/text.ts` 顶上为此立了一条约定）。
+   * 池子按需长，多出来的置不可见。
+   */
+  private scorePool: Array<{ c: Container; box: Graphics; t: Text }> = [];
 
   constructor(cellPx: number, hooks: BoardHooks = {}) {
     super();
@@ -138,7 +169,15 @@ export class Board extends Container {
     const bg = new Graphics();
     bg.roundRect(-2, -2, this.span + 4, this.span + 4, 6).fill(STONE.faceDark);
 
-    this.addChild(this.parapetLayer, bg, this.terrainLayer, this.entityLayer, this.heroLayer, this.overlay);
+    this.addChild(
+      this.parapetLayer,
+      bg,
+      this.terrainLayer,
+      this.entityLayer,
+      this.scoreLayer,
+      this.heroLayer,
+      this.overlay
+    );
     this.buildTerrain();
     this.buildHero();
 
@@ -512,12 +551,20 @@ export class Board extends Container {
   private syncEntities(state: GameState, data: GameData, floor: number): void {
     const alive = new Set<string>();
     for (const e of data.floors.get(floor)!.entities) {
-      const key = `${floor}:${e.x}:${e.y}:${e.type}:${e.id}`;
+      // ⚠️ 键必须与引擎**逐字同源**，别在这里手拼一遍。
+      //
+      // `state.removed` 是渲染层与引擎之间唯一的「谁还在场上」的账本：引擎往里写
+      // （打死怪、捡走道具、**一次性 NPC 搭完话离场**），这里按同一个键过滤。
+      // 两处各拼一次的话，格式一旦漂移（多个空格、type 写成 'npc '、顺序换了），
+      // 后果是**画面上那个东西不消失** —— 而且没有任何判据会红：
+      // 引擎侧 `entityAt` 照旧认为它没了，渲染侧照旧画着它。
+      // 2026-09-27 收敛到 `entityKey()`（与 `autoplay.ts` 的处理同源）。
+      const key = entityKey(floor, e.x, e.y, e.type, e.id);
       if (state.removed.has(key)) continue;
       alive.add(key);
       if (this.entityViews.some((v) => v.key === key)) continue;
-      if (e.hidden && !this.revealHidden) {
-        // 隐藏实体仍占位，但不渲染 —— 标记成占位视图，开启编辑视图时再补画
+      if (e.hidden && !this.scoreView) {
+        // 隐藏实体仍占位，但不渲染 —— 标记成占位视图，开启计分视图时再补画
         this.entityViews.push({ key, node: null, x: e.x, y: e.y });
         continue;
       }
@@ -545,6 +592,98 @@ export class Board extends Container {
         v.phase = bobPhase(v.key, v.monsterId ? MONSTER_BOB_MS : NPC_BOB_MS);
       }
     });
+    // 徽标跟着实体走 —— 实体增删（打死了、拿走了）之后它们必须一起消失，
+    // 否则屏幕上会留着上一只怪的分。放在这里而不是 `refresh()`：`setFloor()`
+    // 也会经过 `syncEntities()`，两处各写一次就会有一条路径漏掉。
+    this.paintScores();
+  }
+
+  // ── 分数徽标（计分视图） ───────────────────────────────────────────
+
+  /**
+   * 开关计分视图。
+   *
+   * 隐藏实体要跟着**重建**：`syncEntities` 里对隐藏实体的处理是「占位但不建节点」，
+   * 光改一个布尔不会补出节点来（这是本项目出现过多次的「改了标志位，画面没变」）。
+   */
+  setScoreView(state: GameState, data: GameData, on: boolean): void {
+    this.scoreView = on;
+    this.rebuildEntities(state, data, state.floor);
+    if (!on) this.setScoreBadges([]);
+  }
+
+  /**
+   * 换一批徽标。`list` 为空数组 ⇒ 一枚不画（徽标数据与开关是两件事：
+   * 开关管「这个视图开着没有」，数据管「现在这一层的分是多少」）。
+   */
+  setScoreBadges(list: ScoreBadgeView[]): void {
+    this.scoreBadges = list.length ? new Map(list.map((b) => [b.key, b])) : null;
+    this.paintScores();
+  }
+
+  /** 池子第 i 个徽标节点，不够就长一个 */
+  private scoreNode(i: number): { c: Container; box: Graphics; t: Text } {
+    let n = this.scorePool[i];
+    if (!n) {
+      const c = new Container();
+      const box = new Graphics();
+      // 徽标**不是**实体的一部分，所以给它一个自己的 label 供判据辨认
+      box.label = 'scoreBadge';
+      const t = label('', 8.5, T.onDark, '700');
+      t.label = 'scoreBadgeText';
+      t.anchor.set(0.5);
+      c.addChild(box, t);
+      this.scoreLayer.addChild(c);
+      n = { c, box, t };
+      this.scorePool[i] = n;
+    }
+    return n;
+  }
+
+  /**
+   * 把徽标摆到实体脚下。
+   *
+   * 位置按**占位块**算（`v.footprint ?? 自己那一格`）：BOSS 的 3×3 上，
+   * 徽标落在块底边居中 —— 与它脚下那圈椭圆光环同一套定位语言。
+   *
+   * 徽标压在精灵下沿上是有意的、也是没办法的事：格子只有 32px，
+   * 而精灵是**底对齐**的，脚下没有任何空余。所以底色取深、描边不加、
+   * 字尽量小 —— 只是在脚背上贴一张价格牌，不是重画这一格。
+   */
+  private paintScores(): void {
+    const S = this.cellPx;
+    const H = 11;
+    let n = 0;
+    if (this.scoreView && this.scoreBadges) {
+      for (const v of this.entityViews) {
+        const b = this.scoreBadges.get(v.key);
+        if (!b) continue;
+        const fp = v.footprint ?? { x0: v.x, y0: v.y, x1: v.x, y1: v.y };
+        const blockW = (fp.x1 - fp.x0 + 1) * S;
+        const cx = ((fp.x0 + fp.x1 + 1) / 2) * S;
+        const bottom = (fp.y1 + 1) * S;
+        const node = this.scoreNode(n++);
+        const t = node.t;
+        t.style.fontSize = 8.5;
+        t.text = b.text;
+        t.style.fill = b.color;
+        // 放不进块宽就缩字号 —— 缩到 6 还放不下说明这个数不该用它（自然会在截图上露出来）
+        const maxW = blockW - 2;
+        if (t.width > maxW - 6) t.style.fontSize = Math.max(6, (8.5 * (maxW - 6)) / t.width);
+        const chipW = Math.min(maxW, Math.ceil(t.width) + 6);
+        const chipY = bottom - H - 1;
+        node.box.clear();
+        node.box.roundRect(cx - chipW / 2, chipY, chipW, H, 2.5).fill({ color: 0x0f172a, alpha: 0.82 });
+        t.x = cx;
+        t.y = chipY + H / 2 + 0.5;
+        node.c.visible = true;
+        // 把这枚徽标挂给谁**写在节点上**（而不是只在自报字段里）：
+        // 判据据此把「画出来的这一枚」与「算出来的那一条」对上号 ——
+        // 光比数字集合的话，第 3 层的两只绿史莱姆互换分数是抓不到的。
+        node.c.label = `scoreBadge:${b.key}`;
+      }
+    }
+    for (let i = n; i < this.scorePool.length; i++) this.scorePool[i].c.visible = false;
   }
 
   private makeEntityView(
@@ -714,10 +853,26 @@ export class Board extends Container {
     return view;
   }
 
-  /** 编辑视图：把埋在墙内的武器显示出来 */
-  setRevealHidden(state: GameState, data: GameData, on: boolean): void {
-    this.revealHidden = on;
-    this.rebuildEntities(state, data, state.floor);
+  /**
+   * 校验用：**真的画在屏上**的徽标（读渲染树里那些节点，不是自报字段）。
+   *
+   * 每个节点自己带着「它是给谁画的」（`label` = `scoreBadge:<实体键>`）——
+   * 判据因此能把画出来的这一枚与算出来的那一条**对上号**，
+   * 而不是只比一个数字集合（那样两只同名怪互换分数是抓不到的）。
+   *
+   * 报的是**局部**坐标（徽标容器是 `scoreLayer` 的直接子节点，坐标系就是棋盘
+   * 自己的坐标系，不含 `LAYOUT.board.x/y`）—— 与 A5 量 `entityViews` 同一套口径。
+   */
+  __scoreBadges(): Array<{ key: string; text: string; color: number; x: number; y: number }> {
+    return this.scorePool
+      .filter((n) => n.c.visible)
+      .map((n) => ({
+        key: String(n.c.label ?? '').replace(/^scoreBadge:/, ''),
+        text: n.t.text,
+        color: Number(n.t.style.fill),
+        x: Math.round(n.t.x),
+        y: Math.round(n.t.y)
+      }));
   }
 
   setHeroPos(x: number, y: number, animate: boolean): void {

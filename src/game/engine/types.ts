@@ -43,16 +43,18 @@ export type UiKind = 'floorSelect' | 'monsterBook' | 'notebook' | 'merchant' | '
 export interface NpcTalk {
   id: string;
   name: string;
-  /** 当前该说的那一句 */
+  /** 当前该说的那一句（整段的第一句；底部消息条只记这一句） */
   text: string;
   /** 这句是从哪个来源取的（floor / greet / repeat / note / fallback） */
   from: NpcLine['from'];
   /**
-   * **整段**正文（剧情演出用）。
+   * **整段**正文。给了它，对话框就逐句铺开；没给就只画 `text` 那一句。
    *
-   * 与 `text` 的区别不是格式而是**来路**：`text` 是 NPC 的台词轮换算出来的
-   * 那一句，`lines` 是事件剧本写死的几段（`say` 算子）。给了 `lines` 就按它
-   * 逐段画，**不再**补「本层货品」那类功能性脚注 —— 剧情不是交易。
+   * 两种来路，**语义不同但界面处理相同**：
+   *   ① 剧情演出 —— 事件剧本写死的几段（`say` 算子）。给了 `lines` 就按它逐段画，
+   *      **不再**补「本层货品」那类功能性脚注 —— 剧情不是交易。
+   *   ② 一次性 NPC 的整段 —— `lifecycle === 'once'` 的 NPC 撞一次就说完全部
+   *      （如小偷的越狱三句），见 `dialogue.ts` 的 `npcLines()`。
    */
   lines?: string[];
   /** 本层是否摆着摊（决定对话框要不要给「交易」按钮） */

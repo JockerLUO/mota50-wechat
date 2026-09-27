@@ -17,7 +17,7 @@ import { hasNpcOnFloor } from '../../data';
 // 这里原本内联了一份 `10 * n * (n - 1) + 20`，是明确的漂移风险
 import { shopCost, shopGain } from '../../../core/shop.mjs';
 import type { GameState } from '../../game/state';
-import { npcLine } from '../../game/dialogue';
+import { npcKey, npcLine } from '../../game/dialogue';
 import { ACCENT, GRADE_STYLE, T, UI, npcRole, type PanelRect } from '../theme';
 import { LAYOUT } from './layout';
 import { TextPool, headerTitle, label, panel } from './text';
@@ -183,9 +183,14 @@ export class DetailPanel extends Container {
       this.title.text = `${npc?.name ?? target.id} · ${role.label}　${coord}`;
       this.badgeText.text = '';
       const shown = opts.shownFloor ?? state.floor;
-      // 与对话框同源：台词轮换只在 dialogue.ts 里算一次，这里读到的一定是
+      // 与对话框同源：台词只在 dialogue.ts 里算一次，这里读到的一定是
       // 「撞上去会看到的那一句」。悬停预览与真实对话因此不可能不一致。
-      this.pool.set(0, npcLine(state, data, target.id, shown).text, T.ink);
+      //
+      // ⚠️ 这里只取**整段的第一句**（`npcLine`）。一次性 NPC 撞上去会一次列完
+      //    整段，可是悬停是「预览」——预览把整段铺开会比对话本身还长。
+      //    第一句正好是语义上的开场（有 greet 就是初见问候），不会误导。
+      //    key 必须带坐标：台词计数按**实体**走（见 dialogue.ts 文件头）。
+      this.pool.set(0, npcLine(state, data, target.id, shown, npcKey(shown, target.x, target.y, target.id)).text, T.ink);
       const goods = npc?.goodsByFloor as Record<string, { goods?: unknown[]; gifts?: unknown[] }> | undefined;
       const rows = goods?.[String(shown)];
       if (rows) {

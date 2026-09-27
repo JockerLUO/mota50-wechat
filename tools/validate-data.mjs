@@ -814,6 +814,105 @@ head('I · 参考源完整性');
   }
 }
 
+// ── J NPC 生命周期 ──────────────────────────────────────────────
+//
+// NPC 撞过之后**还在不在**由 `lifecycle` 决定（见 data/npcs.json 与
+// src/data/types.ts 的 NpcDef.lifecycle；引擎侧在 src/game/engine/step.ts）。
+//
+// 这一段守的是「字段拓扑」——**呈现**（撞一次真的消失、整段真的排得下）在
+// `npm run verify:visual` 的 A25 里量，两条判据分工不重叠：
+//   这里问「数据说清了没有」，A25 问「引擎按它做了没有」。
+//
+// ⚠️ 为什么不给 lifecycle 默认值：写错的一侧是**静默丢内容** ——
+//    标 once 而数据里只有 repeat，那几句玩家永远读不到；标 persistent 而只有一段，
+//    玩家会连着听同一句。所以缺字段与拼错（`persistant`）一律 FAIL。
+head('J · NPC 生命周期');
+
+{
+  const LIFE_OK = new Set(['once', 'persistent']);
+
+  // ── J1 每个 NPC 显式声明，且取值合法 ──────────────────────────
+  const noLife = Object.keys(npcs).filter((id) => !LIFE_OK.has(npcs[id].lifecycle));
+  if (noLife.length) {
+    fail(`${noLife.length} 个 NPC 的 lifecycle 缺失或取值非法（只认 once / persistent）：` +
+      noLife.map((id) => `${npcs[id].name}(${id})=${JSON.stringify(npcs[id].lifecycle)}`).join('、'));
+  } else {
+    const once = Object.keys(npcs).filter((id) => npcs[id].lifecycle === 'once');
+    const persist = Object.keys(npcs).filter((id) => npcs[id].lifecycle === 'persistent');
+    pass(`全部 ${Object.keys(npcs).length} 个 NPC 都声明了 lifecycle（once ${once.length} 个：${once.join('、')}｜` +
+      `persistent ${persist.length} 个：${persist.join('、')}）`);
+  }
+
+  // ── J2 字段与生命周期必须匹配 ────────────────────────────────
+  //
+  // `repeat` 是「第 2 次搭话起轮流说」的池子。一次性 NPC 没有第二次 ⇒ 写了就是
+  // 死字段（#50：写了但没人读的字段比没有更坏）。反过来的缺失同样是 bug：
+  // 常驻 NPC 没有 repeat，第 2 次搭话就只剩 greet 那一句，玩家一撞就看出「对话是假的」。
+  const deadRepeat = Object.keys(npcs).filter((id) => npcs[id].lifecycle === 'once' && npcs[id].repeat);
+  if (deadRepeat.length) {
+    fail(`一次性 NPC 挂着 repeat（它没有第二次搭话，这几句读不到）：` +
+      deadRepeat.map((id) => `${npcs[id].name}(${id}) 挂了 ${npcs[id].repeat.length} 句`).join('、') +
+      ' —— 该删掉，或摊到别的楼层');
+  }
+  const thinPersist = Object.keys(npcs).filter(
+    (id) => npcs[id].lifecycle === 'persistent' && (!npcs[id].greet || (npcs[id].repeat ?? []).length < 2)
+  );
+  if (thinPersist.length) {
+    fail(`常驻 NPC 缺少 greet 或 repeat（第 2 次搭话就没词了）：` +
+      thinPersist.map((id) => `${npcs[id].name}(${id}) greet=${npcs[id].greet ? '有' : '缺'} repeat=${(npcs[id].repeat ?? []).length} 句`).join('、'));
+  }
+  if (!deadRepeat.length && !thinPersist.length) {
+    pass('字段与生命周期匹配：一次性 NPC 无 repeat；常驻 NPC 都有 greet 与 ≥2 句 repeat');
+  }
+
+  // ── J3 每个落点楼层都要能拼出一段台词 ─────────────────────────
+  //
+  // 一次性 NPC 的「段」= `greet`（若有）+ `talkByFloor[本层]`（见 dialogue.ts 的
+  // npcLines）。两者都空就会退回 note / fallback，玩家看到的是调试文案。
+  const npcPlacement = new Map();
+  for (const f of floors) {
+    for (const e of f.entities ?? []) {
+      if (e.type !== 'npc') continue;
+      if (!npcPlacement.has(e.id)) npcPlacement.set(e.id, new Map());
+      const m = npcPlacement.get(e.id);
+      m.set(f.index, (m.get(f.index) ?? 0) + 1);
+    }
+  }
+  const asArr = (v) => (typeof v === 'string' ? (v.trim() ? [v] : []) : Array.isArray(v) ? v.filter((s) => typeof s === 'string' && s.trim()) : []);
+  const noSpeech = [];
+  for (const id of Object.keys(npcs)) {
+    const n = npcs[id];
+    if (n.lifecycle !== 'once') continue;
+    for (const floor of npcPlacement.get(id)?.keys() ?? []) {
+      if (asArr(n.greet).length || asArr(n.talkByFloor?.[String(floor)]).length) continue;
+      noSpeech.push(`${n.name}(${id}) 第 ${floor} 层`);
+    }
+  }
+  if (noSpeech.length) {
+    fail(`一次性 NPC 在这些落点上说不出话（greet 与本层 talkByFloor 都空）：${noSpeech.join('、')}`);
+  } else {
+    const placedOnce = Object.keys(npcs).filter((id) => npcs[id].lifecycle === 'once' && npcPlacement.has(id));
+    pass(`一次性 NPC 的每个落点都有段可讲（${placedOnce.map((id) => `${npcs[id].name}×${[...npcPlacement.get(id).values()].reduce((a, b) => a + b, 0)}`).join('、')}）`);
+  }
+
+  // ── J4 talkByFloor 的键必须落在真的有这个 NPC 的楼层 ──────────
+  //
+  // 上一轮踩过同一个坑（给第 1 层写了个 `npcs.author`）：**写在数据里、地图上
+  // 没有实体**的台词永远不会被读到，而它不报错、不崩溃，只有这一条会翻出来。
+  const orphanLines = [];
+  for (const id of Object.keys(npcs)) {
+    const placed = new Set(npcPlacement.get(id)?.keys() ?? []);
+    for (const key of Object.keys(npcs[id].talkByFloor ?? {})) {
+      if (!placed.has(Number(key))) orphanLines.push(`${npcs[id].name}(${id}) 第 ${key} 层`);
+    }
+  }
+  if (orphanLines.length) {
+    fail(`${orphanLines.length} 处 talkByFloor 写在了没有这个 NPC 的楼层上（玩家永远读不到）：${orphanLines.join('、')}`);
+  } else {
+    pass('所有 talkByFloor 的键都落在真的有这个 NPC 的楼层上');
+  }
+}
+
 // ── 汇总 ────────────────────────────────────────────────────────
 head('汇总');
 console.log(`  ${checks} 项通过，${warnings} 项警告，${failures} 项失败`);

@@ -57,6 +57,25 @@ export interface NpcDef {
   sprite?: string;
   effects?: ItemEffect[];
   /**
+   * 这个 NPC **撞过之后还在不在**。全表必填（`tools/validate-data.mjs` 的 J 段守着）。
+   *
+   *   · `once`       —— 说完就走。撞一次，把 `greet`（若有）+ `talkByFloor[本层]`
+   *                     作为**一段**一次列完，然后从他站的那一格消失（和捡道具一样）。
+   *   · `persistent` —— 常驻。每次搭话只出一句，按已搭话次数轮换
+   *                     （`talkByFloor[本层]` → `greet` → `repeat`），可以反复来。
+   *
+   * ## 为什么必修成一个枚举，而不是「默认 one-shot」
+   *
+   * 这个字段决定的是**内容会不会被玩家看到**，猜错的代价是静默的：写成 `once` 而
+   * 数据里只有 `repeat`，那几句就永远读不到；写成 `persistent` 而只有一段，玩家
+   * 就会连着听同一句。所以不留默认值 —— 缺字段或取值拼错一律在 `npm run validate` 报 FAIL。
+   *
+   * ⚠️ 两种生命周期的字段要求**不一样**，校验器逐条守：
+   *   `once`       不得有 `repeat`（没有第二次搭话），且每个落点楼层都要能拼出一段台词；
+   *   `persistent` 必须有 `greet` 与 `repeat`（否则第 2 次搭话就没词了）。
+   */
+  lifecycle: 'once' | 'persistent';
+  /**
    * 首次搭话的台词。
    *
    * 旧字段是单个 `talk` —— 结果**同一个 NPC 无论第几次搭话都只会说这一句**，
