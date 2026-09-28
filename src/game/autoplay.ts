@@ -48,7 +48,17 @@
  */
 
 import type { GameData, KeyId, Stat } from '../data';
-import { entitiesOn, entityAt, entityKey, livingMonsters, tileAt, type Dir, type GameState } from './state';
+import {
+  entitiesOn,
+  entityAt,
+  entityKey,
+  isCleared,
+  livingMonsters,
+  monsterClearsGame,
+  tileAt,
+  type Dir,
+  type GameState
+} from './state';
 import { touchesFootprint } from './footprint';
 import {
   CATEGORY_ORDER,
@@ -1134,19 +1144,9 @@ export function explainStop(state: GameState, data: GameData): string[] {
   return out;
 }
 
-/** 是否已通关：第 50 层的魔王（封印解除后是真魔王）已被击败 */
-export function isCleared(state: GameState, data: GameData): boolean {
-  // ⚠️ 读 `entitiesOn` 而不是 `data.floors.get(50).entities`：第 50 层的魔王是
-  // `f49-seal-break` 用 `replaceMonster` 换出来的、真身由事件决定 —— 只见 data 的
-  // 写法在「魔王是事件放的」那天会静默算错（这里读的正是那一格**当前**是谁）。
-  for (const e of entitiesOn(state, data, 50)) {
-    if (e.type !== 'monster') continue;
-    // 封印解除后这一格被 swap 成真魔王；否则还是假魔王。通关 = 「当前这一格的魔王」已被击败。
-    const cur = state.monsterSwap[`50:${e.x},${e.y}`] ?? e.id;
-    if (!state.removed.has(`50:${e.x}:${e.y}:monster:${cur}`)) return false;
-  }
-  return true;
-}
+// `isCleared` 已收进 `state.ts`（与 `entitiesOn` 同住，换怪只有一个判据来源）。
+// 这里 re-export 只是为了让 `tools/` 的既有 import 路径继续可用。
+export { isCleared };
 
 /** 某层的楼梯（数据里的 + 事件生成的） */
 function stairsOf(state: GameState, data: GameData, floor: number, kind: 'up' | 'down') {
@@ -1379,7 +1379,11 @@ function gateMonster(
   }
   const sc = monsterScore(state, data, e.id, {
     guards: guardedItemAt(state, data, floor, e),
-    blocks: blocking.has(`${e.x},${e.y}`)
+    blocks: blocking.has(`${e.x},${e.y}`),
+    // ★ 终点目标（击败它即通关）由分数里的战略项负责，**不靠放低这道闸门** ——
+    //   这正是下面「为金币而战要赚够 3 倍」那条闸门的例外：
+    //   利润率是「可打可不打」的尺子，而通关没有「不打」这个选项。
+    terminal: monsterClearsGame(state, data, floor, e.x, e.y, e.id)
   });
   // ★ 同一道理：为金币而战要赚够 3 倍（`POLICY.MONSTER_PROFIT`）。
   //   守道具 / 挡路的怪由分数里的战略项负责，不靠放低这道闸门。
@@ -1435,6 +1439,26 @@ function pickBacktrack(state: GameState, data: GameData): number | null {
     if (!data.floors.has(f)) continue;
     cands.push(f);
   }
+  //
+  // ★ 先看「**有通往没去过的楼层的楼梯**」的层（2026-09-28）。
+  //
+  // 为什么必须有这一档：魔塔的终点**不一定在上面**。第 50 层没有任何楼梯，
+  // 唯一入口是第 24 层红门后那条 `f24-gate-to-50`。而「最高层优先」这条策略
+  // 永远不会为了一个**在下面**的终点回头 —— 实测神装局（hp90000/atk1000/def1000/
+  // 钥匙 999）在第 48⇄49 之间用传送器来回跳 31 次后报「走投无路」，
+  // 而它当时离通关只差「回一趟第 24 层」。
+  //
+  // ⚠️ 门槛：那条路**后面的怪得打得过**才去。否则早期就会冲去 F50 撞「封印前」的魔王
+  // （def 1000，满血也磨不过），白跑一趟还可能困在上面。
+  const opensNew = (f: number): boolean =>
+    [...stairsOf(state, data, f, 'up'), ...stairsOf(state, data, f, 'down')].some((s) => {
+      if (state.visited.includes(s.to)) return false;
+      return livingMonsters(state, data, s.to).every((m) => previewBattle(state, data, m.id)?.canWin === true);
+    });
+  const promising = cands.filter(opensNew);
+  promising.sort((a, b) => b - a);
+  for (const f of promising) return f;
+
   // 从高到低试：高层剩下的收益通常更大（怪更值钱、宝石更好）
   cands.sort((a, b) => b - a);
   for (const f of cands) {

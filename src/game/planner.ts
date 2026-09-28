@@ -28,7 +28,7 @@ import type { GameData } from '../data';
 import { buyStat, step, tradeAccept, useItem } from './engine';
 import { merchantOffers } from './engine/merchant';
 import { previewBattle } from './engine/vitals';
-import { entitiesOn, entityAt, stairsOn, tileAt, type GameState } from './state';
+import { entitiesOn, entityAt, isCleared, stairsOn, tileAt, type GameState } from './state';
 //
 // ⚠️ 估价函数**只有一份**（在 `autoplay.ts`）。这里刻意 import 它而不是另写一份
 // 「最小的同源版」：两份价目表的必然结局是「改了一边、另一边静默用默认值」，
@@ -253,14 +253,8 @@ function stateDigest(s: GameState): string {
   );
 }
 
-function isCleared(state: GameState, data: GameData): boolean {
-  for (const e of entitiesOn(state, data, 50)) {
-    if (e.type !== 'monster') continue;
-    const cur = state.monsterSwap[`50:${e.x},${e.y}`] ?? e.id;
-    if (!state.removed.has(`50:${e.x}:${e.y}:monster:${cur}`)) return false;
-  }
-  return true;
-}
+// `isCleared` 只有一份，在 `state.ts`（原先这里与 `autoplay.ts` 各写一遍，
+// 而真正需要它的决策层反而漏了 —— 见 `monsterClearsGame` 的注释）。
 
 /** 粗略估价：剩余全部「能打的怪」的金币折 HP + 剩余道具价值，作为乐观上界 */
 // （暂未启用上界剪枝，先保证正确性；保留函数以备后续加剪枝）
@@ -1071,11 +1065,20 @@ export interface WalkthroughMilestone {
 }
 
 export interface WalkthroughGoal {
-  type: 'item' | 'floor' | 'defeat' | 'clear';
+  /**
+   * `stairTo` 判「站在**有通往 to 层楼梯**的那一层上」—— 为「终点在下面」这种情况准备的。
+   *
+   * 为什么不能用 `floor`：`floor` 的判据是 `state.floor >= goal.floor`，而 `>=` 意味着
+   * 站在第 49 层就已经「达成 24 层」了，阶段会立刻过去、AI 原地不动。终点在下面时
+   * 要的是「**回到**那一层并且那里真有那条楼梯」，所以判据必须看 `stairsOn`。
+   */
+  type: 'item' | 'floor' | 'defeat' | 'clear' | 'stairTo';
   /** `item` / `defeat` 用 */
   id?: string;
   /** `floor` 用；`defeat` 也可带上（用于估价的目标楼层） */
   floor?: number;
+  /** `stairTo` 用：要通往哪一层 */
+  to?: number;
 }
 
 export interface WalkthroughPhase {
@@ -1150,6 +1153,8 @@ export function phaseGoalMet(state: GameState, data: GameData, goal: Walkthrough
       return goal.floor !== undefined && state.floor >= goal.floor;
     case 'clear':
       return isCleared(state, data);
+    case 'stairTo':
+      return stairsOn(state, data, state.floor).some((s) => s.to === goal.to);
   }
 }
 

@@ -130,7 +130,17 @@ if (ti >= 0) {
 }
 
 if (usePhases) {
+  const init = {};
+  for (const f of ['hp', 'atk', 'def']) {
+    const v = getArg(f, NaN);
+    if (Number.isFinite(v)) init[f] = v;
+  }
+  {
+    const ki = argv.indexOf('--keys');
+    if (ki >= 0 && argv[ki + 1]) init.keys = argv[ki + 1];
+  }
   const r = runPhases({
+    init: Object.keys(init).length ? init : undefined,
     maxBeam,
     maxIter,
     maxNodesPerPhase: nodesPerPhase,

@@ -77,7 +77,21 @@ const BASELINE = {
     '2026-09-28 第八轮：一次性 NPC 从「墙」改成「一次性障碍」⇒ F9 → **F16**、里程碑 1 → 2' +
     '（上限 F20 由地形决定，见 docs/known-gaps.md §2）；' +
     '2026-09-28 第九轮：`marginalCache` 的键补上 `floor`（修真 bug）⇒ 诚实成绩是 **F15**；' +
-    '⚠️ 阈值**保持 16 不调低** —— 详见本文件 BASELINE 上方那段（第 2 条常态红）'
+    '⚠️ 阈值**保持 16 不调低** —— 详见本文件 BASELINE 上方那段（第 2 条常态红）',
+  /**
+   * 2026-09-28 第十一轮：新增 **D 段 · 结构可通关性（神装局）**，4 条判据，全按回归处理。
+   *
+   * 它是目前**唯一**能回答「塔本身能不能通、AI 认不认得出终点」的判据 ——
+   * B 段那一局是真实起手，红了既可能是「塔不通」也可能是「资源调度还不行」，
+   * 两种病根互相掩护。实测它一出生就逮到两个缺陷（换怪在决策层不可见 + 终点目标没分数），
+   * 详见 IRONRULES #82 / #83 / #84 与 `docs/known-gaps.md` §4。
+   */
+  structural: {
+    /** D1：神装局必须通关。修前「最高到过 F50、最终 F48、局势重复 31 次」 */
+    mustClear: true,
+    /** D2：神装局同一局势重复上限。修前 31 次，修后 1 次 —— 取 5 留余量 */
+    maxCycle: 5
+  }
 };
 
 function add(name, ok, detail) {
@@ -352,6 +366,77 @@ function sectionPhases(results, planner) {
   results.push(add('★ 分阶段规划通关', r.cleared, r.cleared ? `最远 F${r.maxFloor}` : `停在 ${r.phases.find((p) => !p.ok)?.id ?? '未知'}`));
 }
 
+// ── D 段：结构可通关性（神装局）─────────────────────────────────────
+//
+// ## 它回答的是哪一个问题
+//
+// B 段那一局是**真实起手**（1000 血 / 10 攻 / 10 防 / 0 钥匙），所以它红了
+// 既可以读成「塔不通」也可以读成「AI 的资源调度还不行」。这两件事的修法完全不同
+// （一个改数据、一个改策略），混在一起就会互相掩护 —— 2026-09-28 之前正是如此。
+//
+// 这一局把**资源问题拿掉**：属性与钥匙给足，于是剩下的只有两件事：
+//   · **塔本身能不能通**（有没有断掉的路、缺掉的楼梯、触发不了的事件）；
+//   · **AI 认不认得出终点**（能不能走到第 50 层并击败真魔王）。
+//
+// ## 它钉住的两个缺陷（都是「跑到底才看得见」的那种）
+//
+// 2026-09-28 第一次跑这一局，结果是「最高到过 50、最终 F48、局势重复 31 次」。
+// 两个缺陷叠在一起，只看报告根本分不出来，因为**症状是同一条**：
+//
+//   · **换怪（`monsterSwap`）在决策层不可见** —— `data/` 里第 50 层那一格永远写着
+//     「魔王（封印前）」（def 1000），封印解除后只有 `entityAt` 会读到真魔王（def 190）。
+//     贪心的目标生成照着 data 里的 id 算 `previewBattle` ⇒ 拿 def 1000 判「打不动」，
+//     于是**永远不去碰真正的最终 BOSS**。
+//   · **终点目标没有分数** —— 修完上一条，理由变成
+//     「怪「真魔王」(5,5) —— 利润率不够：得分 -1649 < 需要 3460」：
+//     打得动、也不会死，但按「为金币而战要赚 3 倍」那把尺子**不划算**，于是退回 F48。
+//     通关是终点，没有「不打」这个选项 —— 见 `monsterClearsGame` / `TERMINAL_BONUS`。
+//
+// 修完两条之后：**通关 ✅，局势重复 1 次，步数 7906**（同一份代码、同一个起手）。
+//
+// ## 为什么它是**回归**判据而不是目标判据
+//
+// 因为它现在绿了。按本文件的分组原则（「做绿一条就把它搬进回归组并把下限写进
+// BASELINE」），它必须挡住以后任何一次「让塔通不了 / 让 AI 认不出终点」的改动 ——
+// 这正是最容易在重构里静默踩坏、又最难靠看屏幕发现的那一类。
+function sectionStructural(results, sim) {
+  console.log('\nD · 结构可通关性（神装局：属性/钥匙给足，只问「这塔能不能通、AI 认不认得出终点」）');
+  const god = { hp: 90000, atk: 1000, def: 1000, keys: 'y999b999r999' };
+  const t0 = Date.now();
+  const r = sim.simulate(maxSteps, false, god);
+  const secs = ((Date.now() - t0) / 1000).toFixed(1);
+  console.log(
+    `     实测：${r.cleared ? '通关' : '未通关'}　最终 F${r.floor}（最高 F${r.maxFloor}）　` +
+      `步 ${r.steps}　HP ${r.hp}　攻/防 ${r.atk}/${r.def}　击杀 ${r.kills}　` +
+      `局势重复 ${r.maxCycle} 次　（${secs}s）`
+  );
+  results.push(
+    add(
+      '★ 测试样本非空转：这一局真的打到了第 50 层（否则「通关」是空的）',
+      r.maxFloor >= 50,
+      `最高 F${r.maxFloor}`
+    )
+  );
+  results.push(
+    add(
+      'D1 神装局必须通关（钉住「换怪可见」+「终点目标有分」两条）',
+      r.cleared || !BASELINE.structural.mustClear,
+      r.cleared
+        ? `用 ${r.steps} 步击败真魔王（修前：最高到过 F50、最终 F48、局势重复 31 次）`
+        : `未通关：${r.reason}`
+    )
+  );
+  results.push(
+    add(
+      `D2 神装局不许空转（局势重复 ≤ ${BASELINE.structural.maxCycle}）`,
+      r.maxCycle <= BASELINE.structural.maxCycle,
+      `实际 ${r.maxCycle} 次${r.deadlock ? `，现场 ${r.deadlock}` : ''}（修前 31 次）`
+    )
+  );
+  results.push(add('D3 神装局不许阵亡', !r.dead, r.dead ? '阵亡' : `剩余 HP ${r.hp}`));
+  return r;
+}
+
 // ── C 段：地形连通性（**不看 AI**，只看塔本身通不通）──────────────────
 //
 // ⚠️ 口径与「自动通关」完全不同：它**把战斗和钥匙都拿掉**（假设勇者无敌、钥匙无限、
@@ -414,7 +499,9 @@ async function main() {
     // 打包 + 载入走 `tools/autoplay/bundle.mjs`（与 `npm run autoplay` 同一份配置）
     const bundle = await import(pathToFileURL(path.join(__dirname, 'autoplay/bundle.mjs')).href);
     sectionZone1(results, await bundle.loadPlanner());
-    sectionSim(results, await bundle.loadSim());
+    const simMod = await bundle.loadSim();
+    sectionSim(results, simMod);
+    sectionStructural(results, simMod);
     if (withPhases) sectionPhases(results, await bundle.loadPlanner());
   }
 

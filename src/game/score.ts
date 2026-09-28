@@ -34,7 +34,15 @@ import { shopCost, shopGain } from '../../core/shop.mjs';
 import { shopOptions } from './engine/shop';
 import { merchantOffers } from './engine/merchant';
 import { previewBattle } from './engine/vitals';
-import { DIRS, entitiesOn, entityAt, entityKey, tileAt, type GameState } from './state';
+import {
+  DIRS,
+  entitiesOn,
+  entityAt,
+  entityKey,
+  monsterClearsGame,
+  tileAt,
+  type GameState
+} from './state';
 import { footprintAt, inFootprint } from './footprint';
 
 // ── 分数：带明细，便于诊断与调参 ────────────────────────────────────
@@ -104,7 +112,8 @@ function remainingMonsters(state: GameState, data: GameData): string[] {
     for (const e of entitiesOn(state, data, floor)) {
       if (e.type !== 'monster') continue;
       if (state.removed.has(`${floor}:${e.x}:${e.y}:monster:${e.id}`)) continue;
-      out.push(state.monsterSwap[`${floor}:${e.x},${e.y}`] ?? e.id);
+      // `e.id` 已经是 swap 之后的真身（`entitiesOn` 里统一换），这里不再重复查
+      out.push(e.id);
     }
   }
   return out;
@@ -231,6 +240,24 @@ export const KEY_BASE: Record<KeyId, number> = { yellowKey: 300, blueKey: 900, r
  * **全靠它**。给 0 的后果是「AI 上去了就再也下不来」，实测会卡死在高层。
  */
 export const MOBILITY = 2500;
+
+/**
+ * **全塔还剩多少扇这种颜色的门**（只看当前仍然存在的格子）。
+ *
+ * 卖钥匙的判据要用它：`state.keys[k] - 还剩的门` 才是真正的过剩量。
+ * 只按固定价卖会让 AI 把钥匙卖到 0（实测神装局 1536 次成交之后卡在 F32）。
+ */
+export function remainingDoorsOf(state: GameState, data: GameData, key: KeyId): number {
+  let n = 0;
+  for (const floor of data.floors.keys()) {
+    for (let y = 0; y < 11; y++) {
+      for (let x = 0; x < 11; x++) {
+        if (data.byChar[tileAt(state, data, floor, x, y)]?.key === key) n++;
+      }
+    }
+  }
+  return n;
+}
 
 /** 一把钥匙值多少血：按**稀缺度**缩放 —— 手里 30 把时第 31 把几乎不值钱 */
 export function keyValue(state: GameState, data: GameData, key: KeyId): number {
@@ -554,6 +581,14 @@ export const NO_THREAT_SCORE = -1000;
 export const BLOCK_BONUS = 2500;
 /** 打不动 */
 export const UNREACHABLE_SCORE = -1e9;
+/**
+ * 击败它即通关 —— **终点目标加成**，大到任何「利润率」门槛都不该否决它。
+ *
+ * 通关是终点，不是可选项，所以这一项和「守护 / 挡路」一样属于**战略项**：
+ * 不随攻防、金币、掉血变化。放在 `UNREACHABLE_SCORE` 之上（1e6 < 1e9），
+ * 这样「打不动」仍然能把一切压下去 —— 打不过就是打不过，雄心壮志不能当攻击力。
+ */
+export const TERMINAL_BONUS = 1e6;
 
 export interface MonsterContext {
   /** 它守着哪件道具（不给就自己算） */
@@ -562,6 +597,8 @@ export interface MonsterContext {
   blocks?: boolean;
   /** 除打它之外的沿路掉血 */
   approachHp?: number;
+  /** 击败它即通关（终点目标）。不给就当作不是 —— 见 `monsterClearsGame` */
+  terminal?: boolean;
 }
 
 /**
@@ -611,6 +648,11 @@ export function monsterScore(state: GameState, data: GameData, monId: string, ct
     });
   }
   if (ctx.blocks) parts.push({ label: '主路径拦路', value: BLOCK_BONUS });
+  // 与「守护 / 挡路」并列的战略项，同样**先算**：即使现在打不动也要看得见
+  // 「它的死就是通关」这件事（那正是以后练到能打的理由）。
+  // ⚠️ 触发条件是 `monsterClearsGame` 试出来的，不是写死的层号 / 怪 id：
+  // 换个最终 BOSS，这条规则跟着走，不需要改代码。
+  if (ctx.terminal) parts.push({ label: '通关目标（击败它即通关）', value: TERMINAL_BONUS });
 
   if (!Number.isFinite(hpLoss)) {
     parts.push({ label: '打不动', value: UNREACHABLE_SCORE });
@@ -851,8 +893,26 @@ export function npcOfferScore(
     parts.push({ label: `换「${o.title}」`, value: v - o.price });
     parts.push({ label: '金币余量', value: state.gold - o.price });
   } else {
-    // 回收（第 28 层卖黄钥匙）：金币进来，钥匙出去 —— 净额就是售价
-    parts.push({ label: `出售「${o.title}」`, value: o.price });
+    //
+    // 回收（第 28 层商人按 100 金币/把 买黄钥匙）。
+    //
+    // ⚠️ 这里原先只记 `+price`（**没记交出去的钥匙**），于是「卖钥匙」成了一笔
+    // 无本生意：神装局（999 把）实测连卖 **1536 次**、把黄钥匙卖到 0，
+    // 然后在第 32 层因为缺一把黄钥匙开不了门而卡死。
+    //
+    // 正确的判据是**过剩量**：手上比「全塔还剩多少扇这种门」多出来的部分才卖得。
+    // 这样钥匙多的时候会一路卖到刚好够用，钥匙紧张时一分都不卖。
+    const id = String(o.raw.item);
+    const count = Number(o.raw.count ?? 1);
+    const isKey = (['yellowKey', 'blueKey', 'redKey'] as string[]).includes(id);
+    const surplus = isKey ? state.keys[id as KeyId] - remainingDoorsOf(state, data, id as KeyId) : 0;
+    if (!isKey || surplus < count) {
+      parts.push({ label: `出售「${o.title}」（钥匙不够过剩）`, value: -1 });
+    } else {
+      parts.push({ label: `出售「${o.title}」（过剩 ${surplus}）`, value: o.price });
+      // 交出 count 把钥匙，代价按该色的稀缺度计价 —— 过剩时它已经接近底价
+      parts.push({ label: '交出钥匙', value: -keyValue(state, data, id as KeyId) * count * 0.2 });
+    }
   }
   const sc = mk('npc', `商人：${o.title}`, parts);
   sc.meta = { offerIndex: o.index };
@@ -972,7 +1032,9 @@ export function floorScores(
         id: e.id,
         score: monsterScore(state, data, e.id, {
           guards: guardedItemAt(state, data, floor, e),
-          blocks: blocking.has(`${e.x},${e.y}`)
+          blocks: blocking.has(`${e.x},${e.y}`),
+          // 诊断与实际**必须**同一个数（`costHp` 那一行的教训）：这里也把终点目标算进去
+          terminal: monsterClearsGame(state, data, floor, e.x, e.y, e.id)
         })
       });
     } else if (e.type === 'npc') {

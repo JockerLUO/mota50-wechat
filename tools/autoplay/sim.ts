@@ -14,7 +14,7 @@ import { loadData } from '../../src/data';
 import { buyStat, newGame, step, tradeAccept, travelTo, useItem } from '../../src/game/engine';
 import { previewBattle } from '../../src/game/engine/vitals';
 import { createAutoMemory, decideAutoAction, explainDecision, explainStop, isCleared, progressOf, type AutoAction, type AutoMemory, type Decision, type Rejection } from '../../src/game/autoplay';
-import { tileAt } from '../../src/game/state';
+import { entityAt, tileAt } from '../../src/game/state';
 import { loadWalkthrough } from './walkthrough';
 import { applyKeySpec } from './diag-state';
 import type { GameData, GameState } from '../../src/data';
@@ -238,9 +238,13 @@ function dumpLeftovers(state: GameState, data: GameData, maxFloor: number): stri
       if (e.type === 'item' && !state.removed.has(`${f}:${e.x}:${e.y}:item:${e.id}`)) {
         items.push(data.items[e.id]?.name ?? e.id);
       }
-      if (e.type === 'monster' && !state.removed.has(`${f}:${e.x}:${e.y}:monster:${e.id}`)) {
-        const p = previewBattle(state, data, e.id);
-        mons.push(`${data.monsters[e.id]?.name ?? e.id}${p?.canWin ? '' : '(打不动)'}`);
+      // ⚠️ 读 `entityAt`（它会应用封印解除的 swap），不读 `data` 里的 id ——
+      // 第 50 层数据里永远是「魔王（封印前）」，直接读它会报出「(打不动)」这个**假象**，
+      // 而那一格早已被 swap 成真魔王。这个假象骗过一次排查（神装局的 F50 循环）。
+      const cur = entityAt(state, data, f, e.x, e.y);
+      if (e.type === 'monster' && cur?.type === 'monster' && !state.removed.has(`${f}:${cur.x}:${cur.y}:monster:${cur.id}`)) {
+        const p = previewBattle(state, data, cur.id);
+        mons.push(`${data.monsters[cur.id]?.name ?? cur.id}${p?.canWin ? '' : '(打不动)'}`);
       }
     }
     const shop = fd.entities.some((e) => e.type === 'npc' && e.id === 'shop') ? ' [商店]' : '';
@@ -391,7 +395,20 @@ export function simulate(maxSteps = 40000, verbose = false, init?: SimInit): Sim
           `黄${state.keys.yellowKey} 蓝${state.keys.blueKey} 红${state.keys.redKey} → ${action.kind} ${g}`
       );
     }
-    const sig = `${state.floor}:${state.pos.x},${state.pos.y}:${action.kind}:${JSON.stringify(action).slice(0, 60)}`;
+    //
+    // ⚠️ 签名必须**带上状态**（2026-09-28）。原先是「层 + 坐标 + 动作」，
+    // 于是「站在同一点连续做 13 次同一种动作」一律判成卡住 —— 而**有些动作
+    // 本来就可以连着做很多次，且每次都在改变状态**：第 28 层的商人按 100 金币
+    // 回收黄钥匙，神装局（999 把钥匙）连卖 13 把就被误判成「走投无路」，
+    // 报告写「卡在 F28」—— 而它其实一直在赚钱。
+    //
+    // 真正的死循环是「**状态没变**还在原地重复」。所以把金币 / 生命 / 钥匙 /
+    // 已清理实体数 / 被动数折进签名：只要这些里有一个在动，就不算卡。
+    // （不折 `stats.steps` —— 它每步都变，折进去等于关掉这条探针。）
+    const sig =
+      `${state.floor}:${state.pos.x},${state.pos.y}:${action.kind}:${JSON.stringify(action).slice(0, 60)}:` +
+      `${state.hp}:${state.gold}:${state.keys.yellowKey},${state.keys.blueKey},${state.keys.redKey}:` +
+      `${state.removed.size}:${state.passives.length}:${Object.keys(state.bag).length}`;
     //
     // 死循环探针只认「**连续**同一动作」—— 用「累计」会把大回环里的
     // 重复路过误判成死循环（勇者每次从低层回来都路过 (2,6) 执行同一步上楼，

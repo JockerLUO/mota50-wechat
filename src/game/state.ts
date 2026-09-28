@@ -115,6 +115,11 @@ export interface GameState {
    * 这条约束由静态判据守（铁律 #66）：只有 `state.ts` 里允许出现
    * `floorOf(data, …).entities`。
    *
+   * 同一个理由，**换怪（`monsterSwap`）也在 `entitiesOn()` 里统一生效** ——
+   * 第 50 层那一格在数据里永远是「魔王（封印前）」，只有经过这里才会变成真身。
+   * 见 `entitiesOn` 里面的长注释：漏查 swap 的那几处（贪心目标生成、`hasWall`、
+   * `floorHasWork`、诊断输出）曾让 AI 一路走到 F50 却永远打不动最终 BOSS。
+   *
    * 移除走的还是 `removed` 那一套 key（`entityKey`），所以事件放的实体
    * 被打死 / 被捡走 / 被 `remove` 之后，不会因为「它不在 data 里」而复活。
    */
@@ -195,7 +200,38 @@ export function patchTile(state: GameState, floor: number, x: number, y: number,
 export function entitiesOn(state: GameState, data: GameData, floor: number): FloorEntity[] {
   const base = floorOf(data, floor).entities;
   const extra = state.spawned[floor];
-  return extra && extra.length ? [...base, ...extra] : base;
+  const list = extra && extra.length ? [...base, ...extra] : base;
+  //
+  // ★ 换怪（`monsterSwap`）在这里**统一生效**，调用方不需要、也不应该再自己查一次。
+  //
+  // 第 50 层是唯一的例子，也是为什么这条必须写在这儿：`data/floors` 是静态的，
+  // 那一格永远写着「魔王（封印前）」（def 1000）；击败第 49 层四守卫后
+  // `f49-seal-break` 把它 `replaceMonster` 成真魔王（def 190）。
+  // 换怪前有 `entityAt` / `livingMonsters` 两处各自手查了一遍 swap，而
+  // 「按 id 算怪」的地方（贪心的目标生成、`hasWall`、`floorHasWork`、
+  // 诊断输出）**全都漏了** —— 它们照着 def 1000 判「打不动」，
+  // 于是 AI 一路走到 F50 却**永远不碰真正的最终 BOSS**，退回 F48 死循环。
+  // （实测现场：`怪剩 1：魔王（封印前）(打不动)`，而那一格当时已经是真魔王，一刀就死。）
+  //
+  // 教训与 `footprint.ts` 文件头同一条：**同一件事只能有一个判据来源**。
+  // 只要还需要「记得再查一次 swap」，早晚会有人忘。放这儿以后，
+  // `removed` 的 key 也跟着自动对齐（真魔王用真魔王的 key），不会再出现
+  // 「杀了真身、假身复活」这类错位。
+  if (!hasSwapOnFloor(state, floor)) return list;
+  return list.map((e) => {
+    if (e.type !== 'monster') return e;
+    const to = state.monsterSwap[`${floor}:${e.x},${e.y}`];
+    return to && to !== e.id ? { ...e, id: to } : e;
+  });
+}
+
+/** 该层是否存在换怪记录 —— `entitiesOn` 的快路径（绝大多数层没有，保持原数组不动） */
+function hasSwapOnFloor(state: GameState, floor: number): boolean {
+  const prefix = `${floor}:`;
+  for (const k of Object.keys(state.monsterSwap)) {
+    if (k.startsWith(prefix)) return true;
+  }
+  return false;
 }
 
 /**
@@ -250,13 +286,9 @@ export function entityAt(
   y: number
 ): FloorEntity | null {
   for (const e of entitiesOn(state, data, floor)) {
-    // 怪物替换：这一格若被 swap，先看是否命中（同一格），命中就返回新怪物。
-    // 注意要在 removed 检查**之前**：假魔王「现出真身」后，它自己并没被打败，
-    // 而是「这一格现在是真魔王」，所以要优先读 swap。
-    const swapped = state.monsterSwap[`${floor}:${e.x},${e.y}`];
-    if (swapped && e.type === 'monster' && e.x === x && e.y === y) {
-      return { type: 'monster', id: swapped, x, y };
-    }
+    // ⚠️ 换怪（`monsterSwap`）已经在 `entitiesOn` 里生效，这里**不要再查一次** ——
+    // 从前那两行「先看 swap」既冗余、又只保护了本函数自己（见 `entitiesOn` 的注释）。
+    // 顺序问题也随之消失：`e.id` 现在就是当前的真身，`removed` 用的正是它的 key。
     if (state.removed.has(entityKey(floor, e.x, e.y, e.type, e.id))) continue;
     if (e.x === x && e.y === y) return e;
     if (e.type !== 'monster' || !data.monsters[e.id]?.boss) continue;
@@ -274,12 +306,56 @@ export function livingMonsters(
   const out: { id: string; x: number; y: number; fp: Footprint }[] = [];
   for (const e of entitiesOn(state, data, floor)) {
     if (e.type !== 'monster') continue;
+    // 换怪已在 `entitiesOn` 生效：`e.id` 就是当前真身，`removed` 的 key 因此天然对齐
     if (state.removed.has(entityKey(floor, e.x, e.y, e.type, e.id))) continue;
-    const swapped = state.monsterSwap[`${floor}:${e.x},${e.y}`];
-    const id = swapped ?? e.id;
-    out.push({ id, x: e.x, y: e.y, fp: entityFootprint(data, { ...e, id }) });
+    out.push({ id: e.id, x: e.x, y: e.y, fp: entityFootprint(data, e) });
   }
   return out;
+}
+
+/**
+ * 是否已通关：第 50 层的魔王（封印解除后是真魔王）**全部**已被击败。
+ *
+ * ⚠️ 这个判据只允许有一份。它原先在 `autoplay.ts` 与 `planner.ts` 里各写了一遍，
+ * 两处都要自己记得查 `monsterSwap`；而「按 id 算怪」的第三、第四处（贪心的目标生成、
+ * `hasWall`）**都忘了**，于是 AI 一路走到第 50 层却永远打不动最终 BOSS。
+ * 现在它和 `entitiesOn` 住在同一个文件里：读的就是「现在这一格是谁」。
+ */
+export function isCleared(state: GameState, data: GameData): boolean {
+  for (const e of entitiesOn(state, data, 50)) {
+    if (e.type !== 'monster') continue;
+    // 胜 = 「当前这一格的魔王」已被击败（`entitiesOn` 已把假魔王换成真身）
+    if (!state.removed.has(entityKey(50, e.x, e.y, 'monster', e.id))) return false;
+  }
+  return true;
+}
+
+/**
+ * 击败它是否**直接导致通关** —— 即「通关终点目标」。
+ *
+ * 判据是**试一次**：把它加进 `removed` 再看 `isCleared`。不写死层号、不写死怪 id，
+ * 所以换个最终 BOSS / 换层也不会有隐藏假设。
+ *
+ * 为什么需要这个：通关条件是**终点**，不是可选项。用「利润率」这把尺子去量它是
+ * 范畴错误 —— 实测（神装局）逼到第 50 层，贪心给出的理由是
+ * 「怪「真魔王」(5,5) —— 利润率不够：得分 -1649 < 需要 3460」，
+ * 也就是说：打得动、也不会死，但「不划算」，于是它退回第 48 层转圈。
+ * 这与「不掉血的怪分数为负」是同一族规则的**例外**：那一条针对可清可不清的经济项，
+ * 而终点目标没有「不清」这个选项。
+ */
+export function monsterClearsGame(
+  state: GameState,
+  data: GameData,
+  floor: number,
+  x: number,
+  y: number,
+  id: string
+): boolean {
+  if (isCleared(state, data)) return false; // 已经通关，没有终点目标了
+  if (state.removed.has(entityKey(floor, x, y, 'monster', id))) return false;
+  const probe: GameState = { ...state, removed: new Set(state.removed) };
+  probe.removed.add(entityKey(floor, x, y, 'monster', id));
+  return isCleared(probe, data);
 }
 
 /** 勇者是否持某件被动道具 */

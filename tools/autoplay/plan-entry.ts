@@ -55,11 +55,15 @@ export function runPhases(opts: {
   goalPatience?: number;
   /** 每轮打印一行搜索状态（调策略用） */
   beamDebug?: boolean;
+  /** 起手状态覆盖（与 `autoplay-sim` 的 `--hp/--atk/--def/--keys` 同一套语义） */
+  init?: { hp?: number; atk?: number; def?: number; keys?: string };
   /** 不做范围限制（整座塔） */
   full?: boolean;
 }) {
   const data: GameData = loadData();
+  INIT = opts.init;
   const state: GameState = newGame(data);
+  applyInit(state);
   const wt = loadWalkthrough();
   const acts = wt.acts ?? [];
   const act = opts.full ? undefined : (acts.find((a) => a.id === (opts.act ?? acts[0]?.id)) ?? undefined);
@@ -80,6 +84,23 @@ export function runPhases(opts: {
       : undefined,
     until: opts.full ? undefined : act?.until
   });
+}
+
+/**
+ * 起手覆盖 —— 与 `tools/autoplay/sim.ts` 的 `SimInit` **同一套语义**。
+ *
+ * 存在的理由同那里：默认那一局永远是 1000 血 / 10 攻 / 10 防 / 0 钥匙，
+ * 于是「上不去」是**路线问题**还是**属性问题**分不开。神装起手能把两者分离 ——
+ * 剩下的只可能是**结构**问题（门、事件、楼梯）。
+ */
+let INIT: { hp?: number; atk?: number; def?: number; keys?: string } | undefined;
+function applyInit(state: GameState): void {
+  if (!INIT) return;
+  if (INIT.hp !== undefined) state.hp = INIT.hp;
+  if (INIT.atk !== undefined) state.atk = INIT.atk;
+  if (INIT.def !== undefined) state.def = INIT.def;
+  const m = INIT.keys ? /^y(\d+)b(\d+)r(\d+)$/.exec(INIT.keys) : null;
+  if (m) state.keys = { yellowKey: Number(m[1]), blueKey: Number(m[2]), redKey: Number(m[3]) };
 }
 
 /** 当前默认范围（第一幕）的名字与终点 —— 报告里要写清楚「判的是哪一幕」 */
