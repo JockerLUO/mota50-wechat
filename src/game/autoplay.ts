@@ -48,7 +48,7 @@
  */
 
 import type { GameData, KeyId, Stat } from '../data';
-import { entityAt, entityKey, livingMonsters, tileAt, type Dir, type GameState } from './state';
+import { entitiesOn, entityAt, entityKey, livingMonsters, tileAt, type Dir, type GameState } from './state';
 import { touchesFootprint } from './footprint';
 import {
   CATEGORY_ORDER,
@@ -340,7 +340,7 @@ function reach(state: GameState, data: GameData, fight: boolean, from?: { x: num
 
   for (let iter = 0; iter < 8; iter++) {
     const pick = emptyKeys();
-    for (const e of data.floors.get(floor)?.entities ?? []) {
+    for (const e of entitiesOn(state, data, floor)) {
       if (e.type !== 'item' || !isKeyId(e.id)) continue;
       if (state.removed.has(`${floor}:${e.x}:${e.y}:item:${e.id}`)) continue;
       const k = K(e.x, e.y);
@@ -544,7 +544,7 @@ function keyDetour(
   for (const k of KEY_IDS) {
     if (state.keys[k] >= need[k]) continue;
     // 本层有能捡到的这种钥匙吗？（用不动点后的 owned 判「最终够得着」）
-    for (const e of data.floors.get(floor)?.entities ?? []) {
+    for (const e of entitiesOn(state, data, floor)) {
       if (e.type !== 'item' || e.id !== k) continue;
       if (state.removed.has(`${floor}:${e.x}:${e.y}:item:${e.id}`)) continue;
       const kk = K(e.x, e.y);
@@ -778,11 +778,19 @@ function decide(
   const goals: Goal[] = [];
   const freeKills: Goal[] = [];
 
+  // ⚠️ 下面三个候选循环（道具 / 怪物 / NPC）必须一律走 `entitiesOn(state, data, floor)`，
+  //    **不能**写 `data.floors.get(floor)?.entities` —— 那是**静态数据表**，看不见
+  //    事件 `spawn` 出来的实体。2026-09-28 实测事故就是这三行：第 20 层的吸血鬼是
+  //    `f20-bat-merge` 用 `spawn` 放上去的，静态表里没有它 ⇒ AI 走到 (5,7) 时
+  //    「看不到怪物」⇒ 眼里只剩「上楼」⇒ 而 (5,2) 机关门要打死吸血鬼才开 ⇒
+  //    局势循环 31 次、累计掉血 0（引擎侧明明是对的，探针一跑就过）。
+  //    这一族坑 `state.ts` 的文件头已经写过一次，此处是它的第二个现场。
+
   // ── 道具（刻度：省下的血）──
   //
   // 判据本身在 `gateItem()`：**⑤/⑥ 的 `floorHasWork()` 读的是同一个函数**
   // （见「闸门」那一节的文件头注释）。这里只负责把 `kind`/`why` 变成报告的一行。
-  for (const e of data.floors.get(floor)?.entities ?? []) {
+  for (const e of entitiesOn(state, data, floor)) {
     if (e.type !== 'item') continue;
     if (state.removed.has(`${floor}:${e.x}:${e.y}:item:${e.id}`)) continue;
     const label = `道具「${data.items[e.id]?.name ?? e.id}」(${e.x},${e.y})`;
@@ -806,7 +814,7 @@ function decide(
   }
 
   // ── 怪物（刻度：优先级，可正可负）──
-  for (const e of data.floors.get(floor)?.entities ?? []) {
+  for (const e of entitiesOn(state, data, floor)) {
     if (e.type !== 'monster') continue;
     if (state.removed.has(entityKey(floor, e.x, e.y, 'monster', e.id))) continue;
     const monName = data.monsters[e.id]?.name ?? e.id;
@@ -853,7 +861,7 @@ function decide(
   // 搭过话就从地图上消失了（`step.ts`），不筛的话这里会一直把它算成候选 ——
   // 表现是「AI 反复走向一个已经不在的人」。2026-09-27 之前 NPC 永远不会消失，
   // 所以怪物循环有这一行、NPC 循环没有，差异一直没暴露。
-  for (const e of data.floors.get(floor)?.entities ?? []) {
+  for (const e of entitiesOn(state, data, floor)) {
     if (e.type !== 'npc') continue;
     if (state.removed.has(entityKey(floor, e.x, e.y, 'npc', e.id))) continue;
     const g = gateNpc(state, data, floor, e, r);
@@ -1114,7 +1122,7 @@ export function explainStop(state: GameState, data: GameData): string[] {
       );
     }
   }
-  const alive = (data.floors.get(state.floor)?.entities ?? []).filter(
+  const alive = entitiesOn(state, data, state.floor).filter(
     (e) => e.type === 'monster' && !state.removed.has(`${state.floor}:${e.x}:${e.y}:monster:${e.id}`)
   );
   const cannot = alive
@@ -1128,9 +1136,10 @@ export function explainStop(state: GameState, data: GameData): string[] {
 
 /** 是否已通关：第 50 层的魔王（封印解除后是真魔王）已被击败 */
 export function isCleared(state: GameState, data: GameData): boolean {
-  const f = data.floors.get(50);
-  if (!f) return false;
-  for (const e of f.entities) {
+  // ⚠️ 读 `entitiesOn` 而不是 `data.floors.get(50).entities`：第 50 层的魔王是
+  // `f49-seal-break` 用 `replaceMonster` 换出来的、真身由事件决定 —— 只见 data 的
+  // 写法在「魔王是事件放的」那天会静默算错（这里读的正是那一格**当前**是谁）。
+  for (const e of entitiesOn(state, data, 50)) {
     if (e.type !== 'monster') continue;
     // 封印解除后这一格被 swap 成真魔王；否则还是假魔王。通关 = 「当前这一格的魔王」已被击败。
     const cur = state.monsterSwap[`50:${e.x},${e.y}`] ?? e.id;
@@ -1170,7 +1179,7 @@ function hasWall(state: GameState, data: GameData): boolean {
   for (const f of [state.floor, state.floor + 1]) {
     const fd = data.floors.get(f);
     if (!fd) continue;
-    for (const e of fd.entities) {
+    for (const e of entitiesOn(state, data, f)) {
       if (e.type !== 'monster') continue;
       if (state.removed.has(`${f}:${e.x}:${e.y}:monster:${e.id}`)) continue;
       const m = data.monsters[e.id];
@@ -1466,7 +1475,7 @@ function floorHasWork(
   // 从落地位置做一次可达性：锁在够不着的门后的东西不算「活」
   const r = reach(state, data, true, from, floor);
   const blocking = blockingMonsters(state, data, floor);
-  for (const e of f.entities) {
+  for (const e of entitiesOn(state, data, floor)) {
     if (e.type === 'item') {
       if (state.removed.has(`${floor}:${e.x}:${e.y}:item:${e.id}`)) continue;
       if (gateItem(state, data, floor, e, r).ok) return true;

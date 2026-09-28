@@ -671,6 +671,17 @@ tools/
 **另有两项口径差异**（非缺口，成因已确认，详见 `docs/source-review.md` §4.3）：
 黄钥匙比基准帖少 15 把（商人出售部分不在地图数据中）、怪物金币总和比基准帖高 20.4%（全清 vs 最优路线）。
 
+**🆕 本轮（2026-09-28 第十轮）新增第 10 项，并把整份缺口清单升级为「可自动对账」：**
+
+| # | 缺口 | 严重度 | 是否阻塞运行时开发 |
+|---|---|---|---|
+| 10 | ~~事件表只覆盖了 1/5 的触发源~~ → **已补齐 20 条**（§11.1），事件表 12 → 32 条 | 🟢 已解决 | 否 —— 全塔 26 格「没钥匙能开」的门现在都有事件去开 |
+| 11 | **F39 的条件含 `alive`**，本项目无此算子（§11.4） | 🟡 中 | 否 —— 只影响第 39 层的一个瞬移机关 |
+| 12 | 第 49 层「假魔王军团」两源落点不同（§11.3） | ⚪ 口径 | 否 —— 本项目把它表达成第 50 层的 `demonKing` |
+
+⇒ 这一轮之后，「事件缺口」这件事**不再需要靠人记**：`npm run audit` 会一次跑完
+`validate` + 门审计 + 跨源对账三件事，并给出上面这套分类（§11.2）。
+
 ---
 
 ## 9. 这些缺口现在会被自动检出来
@@ -680,25 +691,34 @@ tools/
 ```
 I · 参考源完整性
   [ .. ] 参考数据中从未放置的怪物 2 只：吸血鬼(vampire)、真魔王(demonKingTrue)
-  [ .. ] 其中 BOSS：吸血鬼、真魔王 —— 对应区域没有 BOSS 战
+  [ .. ] 其中 BOSS：吸血鬼 —— 静态地图里没有，但已由 data/events.json 的 spawn 算子补上（BOSS 战存在）
+  [ .. ] 其中 BOSS：真魔王 —— 对应区域没有 BOSS 战，见 known-gaps §2/§4
   [ .. ] 定义了但从未出现在地图上的道具 4 项：怪物书(10)、地震卷轴(15)、对称飞行器(16)、屠龙剑(21)
-  [ .. ] 定义了但从未出现在地图上的 NPC 2 个：小偷(34)、仙子(35)
-  [ .. ] 楼梯图在 3 处断开，均位于区域边界 BOSS 层（属原版设计手法而非数据损坏）：
-         10 → 11   声明方式 = event      仅有一次性的「向上飞行器」可能覆盖
-         40 → 41   声明方式 = teleport   仅有一次性的「向上飞行器」可能覆盖
-         49 → 50   声明方式 = teleport   仅有一次性的「向上飞行器」可能覆盖
-  [WARN] 3 处区域边界通路缺少数据支撑，实现后玩家会卡在 BOSS 层
-  [ .. ] data/events.json 尚未重建
+  [ .. ] 定义了但从未出现在地图上的 NPC 1 个：仙子(35)
+  [ .. ] 楼梯图在 3 处断开，均位于区域边界 BOSS 层（打完 BOSS 才通行，属原版设计手法而非数据损坏）：
+         10 → 11   声明方式 = event      已由剧情事件实现 ✓
+         40 → 41   声明方式 = teleport   已由剧情事件实现 ✓
+         49 → 50   声明方式 = teleport   已由剧情事件实现 ✓
+  [ OK ] 所有区域边界的通路都已在 data/events.json 中实现
+  [ OK ] data/events.json 存在，含 32 条事件
+  [ OK ] 4 条剧情台词（say）事件，每条至多一条台词
+  [ OK ] 剧情台词（say）都挂在「能把台词交回界面」的触发点上
+  [ OK ] enterTile 触发点都不在楼梯格/落点上（那几格是踩不响的）
 ```
 
 **这样设计的意图：** 这些缺口原本只能靠人读文档记住。放进校验器后，
 它们变成每次运行都会浮现的输出 —— 修好之后警告自动消失（I2 段会检查 `events.json` 里是否真的有对应的 `addStair` 事件）。
 
-当前校验结果：**32 项通过，1 项警告，0 项失败**。
+当前校验结果：**39 项通过，1 项警告，0 项失败**。
 唯一警告是黄钥匙口径差异（已确认不可修，见上）。三处边界通路已全部「已由剧情事件实现 ✓」。
 
 > **2026-09-25 更新：** 边界通路已解决。`data/events.json` 已重建（4 条事件：3 条 `addStair` + 1 条 `replaceMonster`），
 > I2 段的「3 处区域边界通路缺少数据支撑」警告随之消失（同时修正了 I2 段对 `addStair` 与跨层入口的识别）。
+>
+> **2026-09-28 更新（第十轮）：** 事件表补到 **32 条**。I 段新增两条正面判据 ——
+> 「`say` 必须挂在**能把台词交回界面**的触发点上」（在此之前原版那几条剧情台词一条都没被播出来过）
+> 与「`enterTile` 触发点都不在楼梯格／落点上」（落在楼梯上**永远踩不响**，铁律 #62 同族）。
+> 跨源对账的完整台账见 §11。
 
 ---
 
@@ -708,16 +728,149 @@ I · 参考源完整性
 
 | 环节 | 文件 | 做了什么 |
 |---|---|---|
-| 数据 | `data/events.json` | 4 条事件（`f10-zone1-clear` / `f40-zone4-clear` / `f24-gate-to-50` / `f49-seal-break`） |
-| 类型 | `src/data/types.ts` | `GameEvent` / `EventEffect`（`addStair`）/ `ReplaceMonsterEffect`（`replaceMonster`）；`GameData.events` 字段 |
+| 数据 | `data/events.json` | **32 条事件**（4 条通路/解封 + 吸血鬼 2 条 + 35 层门 + **20 条守卫门与奖励**，见 §11） |
+| 类型 | `src/data/types.ts` | 触发器 5 种（`defeated` / `start` / `allDefeated` / `talked` / `enterTile`）；效果 10 种（`addStair` / `replaceMonster` / `clearTerrain` / `mulStat` / `grantItem` / `setTerrain` / `teleport` / `spawn` / `remove` / `say`） |
 | 读取 | `src/data/index.ts` + `runtime-files.mjs` + `source-web.ts` | 把 `events.json` 纳入运行时数据清单 |
-| 引擎 | `src/game/engine/events.ts` | `applyTrigger` 匹配 `defeated` / `allDefeated` / `start`，执行 `addStair`（写 `state.extraStairs`）与 `replaceMonster`（写 `state.monsterSwap`） |
-| 状态 | `src/game/state.ts` | `extraStairs` + `monsterSwap` + `fired` 三个新字段；`entityAt`/`livingMonsters` 优先读 `monsterSwap`；`stairsOn` 合并读数据楼梯与 `extraStairs` |
-| 触发 | `src/game/engine/step.ts` | 击败怪物后 `applyTrigger(defeated)` + `applyTrigger(allDefeated)`；换层判定改用 `stairsOn` |
+| 引擎 | `src/game/engine/events.ts` | `applyTrigger` 匹配 5 种触发器，执行全部 10 种效果 |
+| 状态 | `src/game/state.ts` | `extraStairs` + `monsterSwap` + `spawned` + `removed` + `fired` 等字段；`entityAt`/`livingMonsters` 优先读 `monsterSwap`；`stairsOn` 合并读数据楼梯与 `extraStairs` |
+| 触发 | `src/game/engine/step.ts` | 击败怪物后 `applyTrigger(defeated)` + `applyTrigger(allDefeated)`；走到新格后 `applyTrigger(enterTile)`；换层判定改用 `stairsOn` |
 
-**两个最容易踩的坑**（都已在实现时规避）：
+**三个最容易踩的坑**（都已在实现时规避）：
 
 1. **`allDefeated` 必须限定 `floor`** —— 守卫 `darkKnight` 全塔 12 只、`seniorWizard` 14 只，
    不限定第 49 层统计会永不解封。`f49-seal-break` 的 trigger 带 `floor: 49`。
-2. **`replaceMonster` 不标 `removed`** —— 真身出现 ≠ 被打败，`entityAt` 里 `monsterSwap` 检查要
+2. **`allDefeated` 与 `defeated` 都还要能限定「哪一格」** —— 第 17 层有 4 组
+   「打死门口两名守卫 → 开那扇机关门」，其中两组是**同一批怪**（`juniorGuard`）：
+   只按 `ids + floor` 数会让「打死 A 组的守卫」顺手把 B 组的门也开了（谜题被抹平，
+   而且没有任何东西会红）。第 11 层更极端：第 3 名同种怪在门后，按种类数会**死锁**。
+   ⇒ 所以有 `at: [{x,y}]` 与 `defeated.x/y` 两种**按格**写法。
+3. **`replaceMonster` 不标 `removed`** —— 真身出现 ≠ 被打败，`entityAt` 里 `monsterSwap` 检查要
    **先于** `removed` 检查，否则假魔王被换成真魔王后那一格读出来是 null。
+
+---
+
+## 11. 事件对账（2026-09-28 第十轮）：「完善所有事件」的台账
+
+原版 `mota-data.js` 有 151 个触发点、25 种算子。**「完善所有事件」这句话本身没有终点** ——
+纯演出的 `text` / `sfx` / `sleep` / `tip` 少一句不影响任何事。所以本轮把它收窄成一件**可验收**的事：
+
+> **每一个会改变「能不能走下去 / 能不能拿到东西」的触发，在本项目里都有对应物。**
+
+判据是两条脚本，都接进了 npm：
+
+| 命令 | 工具 | 管什么 |
+|---|---|---|
+| `npm run audit:events` | `tools/audit-event-gaps.mjs` | **跨源对账**：原版每个 `open`/`close`/`set`/`hide` 的目标格，本项目有没有对等产物（`--all` 连 no-op 与演出一起列） |
+| `npm run audit:doors` | `tools/audit-special-doors.mjs --solved` | **精判据**（只用本项目数据）：地图上「没有钥匙能开」的 26 格门／牢门，每一格都**真的有人去开**；再跑一遍不动点可达性证明 50 层上楼梯全通 |
+
+两条判据**各管一段**：前者问「原版有什么 vs 我们少了什么」，后者问「我们要开的那扇门，
+在**我们自己的**规则下开得开吗」。缺任一条都会漏 —— 前者看不见「两源结构不同」，
+后者看不见「原版有而我们连门都没有」。
+
+> ⚠️ **两套坐标同屏**：触发键是**原版 1 基**、目标格是**本项目 0 基**。
+> 脚本里两边都显式标了 `原版(…)` / `本项目(…)`，因为踩过一次「拿原版坐标去本项目地图上找那一格」。
+
+### 11.1 本轮新增的 20 条事件（事件表 12 → 32 条）
+
+| 事件 id | 触发 | 效果 |
+|---|---|---|
+| `f2-hidden-passage` | `enterTile (2,6)@F2` | `setTerrain '.'`×1 |
+| `f10-ambush` | `enterTile (5,5)@F10` | `say`×1 + `setTerrain 'a'`×2 |
+| `f10-captain-doors` | `defeated skeletonCaptain@F10(5,3)` | `setTerrain '.'`×3 + `spawn`×4 |
+| `f11-mage-door` | `allDefeated@F11 at (0,4)(2,4)` | `setTerrain '.'`×1 |
+| `f14-secret-red-key` | `allDefeated@F14 at (0,0)(2,0)(1,1)` | `setTerrain '.'`×1 |
+| `f15-kraken-door` | `defeated kraken@F15(5,4)` | `setTerrain '.'`×1 |
+| `f17-west-north-door` | `allDefeated@F17 at (0,4)(2,4)` | `setTerrain '.'`×1 |
+| `f17-west-south-door` | `allDefeated@F17 at (0,7)(2,7)` | `setTerrain '.'`×1 |
+| `f17-east-north-door` | `allDefeated@F17 at (8,4)(10,4)` | `setTerrain '.'`×1 |
+| `f17-east-south-door` | `allDefeated@F17 at (8,7)(10,7)` | `setTerrain '.'`×1 |
+| `f25-archmage-keys` | `defeated archmage@F25(5,5)` | `spawn redKey`×4 |
+| `f30-slime-counter` | `allDefeated@F30 at 6 格史莱姆` | `setTerrain '.'`×1 |
+| `f32-guard-door` | `allDefeated@F32 at (0,9)(2,9)` | `setTerrain '.'`×1 |
+| `f34-guard-keys` | `allDefeated@F34 at 8 格守卫` | `setTerrain '.'`×1 + `spawn`×5 |
+| `f38-guard-door` | `allDefeated@F38 at (0,9)(2,9)` | `setTerrain '.'`×1 |
+| `f44-guard-door` | `allDefeated@F44 at (4,8)(6,8)` | `setTerrain '.'`×1 |
+| `f45-dark-knight-door` | `allDefeated@F45 at (4,8)(4,10)` | `setTerrain '.'`×1 |
+| `f45-magic-guard-door` | `allDefeated@F45 at (7,8)(7,10)` | `setTerrain '.'`×1 |
+| `f49-outer-chamber-door` | `allDefeated@F49 at (4,9)(6,9)` | `setTerrain '.'`×1 |
+| `f49-inner-chamber-door` | `allDefeated@F49 at (4,7)(6,7)` | `setTerrain '.'`×1 |
+
+三条要单独记住的：
+
+* **`f14-secret-red-key`** 是「有产物没条件」的典型：第 14 层 (0,2) 关着一把红钥匙，
+  而**全塔没有任何钥匙能开它**（既不是黄/蓝/红门，也不是机关门）⇒ 那把钥匙永久拿不到。
+  原版是「打死把守的 3 只 → 开 (0,2)」。
+* **`f17` 的四组必须带 `at` 坐标**：西翼两组是**同一批怪**（`juniorGuard`）。
+  按种类数会让「打死北面的」顺手开「南面的」门 —— 谜题被抹平且没有判据会红。
+* **`f10-ambush` 的触发格是 (5,5)，不是占位块里的格**：骷髅队长的 3×3 占位块是
+  `x4..6 y2..4`。第一版把触发格取在块内的 (5,4)，于是埋伏台词与那一场战斗挤在**同一步**、
+  日志互相覆盖，并且把 A21b 判据的靶点 (5,2) 顺手落了锁。挪到块外的 (5,5) 才对。
+
+### 11.2 对账口径：218 个目标格分四类
+
+```
+原版会改地图的触发 59 个，目标格 218 个：
+  · 80 格本来就对上（no-op，本项目那格早就是原版想要的样子）
+  · 18 格是**演出**（同一段里 set 完又 hide，地图上不留痕迹）
+  · 92 格已由 data/events.json 覆盖（含 clearTerrain 按编号清全层）
+  · 28 格是**真缺口**（分布在 6 个触发里）
+```
+
+四类里**每一类都曾经假过一次**，这也是这个工具迭代了四轮的原因：
+
+| 类 | 第一版怎么错的 | 修法 |
+|---|---|---|
+| no-op | 第一版不滤 no-op ⇒ 报「原版 88 格 vs 本项目 3 格」，全是假缺口 | `isNoop()` |
+| 覆盖 | 只认 `setTerrain` ⇒ 漏了 `clearTerrain`（F2 牢门 / F8、F30 机关门都用它） | 按 `legend` 编号建字符索引 |
+| 覆盖 | no-op 拿**地形字符**比 ⇒ `open` 到假墙 `w`（第 15/19/29 层）被误报 | 改绑 `legend.passable`（通不通），不绑字符 |
+| 覆盖 | 不展开 `cutscene` ⇒ 第 10 层那两扇机关门（在 `mt10ambush` 里）看不见 | `flatten` 补 cutscene 展开 |
+| 演出 | 只看「这段里有没有 `hide` 这一格」⇒ `mt49win` 的**先 hide 再 set** 把两件真奖励误判成演出 | 按 **op 先后顺序**算（`set` 后出现的 `hide` 才抵消） |
+
+### 11.3 剩下 28 格真缺口：6 条触发全部有结论
+
+| 触发（原版 1 基） | 格数 | 类 | 结论 |
+|---|---|---|---|
+| `F39 auto` | 2 | 🔴 **缺算子** | 条件含 **`alive`** —— 见 11.4 |
+| `F41 after@(10,2)` | 4 | 🟡 **降级实现** | 原版「打死假墙 → 关 3 格 ／ 开 2 格 ／ 出现降临之翼」。本项目用 `hiddenIn: "墙"` + `breakWall` 让玩家从**同一面墙**里拿到**同一件**降临之翼（`data/floors/floor-41.json` 的 `{"id":"downFlyer","x":9,"y":1,"hiddenIn":"墙"}`），只是没有那 5 格地形重排 |
+| `F49 step@(6,6)` | 9 | ⚪ **源结构差异** | 原版第 49 层有个「假魔王 3×3 军团」（1 `redKing` + 8 `whiteKing`）。本项目把这一段表达成**第 50 层**的 `demonKing`（再由 `f49-seal-break` 换成真身）—— 两源对同一段剧情的**落点**不同 |
+| `F49 after@(6,3)` | 11 | ⚪ **源结构差异** | 同上那场战斗的奖励房间（红钥匙 + 小刀 + 3 红宝石 + 3 蓝宝石 + 3 蓝药水） |
+| `F40 step@(6,7)` | 1 | ⚪ **口径差异** | 原版在 F40 加一扇 `upFloor`@(5,0)；本项目用 `addStair (5,4)→41`（`f40-zone4-clear`）达成同一件事 |
+| `F50 step@(6,5)` | 1 | ⚪ **口径差异** | 原版真魔王在 **(5,4)**、本项目在 **(5,5)**，差一格 |
+
+⇒ **真正「本项目少做了内容」的只有 F41 的 5 格地形重排与 F39 的 2 格**；其余 21 格是
+**两源结构／口径差异**，不是缺口。这也是为什么「对账」不能只看格数：
+把结构差异当成缺口去「补」，会在同一层堆出两套同义的机关。
+
+### 11.4 ⚠️ 已知未表达：F39 的 `alive` 条件
+
+原版第 39 层的自动事件：
+
+```json
+{ "k": "and", "of": [
+  { "k": "dead",  "locs": [[4,2],[6,4]] },
+  { "k": "alive", "locs": [[2,2],[6,2],[2,4],[2,6],[4,6],[6,6]] } ] }
+```
+
+语义是「**两名守卫已死，而六名魔法警卫都还活着**」（把勇者丢开的瞬移机关）。
+本项目 `GameEvent.trigger` 的 5 种写法里**没有 `alive`** —— `allDefeated` 只能表达「都**死了**」，
+表达不出「都**活着**」。⇒ 见到 `alive` 就是缺算子；补它要动 `applyTrigger` 的求值器，
+不是加一条数据。**列为已知未表达，不假装已覆盖。**
+
+### 11.5 两条「不是缺口」的正式登记
+
+1. **第 48 层 (7,7) 机关门：故意打不开。** 原版（`data/npcs.json` 智者第 38 条 /
+   `data/floor-notes.json` 第 48 层）明说「存放圣剑的房间的门坏了，你必须用铁锹破墙而入」。
+   正解是站在 (8,6) 用 `shovel` 的 `breakWall` 挖掉 (8,7) 那面墙再走进去 —— 所以这一格
+   **不该有开门事件**。它登记在 `tools/audit-special-doors.mjs` 的 `INTENTIONAL` 表里，
+   该表**带过期检查**：一旦有人给它补了开门事件，脚本会报 `stale` 而不是静默变绿。
+2. **`closeWall`（原版 43 处）不在对账范围内。** 它们全在第 23 层，语义是「把一格设成不可通行」——
+   第 23 层是假墙迷宫，撞破一格进下一格时把**前一格**封死。它是「加阻挡」不是「开门」，
+   与本文两条审计口径都不同，属**已知边界**。
+
+### 11.6 一个坑：`legend` 的键是**编号**，不是字符
+
+`data/tiles.json` 的 `legend` 是 `{ "2": { char: 'D', passable: false }, … }` ——
+`legend['w']` **永远是 `undefined`**。第一版 no-op 判据写成 `legend[ch].passable`
+⇒「假墙算不算已经能过去」恒为 `false` ⇒ 第 15/19/29 层那三条假缺口又回来了。
+⇒ 在 `tiles.json` 上另建一份**按字符**的索引（`byChar`）。
+⇒ 通用问法：「我这条判据绑的那个键，真的存在吗？」—— 铁律 #16：探针为 0 要**报红**，别静默当「不存在」。

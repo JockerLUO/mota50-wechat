@@ -101,6 +101,25 @@ export interface GameState {
    * （会随开局重置），不能写回 `data/`。
    */
   extraStairs: PlacedStair[];
+
+  /**
+   * **事件放进地图的实体** —— 原版 `set` 算子的产物（楼层 → 实体表）。
+   *
+   * 与 `extraStairs` 同一族的理由：第 20 层那 8 只蝙蝠汇聚成的吸血鬼、
+   * 第 49 层假魔王召出的 8 个白王、第 25 层打完守卫落下的 4 把红钥匙，
+   * 都是**剧情把它们放上去的**，一开始不在图上 ⇒ 只能记在状态里。
+   *
+   * ⚠️ 读实体一律走 `entitiesOn()`，**不要**再直接写 `floorOf(data, f).entities`
+   * —— 那样写出来的地方看不见事件放的实体，症状是「吸血鬼站在那儿却撞不到」
+   * 或者渲染层不画（画面与规则撕裂，`footprint.ts` 文件头讲的就是这一类）。
+   * 这条约束由静态判据守（铁律 #66）：只有 `state.ts` 里允许出现
+   * `floorOf(data, …).entities`。
+   *
+   * 移除走的还是 `removed` 那一套 key（`entityKey`），所以事件放的实体
+   * 被打死 / 被捡走 / 被 `remove` 之后，不会因为「它不在 data 里」而复活。
+   */
+  spawned: Record<number, FloorEntity[]>;
+
   /** 已触发过的一次性事件 id —— `once: true` 的事件靠它不重复执行 */
   fired: Set<string>;
 
@@ -138,6 +157,7 @@ export function createInitialState(data: GameData): GameState {
     terrainPatch: {},
     monsterSwap: {},
     extraStairs: [],
+    spawned: {},
     fired: new Set<string>(),
     dead: false,
     log: [],
@@ -166,6 +186,39 @@ export function patchTile(state: GameState, floor: number, x: number, y: number,
 }
 
 /**
+ * 某一层上**当前存在**的全部实体 —— 数据里的 + 事件放上去的（`state.spawned`）。
+ *
+ * **唯一入口**：引擎、渲染、AI 三方都必须读它，不能各自去翻
+ * `floorOf(data, f).entities`（那样写的地方看不见事件放的实体）。
+ * 无事件实体时直接返回数据里那个数组本身（热路径上不额外分配）。
+ */
+export function entitiesOn(state: GameState, data: GameData, floor: number): FloorEntity[] {
+  const base = floorOf(data, floor).entities;
+  const extra = state.spawned[floor];
+  return extra && extra.length ? [...base, ...extra] : base;
+}
+
+/**
+ * 某一格上**自己就站在这儿**的实体 —— 不含 BOSS 的 3×3 占位块。
+ *
+ * `entityAt`（撞上即开战）对 BOSS 是按占位块命中的，那是对的；
+ * 但 `remove`（原版 `hide`）给的是**实体自己那一格**，用 `entityAt`
+ * 会把「删掉 (5,6) 那块装饰」变成「删掉整只 BOSS」。
+ */
+export function entityOwnAt(
+  state: GameState,
+  data: GameData,
+  floor: number,
+  x: number,
+  y: number
+): FloorEntity | null {
+  for (const e of entitiesOn(state, data, floor)) {
+    if (e.x === x && e.y === y && !state.removed.has(entityKey(floor, e.x, e.y, e.type, e.id))) return e;
+  }
+  return null;
+}
+
+/**
  * 某实体在棋盘上的**占位块**。BOSS 是居中的 `n × n`（必要时整体平移进棋盘），
  * 其余实体（道具 / NPC / 杂兵）就是它自己那一格。
  *
@@ -173,7 +226,8 @@ export function patchTile(state: GameState, floor: number, x: number, y: number,
  * 所以不存在「画面与规则不一致」的可能。范围怎么算见 `footprint.ts`。
  */
 export function entityFootprint(data: GameData, e: FloorEntity): Footprint {
-  return footprintAt(data, e.x, e.y, e.type === 'monster' && !!data.monsters[e.id]?.boss);
+  // 传的是**怪物 id** 而不是布尔值：占位格数逐只不同（只有 dragon/kraken 是 3）
+  return footprintAt(data, e.x, e.y, e.type === 'monster' && data.monsters[e.id]?.boss ? e.id : null);
 }
 
 /**
@@ -195,8 +249,7 @@ export function entityAt(
   x: number,
   y: number
 ): FloorEntity | null {
-  const f = floorOf(data, floor);
-  for (const e of f.entities) {
+  for (const e of entitiesOn(state, data, floor)) {
     // 怪物替换：这一格若被 swap，先看是否命中（同一格），命中就返回新怪物。
     // 注意要在 removed 检查**之前**：假魔王「现出真身」后，它自己并没被打败，
     // 而是「这一格现在是真魔王」，所以要优先读 swap。
@@ -219,7 +272,7 @@ export function livingMonsters(
   floor: number
 ): { id: string; x: number; y: number; fp: Footprint }[] {
   const out: { id: string; x: number; y: number; fp: Footprint }[] = [];
-  for (const e of floorOf(data, floor).entities) {
+  for (const e of entitiesOn(state, data, floor)) {
     if (e.type !== 'monster') continue;
     if (state.removed.has(entityKey(floor, e.x, e.y, e.type, e.id))) continue;
     const swapped = state.monsterSwap[`${floor}:${e.x},${e.y}`];

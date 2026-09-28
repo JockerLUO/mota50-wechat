@@ -29,9 +29,18 @@
  */
 
 import type { GameData } from '../../data';
-import { createInitialState, patchTile, pushLog, tileAt, type GameState } from '../state';
+import {
+  createInitialState,
+  entitiesOn,
+  entityKey,
+  entityOwnAt,
+  patchTile,
+  pushLog,
+  tileAt,
+  type GameState
+} from '../state';
 import { applyEffects } from './effects';
-import { grantItem } from './items';
+import { grantItem, pickUpAt } from './items';
 import { arriveOnFloor, nearestStandable } from './travel';
 import type { NpcTalk } from './types';
 
@@ -47,7 +56,7 @@ import type { NpcTalk } from './types';
  *     所以带的就是勇者刚踏上的那一格
  */
 export type EventTrigger =
-  | { op: 'defeated'; id: string }
+  | { op: 'defeated'; id: string; floor?: number; x?: number; y?: number }
   | { op: 'start' }
   | { op: 'allDefeated' }
   | { op: 'talked'; id: string; floor: number; x: number; y: number }
@@ -68,7 +77,16 @@ export function newGame(data: GameData): GameState {
 
 function matches(trigger: EventTrigger, t: GameData['events'][number]['trigger']): boolean {
   if (t.op === 'start') return trigger.op === 'start';
-  if (t.op === 'defeated') return trigger.op === 'defeated' && t.id === trigger.id;
+  if (t.op === 'defeated') {
+    if (trigger.op !== 'defeated' || t.id !== trigger.id) return false;
+    // 楼层与坐标是**可选细化条件**，与 `talked` 同一套语义：原版 `floor.after`
+    // 的键就是怪自己那一格，而同一层可能有两只同 id 的守卫守着**两扇不同的门**
+    // （第 17 层有 4 组、其中两组同 id）—— 不细化就会「打死 A 组的守卫顺手开了 B 组的门」。
+    if (t.floor !== undefined && t.floor !== trigger.floor) return false;
+    if (t.x !== undefined && t.x !== trigger.x) return false;
+    if (t.y !== undefined && t.y !== trigger.y) return false;
+    return true;
+  }
   if (t.op === 'allDefeated') return trigger.op === 'allDefeated';
   if (t.op === 'enterTile') {
     return trigger.op === 'enterTile' && t.floor === trigger.floor && t.x === trigger.x && t.y === trigger.y;
@@ -103,7 +121,7 @@ export function applyTrigger(state: GameState, data: GameData, trigger: EventTri
   for (const ev of data.events) {
     if (!matches(trigger, ev.trigger)) continue;
     // allDefeated：需要「列表内怪全灭」才真正触发
-    if (ev.trigger.op === 'allDefeated' && !allDefeated(state, data, ev.trigger.ids, ev.trigger.floor)) continue;
+    if (ev.trigger.op === 'allDefeated' && !allDefeated(state, data, ev.trigger)) continue;
     if (ev.once && state.fired.has(ev.id)) continue;
     if (ev.once) state.fired.add(ev.id);
     for (const e of ev.effects) {
@@ -148,6 +166,10 @@ export function applyTrigger(state: GameState, data: GameData, trigger: EventTri
             'info'
           );
         }
+      } else if (e.op === 'spawn') {
+        spawnEntity(state, data, e, ev.title);
+      } else if (e.op === 'remove') {
+        removeEntity(state, data, e, ev.title);
       } else if (e.op === 'teleport') {
         // 绝对楼层 + 坐标。落点被实体占着时 `nearestStandable` 就近修正 ——
         // 修正这件事必须留痕（它会**穿墙**找格子，静默修正可能把人放到牢房外面，
@@ -183,14 +205,27 @@ export function applyTrigger(state: GameState, data: GameData, trigger: EventTri
   return said;
 }
 
-/** 列表内的怪是否已全部被击败（按「这种怪在（限定楼层内）数据里的总数 vs removed 里的数量」） */
-function allDefeated(state: GameState, data: GameData, ids: string[], floor?: number): boolean {
-  for (const id of ids) {
+/**
+ * 一组怪是否已全部被击败。两种写法（可并用，`types.ts` 的 trigger 注释有完整理由）：
+ *   · `ids` + `floor` —— **按种类**数：「这种怪在（限定楼层内）数据里的总数 vs removed` 里的数量」；
+ *   · `at`  + `floor` —— **按格**数：「这几格上的怪都不在了」。原版 `floor.after` 的忠实转写。
+ *
+ * ⚠️ `at` 里**写了一个没有怪的口**时返回 `false`（这个事件永不触发），**不是**跳过它。
+ * 那正是铁律 #16 要的方向：写错坐标的症状是「门永远不开」，而这条返回 false 会让
+ * 地形体检（`verify:autoplay` C 段的 ★ 判据）把「够不着上楼梯」报出来 ——
+ * 反过来（默默跳过那一口）会让条件变成「剩下的都死了就算」，门在数据写错时也能开。
+ */
+function allDefeated(
+  state: GameState,
+  data: GameData,
+  t: { ids?: string[]; floor?: number; at?: { x: number; y: number }[] }
+): boolean {
+  for (const id of t.ids ?? []) {
     let total = 0;
     let removed = 0;
-    for (const [idx, f] of data.floors) {
-      if (floor !== undefined && idx !== floor) continue;
-      for (const e of f.entities) {
+    for (const [idx] of data.floors) {
+      if (t.floor !== undefined && idx !== t.floor) continue;
+      for (const e of entitiesOn(state, data, idx)) {
         if (e.type !== 'monster' || e.id !== id) continue;
         total++;
         if (state.removed.has(`${idx}:${e.x}:${e.y}:monster:${e.id}`)) removed++;
@@ -198,13 +233,91 @@ function allDefeated(state: GameState, data: GameData, ids: string[], floor?: nu
     }
     if (removed < total) return false;
   }
+  const floor = t.floor ?? state.floor;
+  for (const p of t.at ?? []) {
+    const e = entitiesOn(state, data, floor).find((x) => x.x === p.x && x.y === p.y);
+    if (!e) return false;
+    if (!state.removed.has(entityKey(floor, p.x, p.y, e.type, e.id))) return false;
+  }
   return true;
+}
+
+/**
+ * 往地图上**放一个实体**（原版 `set`）。见 `SpawnEventEffect` 的注释。
+ *
+ * 三件必须做的事：
+ *  ① 记进 `state.spawned`（**不写回 `data/`** —— 那是全局共享的静态数据）；
+ *  ② 把落在**别的实体脚下**的那一格让出来：蝙蝠汇聚时，吸血鬼那一格
+ *     正是 8 只蝙蝠围着的中心，**必须先 `remove` 再 `spawn`**；
+ *     数据里写反了顺序就会在同一格留下两个实体（`entityAt` 只返回先找到的那个，
+ *     表现是「吸血鬼打不到」或「蝙蝠打不完」），所以这里只**警告**不静默；
+ *  ③ 校验 id 真的存在 —— 拼错 id 的症状是渲染层画不出、`entityAt` 返 null，
+ *     玩家看不到任何东西却也没报错，属于最难查的一类。
+ */
+function spawnEntity(
+  state: GameState,
+  data: GameData,
+  e: { floor: number; x: number; y: number; kind: 'monster' | 'item' | 'npc'; id: string },
+  title: string
+): void {
+  const table: Record<string, unknown> =
+    e.kind === 'monster' ? data.monsters : e.kind === 'item' ? data.items : data.npcs;
+  if (!table[e.id]) throw new Error(`spawn：第 ${e.floor} 层 (${e.x},${e.y}) 放的 ${e.kind} "${e.id}" 不存在于数据里`);
+  const occupied = entityOwnAt(state, data, e.floor, e.x, e.y);
+  if (occupied) {
+    // 同格已被占：把先来的那个挪走（原版靠 `hide` 与 `set` 的书写顺序保证不撞车，
+    // 这里留一条 log 让顺序写错时看得见，而不是靠人肉读 JSON）
+    state.removed.add(entityKey(e.floor, e.x, e.y, occupied.type, occupied.id));
+    pushLog(state, `${title}：(${e.x},${e.y}) 原有的 ${occupied.id} 被顶掉（spawn 顺序可能有误）`, 'warn');
+  }
+  (state.spawned[e.floor] ??= []).push({ type: e.kind, id: e.id, x: e.x, y: e.y });
+  pushLog(state, `${title}：第 ${e.floor} 层 (${e.x},${e.y}) 出现了 ${nameOf(data, e.kind, e.id)}`, 'info');
+
+  // 「**落地也是一种走上去**」—— 打到 BOSS 时勇者往往就站在奖励格上
+  // （原版 `mt20win` 往 (5,8)→本项目 (5,7) 放了一瓶蓝药水，而那正是触发格），
+  // 不就地拾取的话那件东西会**藏在勇者脚下**，要走开再走回来才拿得到 ——
+  // 玩家看得见它的图标压在勇者身上，却怎么也拿不到（铁律 #63 那一族）。
+  if (e.kind === 'item' && e.floor === state.floor && e.x === state.pos.x && e.y === state.pos.y) {
+    // 与「走上去捡」共用同一份实现（`items.pickUpAt`），不另写一套
+    pickUpAt(state, data, e.floor, e.x, e.y);
+  }
+  // 怪落在勇者脚下则要留痕：那意味着勇者站在 BOSS 的 3×3 里面，
+  // 下一步无论往哪走都是「撞上它」—— 通常是事件坐标写错了。
+  if (e.kind === 'monster' && e.floor === state.floor && e.x === state.pos.x && e.y === state.pos.y) {
+    pushLog(state, `${title}：⚠️ 怪被放在了勇者脚下 (${e.x},${e.y})`, 'warn');
+  }
+}
+
+/**
+ * 删掉某一格上的实体（原版 `hide`）。
+ *
+ * 按**坐标**删：同一格上可能同时站着怪与道具（参考源把雪花放在魔龙那一格），
+ * 按 id 删会删错那一个。找不到就**安静地什么都不做** —— 原版 `hide` 常常是
+ * 幂等的收尾（第 42 层的两块 `bigImage` 在某些分支下本就不在场）。
+ */
+function removeEntity(
+  state: GameState,
+  data: GameData,
+  e: { floor: number; x: number; y: number },
+  title: string
+): void {
+  const ent = entityOwnAt(state, data, e.floor, e.x, e.y);
+  if (!ent) return;
+  state.removed.add(entityKey(e.floor, e.x, e.y, ent.type, ent.id));
+  pushLog(state, `${title}：第 ${e.floor} 层 (${e.x},${e.y}) 的 ${nameOf(data, ent.type, ent.id)}消失了`, 'info');
+}
+
+function nameOf(data: GameData, kind: string, id: string): string {
+  const def =
+    kind === 'monster' ? data.monsters[id] : kind === 'item' ? data.items[id] : data.npcs[id];
+  return (def as { name?: string } | undefined)?.name ?? id;
 }
 
 /** 把某层某格的怪物换成另一个 id（封印解除）。换错对象会当场报错，不静默。 */
 function replaceMonster(state: GameState, data: GameData, e: { floor: number; x: number; y: number; from: string; to: string }): void {
-  const f = data.floors.get(e.floor);
-  const ent = f?.entities.find((x) => x.x === e.x && x.y === e.y && x.type === 'monster');
+  const ent = entitiesOn(state, data, e.floor).find(
+    (x) => x.x === e.x && x.y === e.y && x.type === 'monster' && !state.removed.has(entityKey(e.floor, x.x, x.y, x.type, x.id))
+  );
   if (!ent) throw new Error(`replaceMonster：第 ${e.floor} 层 (${e.x},${e.y}) 没有怪物可替换`);
   if (ent.id !== e.from) throw new Error(`replaceMonster：第 ${e.floor} 层 (${e.x},${e.y}) 是 ${ent.id}，不是预期的 ${e.from}`);
   // 记下「这一格现在是 to」。不标 removed：假魔王不是「被打败」，而是「现出真身」，

@@ -18,7 +18,7 @@
 const BOSS_SS_MIN = 2;
 
 async function run(ctx) {
-  const { page, check, MANIFEST, terrainPng, ROOT, DIST, fs, path, BOSS_IDS, BOSS_TILES } = ctx;
+  const { page, check, MANIFEST, terrainPng, ROOT, DIST, fs, path, BOSS_IDS, bossTilesOf } = ctx;
 
   // ── A17 像素密度：网格翻倍，但落屏尺寸一点不变 ──
   //
@@ -82,7 +82,7 @@ async function run(ctx) {
   //    「帧 == 96」这条会**误杀**正确实现 —— 而它本来要保护的是
   //    「精灵与占位块一样大」（落屏那件事），帧边长只是中间量（铁律 #12）。
   //    SS 从 MANIFEST 自述读，不在这里硬编码；下限 2 才是真的设计要求。
-  const bossFrame = cell * BOSS_TILES;
+  const bossFrameOf = (id) => cell * bossTilesOf(id);
   const bossSS = MANIFEST.meta.bossSupersample;
   const monBad = [];
   if (!(bossSS >= BOSS_SS_MIN)) {
@@ -96,6 +96,7 @@ async function run(ctx) {
     if (!node) continue;
     const isBoss = BOSS_IDS.includes(id);
     const onScreen = node.frame.w * node.drawScale;
+    const bossFrame = isBoss ? bossFrameOf(id) : 0;
     if (isBoss) {
       if (node.frame.w !== node.frame.h) {
         monBad.push(
@@ -163,9 +164,12 @@ async function run(ctx) {
     densBad.push(`勇者落屏 ${heroNow ? `${heroNow.size.w}×${heroNow.size.h}` : '?'} —— 应当是 32×52（与翻倍前一致）`);
   }
 
+  // 文案里报**逐只**的档位（3 格 → 96px，1 格 → 32px），不再写一个全局的 BOSS 尺寸 ——
+  // 那正是这次改动的要害：占位格数逐只不同。
+  const tiers = [...new Set(BOSS_IDS.map((id) => `${bossTilesOf(id)}格→${cell * bossTilesOf(id)}px`))].join(' / ');
   check(
     `A17 像素密度：图集 ${rasterTile} 网格（原始 ${meta.baseTile} ×${ss}）、drawScale=${meta.drawScale}，` +
-      `BOSS 落屏 ${bossFrame}px = 占位 ${BOSS_TILES} 格（图集帧 ${bossFrame * bossSS} = 落屏 × SS ${bossSS}）；` +
+      `BOSS 落屏 ${tiers}（图集帧 = 落屏 × SS ${bossSS}）；` +
       `落屏勇者仍 ${heroNow ? `${Math.round(heroNow.size.w)}×${Math.round(heroNow.size.h)}` : '?'}`,
     densBad.length === 0,
     densBad.slice(0, 3).join(' | ') ||

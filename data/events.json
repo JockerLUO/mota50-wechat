@@ -250,6 +250,624 @@
       ],
       "why": "docs/known-gaps.md §4 的缺口：第 50 层放的是「封印前」假魔王（8000/5000/1000，def 1000），而满属性攻击约 481 根本打不动它；真正的最终 BOSS「真魔王」（5000/1580/190）在参考数据中从未被放置（monster-placement.json 的 neverPlaced）。第 49 层 floor-notes 明确记着攻略机制：『先杀四周中间的魔法警卫解除封印，封印解除后魔王才可被击败』。第 49 层实际放置的守卫是 2 黑暗骑士 + 2 高级巫师，全灭这 4 只即视为封印解除，把假魔王切换成可击败的真魔王。",
       "evidence": "docs/known-gaps.md §4；data/floor-notes.json 第 49 层 note；data/monster-placement.json neverPlaced 含 demonKingTrue"
+    },
+    {
+      "id": "f20-bat-merge",
+      "title": "第 20 层：蝙蝠群汇聚成吸血鬼",
+      "trigger": {
+        "op": "enterTile",
+        "floor": 20,
+        "x": 5,
+        "y": 7
+      },
+      "once": true,
+      "effects": [
+        {
+          "op": "say",
+          "speaker": "vampire",
+          "name": "蝙蝠群",
+          "lines": [
+            "蝙蝠群汇聚成了吸血鬼！"
+          ]
+        },
+        { "op": "remove", "floor": 20, "x": 4, "y": 4 },
+        { "op": "remove", "floor": 20, "x": 5, "y": 4 },
+        { "op": "remove", "floor": 20, "x": 6, "y": 4 },
+        { "op": "remove", "floor": 20, "x": 4, "y": 5 },
+        { "op": "remove", "floor": 20, "x": 6, "y": 5 },
+        { "op": "remove", "floor": 20, "x": 4, "y": 6 },
+        { "op": "remove", "floor": 20, "x": 5, "y": 6 },
+        { "op": "remove", "floor": 20, "x": 6, "y": 6 },
+        {
+          "op": "spawn",
+          "floor": 20,
+          "x": 5,
+          "y": 5,
+          "kind": "monster",
+          "id": "vampire"
+        },
+        {
+          "op": "setTerrain",
+          "floor": 20,
+          "x": 5,
+          "y": 8,
+          "terrain": "a"
+        }
+      ],
+      "why": "**二区 BOSS 吸血鬼的入场演出**（docs/known-gaps.md §2 方案 A 的落地）。第 20 层密室中央原本是「8 只大蝙蝠围着一个空位」，那不是漏放，而是原版**触发前**的状态：走到触发格后蝙蝠汇聚成吸血鬼，再打一场真正的 BOSS 战。\n\n## 为什么以前不是这样\n\n参考实现 m8705/MAGIC-TOWER-JS **没有事件系统**，它的作者把原版 cutscene 的结果直接画进了静态地图（`role` 层那 8 个 `6`）—— 于是我们导入之后，蝙蝠就静静站在那儿，「汇聚」这件事**在数据里根本不存在**。本轮补了 `spawn` / `remove` 两个算子（原版的 `set` / `hide`）才表达得出来。\n\n## 三件事的顺序\n\n① `say` 台词；② `remove` ×8（先清场）；③ `spawn` 吸血鬼 + 把 (5,8) 那扇**红门重新落锁成机关门**。\n第 ③ 步是原版 `set tiles[85]` 的作用：勇者刚穿过 (5,8) 的红门走进来，红门在开门时已被消耗成空地；不落锁的话打到一半可以从背后原路跑掉，而原版是**把勇者关在密室里**打完这场 BOSS 的。\n\n## 触发格为什么是 (5,7)\n\n密室的唯一入口是 (5,8) 那扇红门（左边 `y`/`b` 两个小袋、上面 (5,2) 的机关门此时**是关着的**），进门第一格就是 (5,7) ⇒ **玩家必然触发**，不存在「存在但永不发生」（铁律 #62）。",
+      "evidence": "reference/mota50-deluxe/source/mota-data.js 的 `floors[20].step[\"6,8\"] → cutscenes.mt20vampire`，原版坐标（13×13 直接索引，本项目 = −1）：`set tiles[85](机关门) @(6,9)` → 本项目 (5,8)；`sfx zone`；`set tiles[206](bigBat) @(5,5)(6,5)(7,5)(5,6)(7,6)(5,7)(6,7)(7,7)` → 本项目 (4,4)(5,4)(6,4)(4,5)(6,5)(4,6)(5,6)(6,6)，**与 data/floors/floor-20.json 里那 8 只 bigBat 逐格吻合**；`sleep 800`；`tip「蝙蝠群汇聚成了吸血鬼！」`；`hide` 同 8 格；`set tiles[208](vampire) @(6,6)` → 本项目 (5,5)。核对脚本：`node tools/dump-deluxe-events.mjs --floor 20`。"
+    },
+    {
+      "id": "f20-vampire-win",
+      "title": "击败吸血鬼：发放奖励并开启上下两扇机关门",
+      "trigger": {
+        "op": "defeated",
+        "id": "vampire",
+        "floor": 20
+      },
+      "once": true,
+      "effects": [
+        {
+          "op": "say",
+          "speaker": "vampire",
+          "name": "吸血鬼",
+          "lines": [
+            "上帝啊！我做梦也没想到我会被别人打败。",
+            "毫无疑问你是比我强。但以你现在的状态对大法师来说又太弱了，",
+            "你仅仅取得了一个暂时的胜利。"
+          ]
+        },
+        { "op": "spawn", "floor": 20, "x": 4, "y": 3, "kind": "item", "id": "yellowKey" },
+        { "op": "spawn", "floor": 20, "x": 5, "y": 3, "kind": "item", "id": "yellowKey" },
+        { "op": "spawn", "floor": 20, "x": 6, "y": 3, "kind": "item", "id": "yellowKey" },
+        { "op": "spawn", "floor": 20, "x": 3, "y": 4, "kind": "item", "id": "redGem" },
+        { "op": "spawn", "floor": 20, "x": 3, "y": 5, "kind": "item", "id": "redGem" },
+        { "op": "spawn", "floor": 20, "x": 3, "y": 6, "kind": "item", "id": "redGem" },
+        { "op": "spawn", "floor": 20, "x": 7, "y": 4, "kind": "item", "id": "blueGem" },
+        { "op": "spawn", "floor": 20, "x": 7, "y": 5, "kind": "item", "id": "blueGem" },
+        { "op": "spawn", "floor": 20, "x": 7, "y": 6, "kind": "item", "id": "blueGem" },
+        { "op": "spawn", "floor": 20, "x": 4, "y": 7, "kind": "item", "id": "bluePotion" },
+        { "op": "spawn", "floor": 20, "x": 5, "y": 7, "kind": "item", "id": "bluePotion" },
+        { "op": "spawn", "floor": 20, "x": 6, "y": 7, "kind": "item", "id": "bluePotion" },
+        { "op": "setTerrain", "floor": 20, "x": 5, "y": 2, "terrain": "." },
+        { "op": "setTerrain", "floor": 20, "x": 5, "y": 8, "terrain": "." }
+      ],
+      "why": "**打通整塔的那一条**。第 20 层 row 0 是通往 21 层的唯一走廊，而 row 0 只从 (5,2) 下来 —— 那扇机关门**全塔没有任何事件会开**，于是第 21 层及以后一层都到不了（docs/known-gaps.md §2「升级：整塔在第 20 层断掉」）。原版是打赢吸血鬼之后 `open` 它。(5,8) 一并打开，解除上一场战斗落的两道锁。\n\n奖励按原版 `mt20win` 原样发：3 黄钥匙 + 3 红宝石 + 3 蓝宝石 + 3 蓝药水，**放成地图上的道具**（不是直接进背包）—— 原版就是这么做的，玩家要自己走过去捡，而「宝石要不要现在吃」是这一层的决策内容。\n\n⚠️ 最后那瓶蓝药水在 (5,7)，正是触发「汇聚」那一格：勇者很可能就站在上面。`spawn` 的实现在**落在勇者脚下时立即拾取**（走 `items.pickUpAt`，与「走上去捡」同一份实现）—— 不这么做的话它会藏在勇者脚下，看得见拿不到（铁律 #63：「落地也是一种走上去」）。",
+      "evidence": "reference/mota50-deluxe/source/mota-data.js 的 `floors[20].after[\"6,6\"] → cutscenes.mt20win`，原版坐标 −1 后：`set tiles[21](yellowKey) @(5,4)(6,4)(7,4)`→(4,3)(5,3)(6,3)；`set tiles[27](redGem) @(4,5)(4,6)(4,7)`→(3,4)(3,5)(3,6)；`set tiles[28](blueGem) @(8,5)(8,6)(8,7)`→(7,4)(7,5)(7,6)；`set tiles[32](bluePotion) @(5,8)(6,8)(7,8)`→(4,7)(5,7)(6,7)；`open @(6,3)(6,9)`→(5,2)(5,8)。"
+    },
+    {
+      "id": "f35-dragon-door",
+      "title": "第 35 层：击败魔龙后机关门开启",
+      "trigger": {
+        "op": "defeated",
+        "id": "dragon",
+        "floor": 35
+      },
+      "once": true,
+      "effects": [
+        {
+          "op": "setTerrain",
+          "floor": 35,
+          "x": 5,
+          "y": 2,
+          "terrain": "."
+        }
+      ],
+      "why": "**与第 20 层同型的第二处堵点**（docs/known-gaps.md §2 末节）。第 35 层的中竖走廊 x=4..6 是通往 (10,0) 上楼梯的唯一通道，而被 (5,2) 的机关门封死；全塔没有任何事件会开它 ⇒ 补完第 20 层之后堵点只是往后挪了一层。\n\n原版把开门挂在魔龙身上：`floors[35].after[\"6,7\"]`（魔龙自己那一格）→ `open (6,3)`。本项目魔龙在 (5,5)（参考实现 m8705 的摆放，比原版低一格），所以 trigger 按**本项目**坐标写，而 `floor` 一起带上 —— 全塔只有这一只魔龙（monster-placement.json：dragon ×1 @F35），带 floor 是为了让「以后别处也放魔龙」时这条不会跟着乱触发。\n\n原版那一步还带 `hide @(5,7)(7,7)`（两块 `bigImage` 装饰），本项目 `data/floors/floor-35.json` 里没有这两个装饰实体，`remove` 找不到东西会安静跳过 —— 因此**刻意不写**这两条，免得留下两条永远命中不了的 effect（铁律 #50：写了但没人读的字段比没有更坏）。",
+      "evidence": "reference/mota50-deluxe/source/mota-data.js 的 `floors[35].after[\"6,7\"] = [{t:'open', loc:[[6,3]]}, {t:'hide', loc:[[5,7],[7,7]]}]`，以及 `floors[35].bigs = [{loc:[6,7], id:'magicDragon', size:3}]`（3×3 大体型）。本项目魔龙落点见 data/floors/floor-35.json 的 `m:dragon@5,5` 与 data/monster-placement.json 的 `dragon.count = 1`。"
+    },
+    {
+      "id": "f2-hidden-passage",
+      "title": "第 2 层：走到 (2,6) 时左侧暗墙开启",
+      "trigger": {
+        "op": "enterTile",
+        "floor": 2,
+        "x": 2,
+        "y": 6
+      },
+      "once": true,
+      "effects": [
+        {
+          "op": "setTerrain",
+          "floor": 2,
+          "x": 1,
+          "y": 6,
+          "terrain": "."
+        }
+      ],
+      "why": "原版第 2 层走到 (3,7)（本项目 (2,6)）时把 (2,7)（本项目 (1,6)）那面墙打开 —— 与第 19 / 29 层同型的一族「走过去开一面暗墙」。本项目此前完全没有这条。\n\n⚠️ 这一格在本项目里是**真墙 `#`**（不是假墙 `w`）—— 两个源在这一点上一致（原版 `floors[2].map[7][2]` 也是普通墙 id），原版就是用 `open` 把一个 `#` 变成通路。所以这里写 `setTerrain ... '.'` 而不是改 `w`。\n\n后果量级：这一格开不开**不影响可通关**（两侧本来各有通路），但它是原版明确的隐藏通路，属于「写了就该搬」。",
+      "evidence": "reference/mota50-deluxe/source/mota-data.js 的 `floors[2].step[\"3,7\"] = [{t:'open', loc:[[2,7]]}]`（1-based → 本项目触发格 (2,6)、目标格 (1,6)）。两源地图一致：`node tools/dump-deluxe-events.mjs --floor 2` 与 data/floors/floor-02.json 的 row 7 都是 `.#..#...#..`。"
+    },
+    {
+      "id": "f10-ambush",
+      "title": "第 10 层埋伏：走进中竖走廊时骷髅队长现身",
+      "trigger": {
+        "op": "enterTile",
+        "floor": 10,
+        "x": 5,
+        "y": 5
+      },
+      "once": true,
+      "effects": [
+        {
+          "op": "say",
+          "speaker": "skeletonCaptain",
+          "name": "骷髅队长",
+          "lines": [
+            "骷髅队长的埋伏！弟兄们一拥而上。"
+          ]
+        },
+        {
+          "op": "setTerrain",
+          "floor": 10,
+          "x": 5,
+          "y": 6,
+          "terrain": "a"
+        },
+        {
+          "op": "setTerrain",
+          "floor": 10,
+          "x": 5,
+          "y": 2,
+          "terrain": "a"
+        }
+      ],
+      "why": "原版 `floors[10].step[\"6,5\"] → cutscene mt10ambush`。\n\n**这是一场陷阱，不是一句台词。** 本层中竖走廊 x=4..6 在 (5,4) 与 (5,6) 之间只有一格宽，(5,4) 是「北半段（行 0–3）」与「南半段（行 5–10）」之间的**唯一闸口**。原版在玩家踏上埋伏格时把 (5,6) 与 (5,2) 两处落锁成机关门 ⇒ 玩家被关在行 3–5 那几格里，而**骷髅队长就站在 (5,3)** —— 不打倒他就出不去。这就是事件名 `mt10ambush` 的全部内容。\n\n## ⚠️ 触发格为什么是 (5,5) 而不是原版对应的 (5,4)\n\n原版埋伏格（1-based `6,5`）换算过来是 **(5,4)**，而本项目不能就用它：**骷髅队长的 3×3 占位块是 x4..6 / y2..4，把 (5,4) 包在里面**。占位块是规则不是画法（`footprint.ts` 文件头），所以「撞上去」的那一步会**同时**做三件事：判定战斗、把勇者挪进 (5,4)、发 `enterTile` —— 于是埋伏台词和「击败骷髅队长：损失 N HP」挤在同一步，谁后写谁盖住谁（`step.ts` 的 `moveOnto` 里 `enterTile` 排在战斗日志之后）。台词出现的时机也错了：埋伏应该在**打之前**。\n\n挪到 (5,5)（占位块**外面**、紧邻它南边一格）同时修掉这两件事：台词先出现、战斗后发生，而 (5,5) 与 (5,4) 同在中竖走廊上、**同样是必经格**（从入口 (0,10) 上来只能走这一条，见下）。\n\n## 为什么触发格必然在这条走廊上（不是挑的）\n\n从南边（入口那一路）往上走，**必须**经过 (5,6)(5,5)(5,4) 才能到 (5,3)；从北边进不来 —— 行 0/1 的中段（x=4..6）与 (5,2) 自成一个小袋，而它唯一的开口就是 (5,2)，(5,2) 又只能从 (5,3) 进。所以「先打队长、后踩埋伏」这种顺序在几何上不存在（铁律 #62：被动触发点必须真的在必经路上，这里能证明）。\n\n## 关门这件事谁负责重开\n\n(5,6) 由 `f10-captain-doors` 打开（原版 `mt10win` 的 `open (6,7)`）。(5,2) **不再开** —— 原版也没开它，那只是「不让你往回跑」；行 0 上没有任何东西（本项目 floor-10.json 的 row0 全空、也没有实体），封死它不影响任何可达内容。\n\n⚠️ 顺序是**结构保证**的（埋伏必然先于打死队长），但这不是靠判据守的：`audit-special-doors --solved` 只把「改成可通行地形」当成开门，**关门不参与求解**（否则求解器会把刚关上的门当成已通）。关门与它的后果由 `verify:autoplay` 的整局模拟守。",
+      "evidence": "reference/mota50-deluxe/source/mota-data.js 的 `floors[10].step[\"6,5\"] = [{t:'cutscene', id:'mt10ambush'}]`，cutscene 正文按顺序：`close (6,7) n:85`、`sfx door`、`open [(4,4),(8,4),(5,6),(7,6)]`、`hide [(5,4),(6,3),(7,4),(5,5),(7,5)]`、`tip 「骷髅队长的埋伏！弟兄们一拥而上。」`、`close (6,3) n:85`、`close (4,4) n:85`、`close (8,4) n:85`、两个 flag。1-based → 本项目：(6,7)→(5,6)、(6,3)→(5,2)、(4,4)→(3,3)、(8,4)→(7,3)、(5,6)/(7,6)→(4,5)/(6,5)。净效果 = (5,6)(5,2)(3,3)(7,3) 是机关门、(4,5)(6,5) 是空地；本项目 (3,3)(7,3) 本来就写着 `a`、(4,5)(6,5) 本来就是 `.` ⇒ 只有 (5,6)(5,2) 需要补。地形依据：data/floors/floor-10.json 的 row1 = `####...####`、row2 = `...##.##...` ⇒ (5,2) 是小袋唯一开口。"
+    },
+    {
+      "id": "f10-captain-doors",
+      "title": "第 10 层：击败骷髅队长后两侧机关门开启并发放战利品",
+      "trigger": {
+        "op": "defeated",
+        "id": "skeletonCaptain",
+        "floor": 10,
+        "x": 5,
+        "y": 3
+      },
+      "once": true,
+      "effects": [
+        {
+          "op": "setTerrain",
+          "floor": 10,
+          "x": 3,
+          "y": 3,
+          "terrain": "."
+        },
+        {
+          "op": "setTerrain",
+          "floor": 10,
+          "x": 7,
+          "y": 3,
+          "terrain": "."
+        },
+        {
+          "op": "setTerrain",
+          "floor": 10,
+          "x": 5,
+          "y": 6,
+          "terrain": "."
+        },
+        { "op": "spawn", "floor": 10, "x": 0, "y": 3, "kind": "item", "id": "bluePotion" },
+        { "op": "spawn", "floor": 10, "x": 2, "y": 3, "kind": "item", "id": "bluePotion" },
+        { "op": "spawn", "floor": 10, "x": 8, "y": 3, "kind": "item", "id": "yellowKey" },
+        { "op": "spawn", "floor": 10, "x": 10, "y": 3, "kind": "item", "id": "yellowKey" }
+      ],
+      "why": "第 10 层左右两翼（各 4 只骷髅）被 (3,3)/(7,3) 两扇机关门封着，而**全塔没有任何事件会开它们** —— 与第 20 / 35 层同型，只是不致命（上楼梯 (5,10) 在中竖走廊上，不经两翼）。原版把开门与发奖挂在骷髅队长身上：`floors[10].after[\"6,4\"] → cutscene mt10win`。\n\n四件战利品按原版原样发：左翼两瓶蓝药水（(1,3)(3,3) 1-based → 本项目 (0,3)(2,3)）、右翼两把黄钥匙（(9,3)(11,3) → 本项目 (8,3)(10,3)），放成地图上的道具让玩家自己走去捡。本项目此前这四格都是空的。\n\n(5,6) 一起打开 —— 它是 `f10-ambush` 那场埋伏落的锁（原版 `mt10win` 的 `open (6,7)`）。\n\n⚠️ 原版这一步还有一个 `open (4,4)`（本项目 (3,3)，与上面第一条重复，去掉）与 `open (6,7)(8,4)`（(5,6)(7,3)）。\n\n⚠️ 与 `f10-zone1-clear` 是**两条独立事件、同一个触发**：那条属于「补楼梯图断点」（category ①，来源是 m8705 的 `eventHappened[7]`），这条属于「补漏转写」（category ②，来源是 deluxe 的 `after`）。分开写是因为两者的 `evidence` 不同源，混在一条里会让「这条到底有哪份源码依据」变得读不出来。",
+      "evidence": "reference/mota50-deluxe/source/mota-data.js 的 `floors[10].after[\"6,4\"] = [{t:'cutscene', id:'mt10win'}]`，正文：`text 骷髅队长「不,这是不可能的…」`、`set tiles[27](redGem) @[(1,3),(2,3),(3,3)]`、`set tiles[28](blueGem) @[(9,3),(10,3),(11,3)]`、`set tiles[32](bluePotion) @[(1,4),(2,4),(3,4)]`、`set tiles[21](yellowKey) @[(9,4),(10,4),(11,4)]`、`open [(4,4),(6,7),(8,4)]`、`flag 机关_10楼胜利`。1-based → 本项目：宝石三组落在 (0,2)(1,2)(2,2) / (8,2)(9,2)(10,2)、(1,3)(2,3)(3,3) / (8,3)(9,3)(10,3)，其中**本项目那一格上站着骷髅**的（(0,2)(1,2)(2,2)、（1,3)(8,2)(9,2)(10,2)(9,3)）本次**不动** —— 两个源在这些格上摆的东西不同（原版把宝石直接铺在地上，本项目摆的是骷髅），逐格差异用 `node tools/audit-event-gaps.mjs` 看得到；这里只补本项目确实是空的那 4 格。⚠️ 判据层面对这类差异是**宽容**的：`spawn` 的 no-op 判据只问「那一格有没有东西」，不问是不是同一件东西（见 tools/audit-event-gaps.mjs 的文件头），所以这些格在报告上是 no-op —— 是已知的判据边界，不是绿。"
+    },
+    {
+      "id": "f11-mage-door",
+      "title": "第 11 层：击败两名高级法师后机关门开启",
+      "trigger": {
+        "op": "allDefeated",
+        "floor": 11,
+        "at": [
+          { "x": 0, "y": 4 },
+          { "x": 2, "y": 4 }
+        ]
+      },
+      "once": true,
+      "effects": [
+        {
+          "op": "setTerrain",
+          "floor": 11,
+          "x": 1,
+          "y": 3,
+          "terrain": "."
+        }
+      ],
+      "why": "**这条是 `allDefeated.at`（按格）写法的存在理由，改动之前先读。**\n\n第 11 层的 (1,3) 机关门由**门口两名**高级法师把守，而同一层还有**第 3 名**高级法师在 (7,4)（门外的别处）。参考实现/原版的写法是「打死门口这两名 → 开门」；若按**种类**写 `ids:['seniorMage']`，就要求连 (7,4) 那只也打掉才开门 —— 而 (7,4) 可能就在这扇门后面（本层地形 row3 = `#a##..####.`，两翼不对称），于是条件永远不成立、门永远不开：**死锁**。\n\n按格写只关心门口那两个，与关卡设计逐字一致。`src/data/types.ts` 的 trigger 注释里举的就是这个例子。",
+      "evidence": "reference/mota50-deluxe/source/mota-data.js 的 `floors[11].after[\"1,5\"]` 与 `after[\"3,5\"]` 都是 `[{t:'open', loc:[[1,3]]}]`（1-based → 本项目守卫 (0,4)(2,4)、门 (1,3)）。本项目同型怪物：data/floors/floor-11.json 的 `seniorMage` 在 (0,4)(2,4)(7,4) 三处 —— 第三处正是不能按种类数的原因。"
+    },
+    {
+      "id": "f15-kraken-door",
+      "title": "第 15 层：击败海怪后机关门开启",
+      "trigger": {
+        "op": "defeated",
+        "id": "kraken",
+        "floor": 15,
+        "x": 5,
+        "y": 4
+      },
+      "once": true,
+      "effects": [
+        {
+          "op": "setTerrain",
+          "floor": 15,
+          "x": 5,
+          "y": 2,
+          "terrain": "."
+        }
+      ],
+      "why": "第 15 层的 (5,2) 机关门全塔没有任何事件会开。原版把开门挂在**章鱼**身上（`floors[15].after[\"6,6\"] → open (6,3)`）；本项目第 15 层用的是 m8705 的摆放 —— 章鱼这一族在本项目叫 `kraken`，站在 (5,4)（**与铁锹同一格**：(5,4) = `monster:kraken + item:shovel`），比原版低一格。\n\n⚠️ **这是一处坐标偏离，不是笔误**：两个源的第 15 层地图不同（原版 row1 = `.E.a...#...`，本项目 row0 = `...y.^.w...`），所以按「本项目那一格站着的是谁」写，不按原版坐标写。后果量级：这扇门**不挡去路**（上楼梯 (5,0) 从 row0 走，不经它），开不开都是同一层可通关；但它是本项目地图上唯一一扇「没有任何事件会开」的门之一，补上才算「事件齐了」。",
+      "evidence": "reference/mota50-deluxe/source/mota-data.js 的 `floors[15].after[\"6,6\"] = [{t:'hide', loc:[…7 格…]}, {t:'open', loc:[[6,3]]}]`（1-based → 门 (5,2)、原版章鱼 (5,5)）。本项目：data/floors/floor-15.json 的 `terrain[2] = \"...##a####y\"` ⇒ (5,2) 是机关门；实体表里 `kraken` ×1 @(5,4)，`(5,5)` 为空。两源地图差异用 `node tools/dump-deluxe-events.mjs --floor 15` 对照即可看出（原版 row1 = `.E.a...#...`，本项目 row0 = `...y.^.w...`）。"
+    },
+    {
+      "id": "f17-west-north-door",
+      "title": "第 17 层西翼上：击败两名初级卫兵后机关门开启",
+      "trigger": {
+        "op": "allDefeated",
+        "floor": 17,
+        "at": [
+          { "x": 0, "y": 4 },
+          { "x": 2, "y": 4 }
+        ]
+      },
+      "once": true,
+      "effects": [
+        {
+          "op": "setTerrain",
+          "floor": 17,
+          "x": 1,
+          "y": 3,
+          "terrain": "."
+        }
+      ],
+      "why": "第 17 层有**四组**「门口两名守卫 → 开一扇机关门」，其中**两组用同一批怪**（`juniorGuard`）。这条是西北那扇 (1,3)。\n\n⚠️ 四组各写成一条独立事件、且**一律带 `at` 坐标**：若按种类写，打死西翼北面的守卫会顺手把西翼南面的门也开了，关卡设计被抹平而没有任何东西会红（`src/data/types.ts` 的 trigger 注释里点名过这一层）。",
+      "evidence": "reference/mota50-deluxe/source/mota-data.js 的 `floors[17].after[\"1,5\"]` 与 `after[\"3,5\"]` 都是 `[{t:'open', loc:[[1,3]]}]`（1-based → 守卫 (0,4)(2,4)、门 (1,3)）。本项目守卫见 data/floors/floor-17.json 的 `juniorGuard` @(0,4)(2,4)(0,7)(2,7)。"
+    },
+    {
+      "id": "f17-west-south-door",
+      "title": "第 17 层西翼下：击败两名初级卫兵后机关门开启",
+      "trigger": {
+        "op": "allDefeated",
+        "floor": 17,
+        "at": [
+          { "x": 0, "y": 7 },
+          { "x": 2, "y": 7 }
+        ]
+      },
+      "once": true,
+      "effects": [
+        {
+          "op": "setTerrain",
+          "floor": 17,
+          "x": 1,
+          "y": 6,
+          "terrain": "."
+        }
+      ],
+      "why": "第 17 层四组机关门的第二组（西翼南，(1,6)）。原版 `after[\"1,8\"]` / `after[\"3,8\"]`。与 `f17-west-north-door` 是**同一种怪、不同的格** —— 两条必须分开，理由见那一条的 `why`。",
+      "evidence": "reference/mota50-deluxe/source/mota-data.js 的 `floors[17].after[\"1,8\"]` 与 `after[\"3,8\"]` 均为 `[{t:'open', loc:[[1,6]]}]`（1-based → 守卫 (0,7)(2,7)、门 (1,6)）。"
+    },
+    {
+      "id": "f17-east-north-door",
+      "title": "第 17 层东翼上：击败两名兽人战士后机关门开启",
+      "trigger": {
+        "op": "allDefeated",
+        "floor": 17,
+        "at": [
+          { "x": 8, "y": 4 },
+          { "x": 10, "y": 4 }
+        ]
+      },
+      "once": true,
+      "effects": [
+        {
+          "op": "setTerrain",
+          "floor": 17,
+          "x": 9,
+          "y": 3,
+          "terrain": "."
+        }
+      ],
+      "why": "第 17 层四组机关门的第三组（东翼北，(9,3)），守卫是本项目的 `orcWarrior`（原版那一格放的是 `zombieKnight`，两个源命名不同 —— 判据只比坐标、不比 id，见 tools/audit-event-gaps.mjs 的文件头）。",
+      "evidence": "reference/mota50-deluxe/source/mota-data.js 的 `floors[17].after[\"9,5\"]` 与 `after[\"11,5\"]` 均为 `[{t:'open', loc:[[9,3]]}]`（1-based → 守卫 (8,4)(10,4)、门 (9,3)）。本项目 `orcWarrior` @(8,4)(10,4)，见 data/floors/floor-17.json。"
+    },
+    {
+      "id": "f17-east-south-door",
+      "title": "第 17 层东翼下：击败两名兽人后机关门开启",
+      "trigger": {
+        "op": "allDefeated",
+        "floor": 17,
+        "at": [
+          { "x": 8, "y": 7 },
+          { "x": 10, "y": 7 }
+        ]
+      },
+      "once": true,
+      "effects": [
+        {
+          "op": "setTerrain",
+          "floor": 17,
+          "x": 9,
+          "y": 6,
+          "terrain": "."
+        }
+      ],
+      "why": "第 17 层四组机关门的第四组（东翼南，(9,6)），守卫 `orc`（原版 `zombie`）。四组都补上之后，第 17 层四扇机关门全部有主。",
+      "evidence": "reference/mota50-deluxe/source/mota-data.js 的 `floors[17].after[\"9,8\"]` 与 `after[\"11,8\"]` 均为 `[{t:'open', loc:[[9,6]]}]`（1-based → 守卫 (8,7)(10,7)、门 (9,6)）。"
+    },
+    {
+      "id": "f25-archmage-keys",
+      "title": "第 25 层：击败大法师后四把红钥匙出现",
+      "trigger": {
+        "op": "defeated",
+        "id": "archmage",
+        "floor": 25,
+        "x": 5,
+        "y": 5
+      },
+      "once": true,
+      "effects": [
+        { "op": "spawn", "floor": 25, "x": 3, "y": 7, "kind": "item", "id": "redKey" },
+        { "op": "spawn", "floor": 25, "x": 4, "y": 7, "kind": "item", "id": "redKey" },
+        { "op": "spawn", "floor": 25, "x": 6, "y": 7, "kind": "item", "id": "redKey" },
+        { "op": "spawn", "floor": 25, "x": 7, "y": 7, "kind": "item", "id": "redKey" }
+      ],
+      "why": "原版：打死第 25 层中央的 `blackMagician`（本项目同一格的怪叫 `archmage`，坐标逐格吻合）之后，在它下排放**四把红钥匙**。本项目此前完全没有这条 —— 效果是第 25 层白送一场硬仗却没有产出，而红钥匙在 25 层之后是硬通货（第 26、30、35 层都有红门）。\n\n坐标：本项目 (5,5) 是大法师、(3,7)(4,7)(6,7)(7,7) 是它正下方的四个空位（data/floors/floor-25.json 的 `terrain[7] = \".##.....##.\"`）。",
+      "evidence": "reference/mota50-deluxe/source/mota-data.js 的 `floors[25].after[\"6,6\"] = [{t:'set', n:23, loc:[[4,8],[5,8],[7,8],[8,8]]}]`，`tiles[23].kind = 'item'`、`tiles[23].name = 'redKey'`；1-based → 本项目 (3,7)(4,7)(6,7)(7,7)。同文件 `floors[25].map[6][6] = 247 (blackMagician)` ⇒ 本项目 data/floors/floor-25.json 的 `archmage @(5,5)`。"
+    },
+    {
+      "id": "f30-slime-counter",
+      "title": "第 30 层：六只史莱姆全灭后机关门开启",
+      "trigger": {
+        "op": "allDefeated",
+        "floor": 30,
+        "at": [
+          { "x": 4, "y": 4 },
+          { "x": 2, "y": 4 },
+          { "x": 3, "y": 4 },
+          { "x": 6, "y": 4 },
+          { "x": 7, "y": 4 },
+          { "x": 8, "y": 4 }
+        ]
+      },
+      "once": true,
+      "effects": [
+        {
+          "op": "setTerrain",
+          "floor": 30,
+          "x": 5,
+          "y": 3,
+          "terrain": "."
+        }
+      ],
+      "why": "**第 30 层的关键路线**：(5,3) 那扇机关门是「从本层入口走到上楼梯 (5,0)」的必经之路（本层两座楼梯都是上楼梯、没有下楼梯，`audit-special-doors --behind` 报它 ❌ 切断上楼梯），而全塔没有任何事件会开它 —— 不补的话第 30 层少半层内容。\n\n原版是**计数器**写法：`floors[30].after` 有 6 个键（六只史莱姆各一格），每个都是「`flagAdd 计数_30楼`；若 `计数 >= 5` 则 `open (5,3)`」。即打死其中任意 5 只就开。本项目用 `allDefeated.at` 表达成「六只全灭」—— **严格更晚一点开**（差一只的进度），但不改变可通关性，且与同族的第 10 / 17 / 49 层写法统一。\n\n六格坐标**逐格吻合**：原版 6 只史莱姆在 1-based (5,5)(3,5)(4,5)(7,5)(8,5)(9,5) → 本项目 (4,4)(2,4)(3,4)(6,4)(7,4)(8,4)，与 floor-30.json 的 6 只（greenSlime / bigSlime / redSlime ×2）一格不差。",
+      "evidence": "reference/mota50-deluxe/source/mota-data.js 的 `floors[30].after` —— 6 个键各为 `[{t:'if', cond:{k:'flag', name:'计数_30楼', op:'>=', v:5}, act:[{t:'open', loc:[[6,4]]}, {t:'flag', name:'机关_30楼', v:true}]}, {t:'flagAdd', name:'计数_30楼', v:1}]`；`open loc:[6,4]` 1-based → 本项目 (5,3)。本项目地形 `floor-30.json` 的 `terrain[3]` 上 x=5 是 `a`。"
+    },
+    {
+      "id": "f32-guard-door",
+      "title": "第 32 层：击败两名中级卫兵后机关门开启",
+      "trigger": {
+        "op": "allDefeated",
+        "floor": 32,
+        "at": [
+          { "x": 0, "y": 9 },
+          { "x": 2, "y": 9 }
+        ]
+      },
+      "once": true,
+      "effects": [
+        {
+          "op": "setTerrain",
+          "floor": 32,
+          "x": 1,
+          "y": 8,
+          "terrain": "."
+        }
+      ],
+      "why": "第 32 层的 (1,8) 机关门没有事件会开。原版 `floors[32].after[\"1,10\"]` / `after[\"3,10\"]` → `open (1,8)`，守卫是同型的 `blueGuard`（本项目 `midGuard`），坐标逐格吻合。\n\n门后是什么（`audit-special-doors --behind` 量出来的）：5 个黄钥匙 + 1 个蓝钥匙。属于「不致命但没有它这一层就少一块」。",
+      "evidence": "reference/mota50-deluxe/source/mota-data.js 的 `floors[32].after[\"1,10\"]` / `after[\"3,10\"]` 均为 `[{t:'open', loc:[[1,8]]}]`（1-based → 守卫 (0,9)(2,9)、门 (1,8)）。本项目 `midGuard` @(0,9)(2,9)，见 data/floors/floor-32.json。"
+    },
+    {
+      "id": "f34-guard-keys",
+      "title": "第 34 层：八名守卫全灭后钥匙出现",
+      "trigger": {
+        "op": "allDefeated",
+        "floor": 34,
+        "at": [
+          { "x": 4, "y": 3 },
+          { "x": 6, "y": 3 },
+          { "x": 8, "y": 3 },
+          { "x": 10, "y": 3 },
+          { "x": 4, "y": 7 },
+          { "x": 6, "y": 7 },
+          { "x": 8, "y": 7 },
+          { "x": 10, "y": 7 }
+        ]
+      },
+      "once": true,
+      "effects": [
+        { "op": "setTerrain", "floor": 34, "x": 1, "y": 5, "terrain": "." },
+        { "op": "spawn", "floor": 34, "x": 1, "y": 5, "kind": "item", "id": "redKey" },
+        { "op": "spawn", "floor": 34, "x": 0, "y": 4, "kind": "item", "id": "yellowKey" },
+        { "op": "spawn", "floor": 34, "x": 2, "y": 4, "kind": "item", "id": "yellowKey" },
+        { "op": "spawn", "floor": 34, "x": 0, "y": 6, "kind": "item", "id": "yellowKey" },
+        { "op": "spawn", "floor": 34, "x": 2, "y": 6, "kind": "item", "id": "yellowKey" }
+      ],
+      "why": "原版 `floors[34].auto`（条件式，`once: '机关_34楼钥匙'`）：八个格子上的怪**全死**后出现 4 把黄钥匙 + 1 把红钥匙，同时把 (2,6)（1-based）那面墙拆掉。本项目此前完全没有这条。\n\n八格坐标**逐格吻合**（原版 1-based (5,4)(7,4)(9,4)(11,4)(5,8)(7,8)(9,8)(11,8) → 本项目 (4,3)(6,3)(8,3)(10,3)(4,7)(6,7)(8,7)(10,7)，与 floor-34.json 的 8 只守卫一格不差）。\n\n⚠️ **两处刻意选择**：\n① 原版是 `auto`（条件式，每步重算）。本项目引擎只有边沿触发，这里用 `allDefeated.at` 表达 —— 原版条件里只有 `dead` 子句，所以**语义等价**，不是近似。\n② 原版 `hide (2,6)` 是**拆掉一面墙**（那一格在原版地图里是普通墙 `#`），本项目 `remove` 算子只删实体不删地形，所以写成 `setTerrain ... '.'` 再 `spawn` 钥匙 —— 两步合起来与原版 `hide` + `set` 等价。顺序不能反：先拆墙再放钥匙。",
+      "evidence": "reference/mota50-deluxe/source/mota-data.js 的 `floors[34].auto[0] = {cond:{k:'and', of:[{k:'dead', locs:[[5,4],[7,4],[9,4],[11,4],[5,8],[7,8],[9,8],[11,8]]}]}, once:'机关_34楼钥匙', act:[{t:'hide', loc:[[2,6]]}, {t:'set', n:21, loc:[[1,5],[3,5],[1,7],[3,7]]}, {t:'set', n:23, loc:[[2,6]]}]}`；`tiles[21] = yellowKey(item)`、`tiles[23] = redKey(item)`。本项目地形 floor-34.json 的 `terrain[5] = \".#.........\"` ⇒ (1,5) 是 `#`。"
+    },
+    {
+      "id": "f38-guard-door",
+      "title": "第 38 层：击败两名中级卫兵后机关门开启",
+      "trigger": {
+        "op": "allDefeated",
+        "floor": 38,
+        "at": [
+          { "x": 0, "y": 9 },
+          { "x": 2, "y": 9 }
+        ]
+      },
+      "once": true,
+      "effects": [
+        {
+          "op": "setTerrain",
+          "floor": 38,
+          "x": 1,
+          "y": 8,
+          "terrain": "."
+        }
+      ],
+      "why": "与 `f32-guard-door` **逐字同型**（同一种怪、同一组坐标、同一个门坐标），只是楼层不同 —— 第 32 和 38 层在原版 `floors` 数据里是两张几乎一样的地图，`after[\"1,10\"]` / `after[\"3,10\"]` 两处都写了一遍。两条事件必须都在，不能靠「第 32 层那条顺手带上」—— `trigger.floor` 就是为此而写的。",
+      "evidence": "reference/mota50-deluxe/source/mota-data.js 的 `floors[38].after[\"1,10\"]` / `after[\"3,10\"]` 均为 `[{t:'open', loc:[[1,8]]}]`。本项目 `midGuard` @(0,9)(2,9)，见 data/floors/floor-38.json。"
+    },
+    {
+      "id": "f14-secret-red-key",
+      "title": "第 14 层：击败左上方三名兽人战士后暗墙开启（红钥匙）",
+      "trigger": {
+        "op": "allDefeated",
+        "floor": 14,
+        "at": [
+          { "x": 0, "y": 0 },
+          { "x": 2, "y": 0 },
+          { "x": 1, "y": 1 }
+        ]
+      },
+      "once": true,
+      "effects": [
+        {
+          "op": "setTerrain",
+          "floor": 14,
+          "x": 0,
+          "y": 2,
+          "terrain": "."
+        }
+      ],
+      "why": "原版 `floors[14].auto`（条件式，`once: '机关_14楼红钥匙'`）：(1,1)(3,1)(2,2)（1-based）三格上的怪**全死**后，把 (1,3)（本项目 (0,2)）那面墙打开 —— 墙后面藏着一把红钥匙。\n\n本项目那格的情况很直白：data/floors/floor-14.json 的 `terrain[2] = \"#..#.#.##y#\"` ⇒ (0,2) 是 `#`，而**同一格的实体表里就摆着 `item:redKey`** —— 也就是说这把红钥匙在本项目里**存在但永远拿不到**（墙里的一件道具：看得见图标、走不上去）。这正是「有产物但没有开它的条件」那一类缺口，修法就是把条件补上。\n\n三格坐标**逐格吻合**：原版 1-based (1,1)(3,1)(2,2) → 本项目 (0,0)(2,0)(1,1)，与 floor-14.json 的 3 只 `orcWarrior` 一格不差。\n\n⚠️ 原版是 `auto`（每步重算），本项目引擎只有边沿触发，这里用 `allDefeated.at` 表达 —— 原版条件里只有 `dead` 子句（没有 `alive`），所以**语义等价**，不是近似。详见 `f39` 那条的对照（那条带 `alive`，本项目**没有**对应表达，已记入 docs/known-gaps.md）。",
+      "evidence": "reference/mota50-deluxe/source/mota-data.js 的 `floors[14].auto[0] = {cond:{k:'and', of:[{k:'dead', locs:[[1,1],[3,1],[2,2]]}]}, once:'机关_14楼红钥匙', act:[{t:'open', loc:[[1,3]]}]}`（1-based → 本项目目标格 (0,2)）。本项目：`floor-14.json` 的 `terrain[2][0] = '#'`、实体 `redKey @(0,2)`；`orcWarrior @(0,0)(2,0)(1,1)`。"
+    },
+    {
+      "id": "f44-guard-door",
+      "title": "第 44 层：击败两名高级卫兵后机关门开启",
+      "trigger": {
+        "op": "allDefeated",
+        "floor": 44,
+        "at": [
+          { "x": 4, "y": 8 },
+          { "x": 6, "y": 8 }
+        ]
+      },
+      "once": true,
+      "effects": [
+        {
+          "op": "setTerrain",
+          "floor": 44,
+          "x": 5,
+          "y": 7,
+          "terrain": "."
+        }
+      ],
+      "why": "第 44 层是**圣盾**所在的层（`item:sacredShield @(5,5)`），而它被 (5,7) 那扇机关门封在中央小室里（`audit-special-doors --behind` 报它切断 4 瓶红药水 + 圣盾）。原版把开门挂在门口两名 `redGuard` 上（本项目 `seniorGuard`，坐标逐格吻合）。这扇门不补 = 圣盾永久拿不到，而第 44 层之后（45–50）的怪强度是按「有圣盾」设计的。",
+      "evidence": "reference/mota50-deluxe/source/mota-data.js 的 `floors[44].after[\"5,9\"]` / `after[\"7,9\"]` 均为 `[{t:'open', loc:[[5,7]]}]`（1-based → 守卫 (4,8)(6,8)、门 (5,7)）。本项目：floor-44.json 的 `terrain[7] = \"....#a#....\"` ⇒ (5,7) 是机关门；实体 `seniorGuard` @(4,8)(6,8)、`sacredShield` @(5,5)。"
+    },
+    {
+      "id": "f45-dark-knight-door",
+      "title": "第 45 层西侧：击败两名黑暗骑士后机关门开启",
+      "trigger": {
+        "op": "allDefeated",
+        "floor": 45,
+        "at": [
+          { "x": 4, "y": 8 },
+          { "x": 4, "y": 10 }
+        ]
+      },
+      "once": true,
+      "effects": [
+        {
+          "op": "setTerrain",
+          "floor": 45,
+          "x": 3,
+          "y": 9,
+          "terrain": "."
+        }
+      ],
+      "why": "第 45 层 (3,9) 与 (6,9) 两扇机关门全塔没有事件会开，两条都补。\n\n⚠️ **这两条看着像死锁，其实不是 —— 别被 `audit-special-doors --behind` 那句话骗了**。它报「(3,9) 切断 darkKnight(4,8)(4,10)」（守卫在自己那扇门后面），但那是**单门 BFS**：它把其余每一扇特殊门都当成关着的。本层真实拓扑是四个小袋串联：`A(左) —(3,9)a— B(中偏左) —(6,9)a— C(中偏右) —(8,9)y— D(右) —(10,8)y— 外圈`，所以从右路进来先打掉 C 里那两名魔法警卫、开 (6,9)、再打 B 里这两名黑暗骑士、开 (3,9) —— 能走通。\n\n判据侧的对策见 `tools/audit-special-doors.mjs` 新增的 `--solved`（不动点可达性），单门 BFS 只用来排优先级。",
+      "evidence": "reference/mota50-deluxe/source/mota-data.js 的 `floors[45].after[\"5,9\"]` / `after[\"5,11\"]` 均为 `[{t:'open', loc:[[4,10]]}]`（1-based → 守卫 (4,8)(4,10)、门 (3,9)）。本项目拓扑：floor-45.json 的 row8 = `...#..#.##y`、row9 = `...a..a.y..`、row10 = `...#..#.#..` ⇒ (3,9) 与 (6,9) 串联、右端由 (8,9) 黄门与 (10,8) 黄门接外圈。"
+    },
+    {
+      "id": "f45-magic-guard-door",
+      "title": "第 45 层东侧：击败两名魔法警卫后机关门开启",
+      "trigger": {
+        "op": "allDefeated",
+        "floor": 45,
+        "at": [
+          { "x": 7, "y": 8 },
+          { "x": 7, "y": 10 }
+        ]
+      },
+      "once": true,
+      "effects": [
+        {
+          "op": "setTerrain",
+          "floor": 45,
+          "x": 6,
+          "y": 9,
+          "terrain": "."
+        }
+      ],
+      "why": "第 45 层的第二条机关门事件（原版 `after[\"8,9\"]` / `after[\"8,11\"]`，守卫本项目的 `magicGuard`）。**这一条必须先于 `f45-dark-knight-door` 能走通**：它守着的 (6,9) 是通往西侧小袋的唯一入口（见那一条的拓扑说明）。两条都补上，(3,9)/(6,9) 才算都有主。",
+      "evidence": "reference/mota50-deluxe/source/mota-data.js 的 `floors[45].after[\"8,9\"]` / `after[\"8,11\"]` 均为 `[{t:'open', loc:[[7,10]]}]`（1-based → 守卫 (7,8)(7,10)、门 (6,9)）。本项目 `magicGuard` @(7,8)(7,10)，见 data/floors/floor-45.json。"
+    },
+    {
+      "id": "f49-outer-chamber-door",
+      "title": "第 49 层外室：击败两名高级巫师后机关门开启",
+      "trigger": {
+        "op": "allDefeated",
+        "floor": 49,
+        "at": [
+          { "x": 4, "y": 9 },
+          { "x": 6, "y": 9 }
+        ]
+      },
+      "once": true,
+      "effects": [
+        {
+          "op": "setTerrain",
+          "floor": 49,
+          "x": 5,
+          "y": 8,
+          "terrain": "."
+        }
+      ],
+      "why": "第 49 层是**终局前的最后一层**，两扇机关门 (5,6)/(5,8) 串在中央竖廊上。这条管外室那扇 (5,8)，守卫是本项目的两名 `seniorWizard`（原版 `redWizard`）。\n\n⚠️ 它与 `f49-seal-break`（按**种类**全灭 `darkKnight`+`seniorWizard` 解除封印）**不是同一件事、也不要合并**：封印那条的语义是「本层这两种怪一只不剩」，这条的语义是「门口这两只死了」。若共用同一个 `allDefeated`，任何一边改条件都会静默改动另一边的行为。",
+      "evidence": "reference/mota50-deluxe/source/mota-data.js 的 `floors[49].after[\"5,10\"]` / `after[\"7,10\"]` 均为 `[{t:'open', loc:[[5,8]]}]`（1-based → 守卫 (4,9)(6,9)、门 (5,8)）。本项目：floor-49.json 的 row8 = `...##a##...` ⇒ (5,8) 是机关门；`seniorWizard` @(4,9)(6,9)。"
+    },
+    {
+      "id": "f49-inner-chamber-door",
+      "title": "第 49 层内室：击败两名黑暗骑士后机关门开启",
+      "trigger": {
+        "op": "allDefeated",
+        "floor": 49,
+        "at": [
+          { "x": 4, "y": 7 },
+          { "x": 6, "y": 7 }
+        ]
+      },
+      "once": true,
+      "effects": [
+        {
+          "op": "setTerrain",
+          "floor": 49,
+          "x": 5,
+          "y": 6,
+          "terrain": "."
+        }
+      ],
+      "why": "第 49 层两扇机关门的里那扇 (5,6)，守卫 `darkKnight` @(4,7)(6,7)。\n\n⚠️ 单看 `audit-special-doors --behind` 会把它读成「纯装饰门、不挡任何东西」—— 那是因为那个脚本**一次只把一扇门当作已开**，而 (5,6) 内侧那间屋子同时被 (5,8) 封着。真实情况是**两扇串联**：先打外室的高级巫师开 (5,8)，进到 (5,7) 通道，再打这两名黑暗骑士开 (5,6)，才能上到 (5,5) 一带。理由是 `--solved` 那条不动点判据要守的东西（见 tools/audit-special-doors.mjs）。",
+      "evidence": "reference/mota50-deluxe/source/mota-data.js 的 `floors[49].after[\"5,8\"]` / `after[\"7,8\"]` 均为 `[{t:'open', loc:[[5,6]]}]`（1-based → 守卫 (4,7)(6,7)、门 (5,6)）。本项目：floor-49.json 的 row6 = `.#.##a##.#.` ⇒ (5,6) 是机关门；`darkKnight` @(4,7)(6,7)。"
     }
   ]
 }

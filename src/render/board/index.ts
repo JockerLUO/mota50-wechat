@@ -33,7 +33,7 @@
 
 import { Container, Graphics, Rectangle, Sprite, Text, Texture, TilingSprite } from 'pixi.js';
 import type { FloorEntity, GameData } from '../../data';
-import { entityFootprint, entityKey, tileAt, type GameState } from '../../game/state';
+import { entitiesOn, entityFootprint, entityKey, tileAt, type GameState } from '../../game/state';
 import { singleFootprint } from '../../game/footprint';
 import { atlas, fitSize, isWallChar, terrainKeyFor, variantIndex } from '../atlas';
 import {
@@ -550,7 +550,7 @@ export class Board extends Container {
 
   private syncEntities(state: GameState, data: GameData, floor: number): void {
     const alive = new Set<string>();
-    for (const e of data.floors.get(floor)!.entities) {
+    for (const e of entitiesOn(state, data, floor)) {
       // ⚠️ 键必须与引擎**逐字同源**，别在这里手拼一遍。
       //
       // `state.removed` 是渲染层与引擎之间唯一的「谁还在场上」的账本：引擎往里写
@@ -712,10 +712,16 @@ export class Board extends Container {
     const fw = fp.x1 - fp.x0 + 1;
     c.x = fp.x0 * S;
     c.y = fp.y0 * S;
-    if (fw > 1) {
-      view.footprint = fp;
-      view.boss = true;
-    }
+    if (fw > 1) view.footprint = fp;
+    //
+    // ⚠️ `view.boss` 与占位格数**解耦**（2026-09-27）。
+    //
+    // 原先两者是同一个分支里设的（`fw > 1` ⇒ 既记 footprint 又标 boss）。8 只 BOSS
+    // 一律 3×3 时这没问题；现在 6 只收成 1 格，绑在一起会让它们的 **BOSS 记号
+    // 随尺寸一起消失** —— 脚下光环（下面 `mon.boss` 那一支）与「画在其它实体之上」
+    // 的绘制顺序都没了，而画面上只是「少了一圈光」，不会有任何报错。
+    // 占位块是**几何**，是不是 BOSS 是**身份**，两者本来就该分开问。
+    if (type === 'monster' && data.monsters[id]?.boss) view.boss = true;
 
     const cx = (fw * S) / 2;
     const cy = (fw * S) / 2;

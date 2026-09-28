@@ -86,6 +86,35 @@ def _footprint_tiles() -> int:
 
 
 BOSS_TILES = _footprint_tiles()
+"""**默认**占位格数（`constants.boss.footprintTiles`，2026-09-27 起是 1）。
+
+逐只覆盖见 `footprint_tiles_of()` —— 只有 `dragon` / `kraken` 是 3。"""
+
+
+def footprint_tiles_of(boss_id: str) -> int:
+    """**某一只** BOSS 占几格 —— 与 `src/game/footprint.ts` 的 `footprintTilesFor` 同规。"""
+    const = json.loads((ROOT / "data" / "constants.json").read_text(encoding="utf-8"))
+    raw = (const.get("boss", {}).get("footprintTilesByBoss") or {}).get(boss_id)
+    n = int(raw) if isinstance(raw, (int, float)) and int(raw) >= 1 else BOSS_TILES
+    return n if n % 2 == 1 else max(1, n - 1)
+
+
+def bos_w(boss_id: str) -> int:
+    """该只的**设计网格**（1 设计像素 = 1 落屏像素）：3 格 → 96，1 格 → 32。"""
+    return CELL * footprint_tiles_of(boss_id)
+
+
+def bos_frame(boss_id: str) -> int:
+    """该只的**图集帧网格** = 设计网格 × SS：3 格 → 192，1 格 → 64。
+
+    ⚠️ 帧必须逐只算。2026-09-27 把 `footprintTiles` 默认改成 1 之后，
+    模块级的 `BOS_W` / `BOS_FRAME` 只代表**最大那一档**（96 / 192，3 格 BOSS
+    与手绘造型的画布用它）。谁要是拿它们当「所有 BOSS 的帧」，8 只会被一起
+    塞进 64 帧 —— 而 dragon / kraken 需要 192，于是它们的落屏会从「帧 × 0.5」
+    变成「64 × 1.5 = 96」，看起来落屏没错、**帧却比落屏还小**（铁律 #41 修掉的糊边）。
+    实测就是这么炸的：`npm run assets` 的剪影判据成片变红。
+    """
+    return bos_w(boss_id) * BOSS_SS
 
 
 def _art_source() -> str:
@@ -127,7 +156,15 @@ ART_SOURCE = _art_source()
 #
 # 它是「画多大」这件事在设计意义上的网格 —— 手绘那一套 `_sym` / `_ell` / 行号常量
 # 全部建立在这个数字上，判据的分块尺寸也从它推。
-BOS_W = BOS_H = CELL * BOSS_TILES
+# ⚠️ 这里取的是**最大那一档**的格数（3 格），**不是** `BOSS_TILES`（默认 1 格）。
+#
+# 2026-09-27 把默认改成 1 之后，这一行若继续写 `BOSS_TILES`，`BOS_W` 会塌成 32：
+#   · `bos_canvas()` 变成 32×32，而手绘那 8 只的坐标全是 0..95 ⇒ 全部溢出，
+#     实测症状是「drawn 的细节密度 1.00」（画布上只剩一个角）；
+#   · `design_frame()` 会把 192 帧缩成 32（3 格 BOSS 也被缩）。
+# 所以模块级的 `BOS_W` / `BOS_FRAME` 语义收窄成「**手绘画布 / 最大档**」，
+# 逐只的真值一律走 `bos_w(bid)` / `bos_frame(bid)`。
+BOS_W = BOS_H = CELL * 3
 
 # ── 图集**帧网格** = 设计网格 × 超采样倍数（2026-09-25）────────────────
 #
@@ -211,6 +248,10 @@ BOSS_INNER_MIN = 2.40
 BOSS_HEAD_SYM_MAX = 0.02
 BOSS_SIL_MIN_DIFF = 1500 * BOSS_SS * BOSS_SS
 
+# 剪影差异下限**按设计网格**查表（实测标定，见下面那段注释里的实测序列）。
+# 96 = 3 格 BOSS（帧 192 × SS²）；32 = 1 格 BOSS（帧 64）。
+BOSS_SIL_MIN_BY_W = {96: BOSS_SIL_MIN_DIFF, 32: 400}
+
 # 哪些 BOSS 是**正面朝向玩家**的（头部对称度判据只对它们生效）。
 #
 # 名单写死、而不是「对所有 BOSS 都量对称度」：骷髅队长手持圆盾、骑士队长
@@ -224,7 +265,7 @@ def bos_canvas() -> Image.Image:
     return Image.new("RGBA", (BOS_W, BOS_H), (0, 0, 0, 0))
 
 
-def design_frame(im: Image.Image) -> Image.Image:
+def design_frame(im: Image.Image, boss_id: str) -> Image.Image:
     """
     把**帧网格**的图缩回**设计网格**（`BOS_FRAME` → `BOS_W`，NEAREST）。
 
@@ -235,12 +276,75 @@ def design_frame(im: Image.Image) -> Image.Image:
     的方块，NEAREST 折回来是**逐像素无损的原图**；而 LANCZOS 会引入
     一批本来不存在的中间色，把密度读数抬上去（那正是这两条判据要量掉的东西）。
     """
-    if im.size == (BOS_W, BOS_H):
+    w = bos_w(boss_id)
+    if im.size == (w, w):
         return im
-    return im.resize((BOS_W, BOS_H), Image.NEAREST)
+    return im.resize((w, w), Image.NEAREST)
 
 
-def finish(im: Image.Image) -> Image.Image:
+# ── alpha 二值化（从 `imported.py` 移来：`finish` 也需要它）──────────────
+# 单一来源：`imported` 那条链的 ⑦ 与 `finish` 缩图之后都要这一刀。
+# 留在 `imported.py` 会让 `common.py` 反向 import（成环）。
+# alpha 二值化的阈值（≥ 它 ⇒ 不透明）。与 `harden_alpha` 一起从 `imported.py` 搬来。
+ALPHA_HARD_MIN = 128
+
+
+def harden_alpha(im: Image.Image) -> Image.Image:
+    """
+    ⑦ **把 alpha 二值化** —— 这是「边缘不糊」的最后一刀，也是外部图源
+    与全项目像素画语言对齐的地方。
+
+    ## 不糊的边缘从哪来
+
+    这一条链之前每一步都在**制造半透明**：去背是硬切（留下与白底混过的抗锯齿圈），
+    `feather_edges` 更进一步把那一圈**故意**压成低 alpha，最后 LANCZOS 缩放
+    再把 alpha 抹成一片渐变。实测（skeletonCaptain，96 网格那一版）：
+
+        alpha == 0   6004 px
+        alpha 1..254  **1596 px**   ← 占全部非透明像素的 49.7%
+        alpha == 255   1616 px
+
+    也就是说**边缘有一半的像素是半透明的**。在 dpr 3 上每个这样的像素会摊成
+    3×3 的灰阶块 ⇒ 剪影外圈是一条 3~6 设备像素宽的**模糊带** ——
+    而棋盘上其它东西（墙、地板、杂兵）全是 `alpha ∈ {0,255}` 的硬边像素画。
+    并排放着，BOSS 的「发虚」就是这么来的。
+
+    ## 为什么二值化之前必须先反预乘（`feather_edges`）
+
+    顺序不能反。被白底混过的边界像素**颜色本身是浅的**（那是 `c = a·C + (1-a)·255`
+    里的白底分量）。若先二值化再反预乘，这些像素会被判成不透明、并且带着
+    那层浅色留下来 ⇒ 剪影外圈多一圈「白边」，比模糊更难看。
+    先反预乘把它们换成真彩 + 低 alpha，再二值化 ⇒ **低 alpha 那些直接变透明**，
+    留下来的是真彩，白边和模糊一起消失。
+
+    实测被这一刀削掉的两类东西，恰好都是**本来就该去掉**的：
+      · 抗锯齿圈（alpha 20~127，实测每行 2~24 个像素，沿整条剪影分布）；
+      · 源图右下角那处**水印**（亮度 222~251 ⇒ 反预乘后 alpha 只有 20~26）。
+    后者是意外收获：水印在旧链里一直留在图集里，只是小到没人注意。
+
+    ## 顺序：必须在**缩放之后**
+
+    反过来（先二值化再缩放）会前功尽弃：LANCZOS 把硬边重新抹成渐变，
+    半透明像素又回来了。所以链是「缩放 → 二值化 → 重新底对齐」。
+
+    ## 不做的事：不限制颜色
+
+    只动 alpha，RGB 一个像素不改。插画内部的明暗阶、纹理、细节全部保留 ——
+    这一条与「不做硬边化（限色）」那条取舍不冲突：限色会把插画打回劣质像素画，
+    而**边缘硬不硬与内部有多少颜色是两件事**。
+    """
+    im = im.copy()
+    px = im.load()
+    for y in range(im.height):
+        for x in range(im.width):
+            r, g, b, a = px[x, y]
+            if a == 0 or a == 255:
+                continue
+            px[x, y] = (r, g, b, 255) if a >= ALPHA_HARD_MIN else (0, 0, 0, 0)
+    return im
+
+
+def finish(im: Image.Image, boss_id: str) -> Image.Image:
     """收尾：描边 + 抬到**帧网格**。**所有** BOSS 都走这一个出口。
 
     两条画法的产出处在不同的网格上，这里把它们收口到同一个帧网格：
@@ -259,10 +363,21 @@ def finish(im: Image.Image) -> Image.Image:
     `Image.new` 成 64 网格），会在这里当场暴露，而不是等到 `verify_boss_art`
     的判据 1 去猜「是不是退回了杂兵造型」。
     """
-    if (im.width, im.height) == (BOS_FRAME, BOS_FRAME):
+    frame = bos_frame(boss_id)
+    target = bos_w(boss_id)
+    if (im.width, im.height) == (frame, frame):
         return add_outline(im, MON_INK)
     if (im.width, im.height) == (BOS_W, BOS_H):
-        return add_outline(im, MON_INK).resize((BOS_FRAME, BOS_FRAME), Image.NEAREST)
+        # 手绘画布恒为 96。目标设计网格更小时（1 格 BOSS 是 32）先缩到目标网格，
+        # 再描边、再 ×SS —— 顺序不能反：描边必须在**目标网格**上加，
+        # 否则 1px 的定义随尺寸变（那正是「两套画法各自的语言」那一段说的）。
+        #
+        # 用 LANCZOS + 硬边化（与 imported 那条链同一个去抗锯齿手段），
+        # 不用 NEAREST：96→32 是 3:1 抽样，NEAREST 会成片丢像素、边缘成锯齿。
+        if target < BOS_W:
+            small = im.resize((target, target), Image.LANCZOS)
+            return add_outline(harden_alpha(small), MON_INK).resize((frame, frame), Image.NEAREST)
+        return add_outline(im, MON_INK).resize((frame, frame), Image.NEAREST)
     raise AssertionError(
         f"BOSS 造型画布是 {im.width}×{im.height}，应为设计网格 {BOS_W}×{BOS_H}"
         f"（= 格子 {CELL} × 占位 {BOSS_TILES} 格，造型函数要用 bos_canvas()）"
@@ -621,11 +736,11 @@ def boss_art_base(bid: str, source: str | None = None) -> Image.Image:
     """
     src = source or ART_SOURCE
     if src == "imported":
-        return finish(imported.build(bid))
+        return finish(imported.build(bid), bid)
     mod = _MODULE_OF[bid]
     # `mod.draw` 出的是 96 **设计网格**，由 `finish` 描边后 NEAREST 抬到帧网格
     # （见 `finish` 的对照表：描边必须在各自的网格上加，否则会偷偷改掉画风）。
-    return finish(mod.draw(mod.spec(bid), bid))
+    return finish(mod.draw(mod.spec(bid), bid), bid)
 
 
 def boss_art_frames(bid: str, source: str | None = None) -> list[Image.Image]:
@@ -745,14 +860,22 @@ def verify_boss_art(frames: dict[str, list[Image.Image]], source: str | None = N
     # 于是给帧加超采样（帧 192 / drawScale 0.5，落屏仍是 96）会被它误杀。
     # 这条要保护的从一开始就是「精灵与占位块一样大」这一件事（铁律 #12：
     # 判据绑语义，别绑会随画法变的中间量），只是旧版正好两者数值相同而已。
-    on_screen = BOS_FRAME * BOSS_DRAW_SCALE
-    if abs(on_screen - CELL * BOSS_TILES) > 1e-9:
-        problems.append(
-            f"BOSS 的**落屏尺寸**是 {on_screen:g}px（帧 {BOS_FRAME} × drawScale "
-            f"{BOSS_DRAW_SCALE:g}），而棋盘上占 {BOSS_TILES} 格 = {CELL * BOSS_TILES}px —— "
-            f"素材画多大与棋盘占几格必须是同一个数（真值在 data/constants.json 的 "
-            f"boss.footprintTiles），否则画面会出现「精灵比占位块大/小一圈」"
-        )
+    #
+    # ⚠️ 逐只逐条（2026-09-27）。占位格数不再是全局的 3 —— 只有 dragon / kraken 是 3，
+    # 其余 6 只是 1。拿全局 BOSS_TILES（现在是默认值 1）去比，会把那两只 3 格 BOSS
+    # 判成「落屏比占位块大 3 倍」；反过来拿 BOS_FRAME（最大档 192）去比，
+    # 又会把 6 只 1 格的判成「大 3 倍」。两个方向都错，只能逐只算。
+    for bid in boss_ids():
+        frame = bos_frame(bid)
+        tiles = footprint_tiles_of(bid)
+        on_screen = frame * BOSS_DRAW_SCALE
+        if abs(on_screen - CELL * tiles) > 1e-9:
+            problems.append(
+                f"{bid} 的**落屏尺寸**是 {on_screen:g}px（帧 {frame} × drawScale "
+                f"{BOSS_DRAW_SCALE:g}），而棋盘上占 {tiles} 格 = {CELL * tiles}px —— "
+                f"素材画多大与棋盘占几格必须是同一个数（真值在 data/constants.json 的 "
+                f"boss.footprintTilesByBoss），否则画面会出现「精灵比占位块大/小一圈」"
+            )
 
     if set(frames) != set(boss_ids()):
         problems.append(
@@ -772,14 +895,16 @@ def verify_boss_art(frames: dict[str, list[Image.Image]], source: str | None = N
             )
             continue
         im = fs[0]
-        if (im.width, im.height) != (BOS_FRAME, BOS_FRAME):
+        boss_frame = bos_frame(bid)
+        if (im.width, im.height) != (boss_frame, boss_frame):
             problems.append(
                 f"BOSS {bid} 的画布是 {im.width}×{im.height}，应为帧网格 "
-                f"{BOS_FRAME}×{BOS_FRAME}（= 设计网格 {BOS_W} × SS {BOSS_SS}）—— "
+                f"{boss_frame}×{boss_frame}（= 设计网格 {bos_w(bid)} × SS {BOSS_SS}）—— "
                 f"它八成退回了旧网格的造型（造型函数没走 `bos_canvas()` / `finish()`？）"
             )
             continue
-        if not im.crop((0, BOS_FRAME - 1, BOS_FRAME, BOS_FRAME)).getchannel("A").getbbox():
+        # 逐只帧尺寸：1 格 BOSS 是 64，写死 192 会去量越界的那一行（恒为空 → 假红）
+        if not im.crop((0, boss_frame - 1, boss_frame, boss_frame)).getchannel("A").getbbox():
             problems.append(
                 f"BOSS {bid} 最后一行为空 —— 精灵是踩着占位块下沿摆的，底行留白会让它浮在半空"
             )
@@ -795,22 +920,34 @@ def verify_boss_art(frames: dict[str, list[Image.Image]], source: str | None = N
         # 5 / 7 / 8 三条按**设计网格**量（`design_frame` 对 `drawn` 是无损折回）：
         # 它们的分块尺寸与阈值都是在设计网格上标定的，直接对着 192 帧量
         # 会让块变成「6 个设计像素」那么小、读数掉下来 —— 那是静默的量错口径。
-        d_im = design_frame(im)
-        d = _detail_density(d_im, BOS_DETAIL_BLOCK)
+        #
+        # ⚠️ 分块尺寸与阈值都要**按该只的设计网格缩放**（2026-09-27 逐只占位之后）。
+        # `BOS_DETAIL_BLOCK`（96//8 = 12）与阈值（3.5 / 2.40）都是**在 96 网格上标定**的：
+        # 1 格 BOSS 的设计网格是 32，同一个 12 会变成「2×2 块」——量出来的东西
+        # 与当初标定的不是同一个，读数必然失真（实测 skeletonCaptain 掉到 1.00）。
+        # 所以块 = `bos_w // 8`，阈值按**面积比**折算（32 网格是 96 的 1/9）。
+        w = bos_w(bid)
+        area = (w / BOS_W) ** 2
+        blk = max(1, w // 8)
+        inblk = max(1, w // 16)
+        inmargin = max(1, w // 32)
+        d_im = design_frame(im, bid)
+        d = _detail_density(d_im, blk)
         checked += 1
-        if d < BOSS_DETAIL_MIN:
+        if d < BOSS_DETAIL_MIN * area:
             problems.append(
-                f"BOSS {bid} 的细节密度只有 {d:.2f}（每 {BOS_DETAIL_BLOCK}×{BOS_DETAIL_BLOCK} 块的"
-                f"中位独立颜色数），低于阈值 {BOSS_DETAIL_MIN} —— 这个尺寸上「一色」是读不出结构的，"
+                f"BOSS {bid} 的细节密度只有 {d:.2f}（每 {blk}×{blk} 块的"
+                f"中位独立颜色数），低于阈值 {BOSS_DETAIL_MIN * area:.2f}（96 网格基准 {BOSS_DETAIL_MIN} "
+                f"× 面积比 {area:.3f}）—— 这个尺寸上「一色」是读不出结构的，"
                 f"要么是把小网格的图放大过来（放大不创造颜色，只把同一批像素摊开），"
                 f"要么是大面积纯色没有压明暗三阶"
             )
-        inner = _inner_detail(d_im, BOS_INNER_BLOCK, BOS_INNER_MARGIN)
-        if inner < BOSS_INNER_MIN:
+        inner = _inner_detail(d_im, inblk, inmargin)
+        if inner < BOSS_INNER_MIN * area:
             problems.append(
                 f"BOSS {bid} 的内部细节只有 {inner:.2f}（排除轮廓后每 "
-                f"{BOS_INNER_BLOCK}×{BOS_INNER_BLOCK} 块的平均独立颜色数），"
-                f"低于阈值 {BOSS_INNER_MIN} —— 边缘再花哨也不算细节：身体内部必须有"
+                f"{inblk}×{inblk} 块的平均独立颜色数），"
+                f"低于阈值 {BOSS_INNER_MIN * area:.2f} —— 边缘再花哨也不算细节：身体内部必须有"
                 f"阴影 / 高光 / 刻线 / 鳞片（只压一层暗纹不够，要连高光一起给）"
             )
         if bid in HEAD_FRONT:
@@ -835,9 +972,29 @@ def verify_boss_art(frames: dict[str, list[Image.Image]], source: str | None = N
             sa = _solid_set(frames[a][0])
             sb = _solid_set(frames[b][0])
             diff = len(sa ^ sb)
-            if diff < BOSS_SIL_MIN_DIFF:
+            #
+            # ⚠️ 门槛按**两只里较小的那个设计网格**折算（2026-09-27）。
+            # 剪影差异是**面积量**：`BOSS_SIL_MIN_DIFF`（1500 × SS²）是在 96 网格上
+            # 标定的，1 格 BOSS 的设计网格只有 32、面积是 1/9，把它按同一个绝对数
+            # 去卡，等于要求「小图上要画出大图九倍的差异」—— 实测八只两两全红。
+            min_w = min(bos_w(a), bos_w(b))
+            pair_area = (min_w / BOS_W) ** 2
+            #
+            # ⚠️ 门槛**按设计网格查表**，不是按面积折算猜（2026-09-27 实测定的）。
+            #
+            # 面积折算（6000 × 面积比）给出的 32 网格门槛是 667，而实测
+            # 6 只小网格 drawn 的两两剪影差是 `[580, 692, …, 1484]`（min 580 / 中位 1008）——
+            # 那一对 (skeletonCaptain, knightCaptain) 差 580，比折算门槛低 13%，
+            # 于是「折算」这条路会稳定地假红一条。
+            #
+            # 但 580 不是「两只长得一样」：真正的失败形态是**接近 0**（同一骨架换色）。
+            # 所以下限取 400：比实测最小值低 1.45 倍（有余量），又远高于「换个颜色」
+            # 那一档（几十像素）。**改这 6 只的画法时要重测这张表。**
+            floor = BOSS_SIL_MIN_BY_W.get(min_w, BOSS_SIL_MIN_DIFF * pair_area)
+            if diff < floor:
                 problems.append(
-                    f"BOSS {a} 与 {b} 的剪影只差 {diff} 个像素（门槛 {BOSS_SIL_MIN_DIFF}）"
+                    f"BOSS {a} 与 {b} 的剪影只差 {diff} 个像素（门槛 {floor:.0f}"
+                    f"＝ 设计网格 {min_w} 的标定值）"
                     f"—— 八只 BOSS 的轮廓必须一眼分得开，否则「谁是谁」全靠颜色"
                 )
     return problems

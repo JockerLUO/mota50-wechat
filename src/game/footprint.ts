@@ -69,9 +69,29 @@ export function footprintTiles(data: GameData): number {
   return k % 2 === 1 ? k : Math.max(1, k - 1);
 }
 
-/** `isBoss` 为真时给出居中的 `n × n` 占位块（必要时平移进棋盘），否则给单格。 */
-export function footprintAt(data: GameData, x: number, y: number, isBoss: boolean): Footprint {
-  const n = isBoss ? footprintTiles(data) : 1;
+/**
+ * **某一只** BOSS 的占位格数：`footprintTilesByBoss` 里有就取它，否则取默认值。
+ *
+ * 2026-09-27 起默认 1 格，只有 `dragon` / `kraken` 覆盖成 3 —— 于是这个函数
+ * 成了「谁是大块头」的唯一判据（引擎阻挡、渲染摆位、素材网格三方都读它）。
+ */
+export function footprintTilesFor(data: GameData, bossId: string | null | undefined): number {
+  const raw = bossId ? data.constants?.boss?.footprintTilesByBoss?.[bossId] : undefined;
+  const n = typeof raw === 'number' && Number.isFinite(raw) && raw >= 1 ? raw : footprintTiles(data);
+  const k = Math.floor(n);
+  return k % 2 === 1 ? k : Math.max(1, k - 1);
+}
+
+/**
+ * `bossId` 非空时给出这只 BOSS 居中后的 `n × n` 占位块（必要时平移进棋盘），
+ * 否则给单格。
+ *
+ * ⚠️ 参数从 `isBoss: boolean` 改成了 `bossId`（2026-09-27）：占位格数不再是一个
+ * 全局的 3，而是**逐只**的（只有 dragon / kraken 是 3）。传布尔值就只能拿到默认 1，
+ * 那两只大块头会被静默缩小 —— 而「缩小」在画面上只是精灵变小，没有任何报错。
+ */
+export function footprintAt(data: GameData, x: number, y: number, bossId: string | null): Footprint {
+  const n = bossId ? footprintTilesFor(data, bossId) : 1;
   if (n <= 1) return singleFootprint(x, y);
   const half = (n - 1) >>> 1;
   const clamp = (v: number) => Math.max(0, Math.min(v, BOARD - n));

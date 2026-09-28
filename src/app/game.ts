@@ -30,7 +30,7 @@
 import { Application, Container } from 'pixi.js';
 import { host } from '../host';
 import { loadData, type GameData, type Stat } from '../data';
-import { createInitialState, entityAt, entityKey, pushLog, tileAt, type Dir, type GameState } from '../game/state';
+import { createInitialState, entitiesOn, entityAt, entityKey, pushLog, tileAt, type Dir, type GameState } from '../game/state';
 import {
   arriveOnFloor,
   buyStat,
@@ -515,7 +515,7 @@ export class Game {
     // 只是走到那一格上，对话框根本没开，而返回值照旧写着「搭话 xxx（第 2 次）」，
     // 于是读 `dialogue.body` 的判据量到的是**上一个 NPC 的残留行**（A15 就踩这个）。
     // 滤掉之后同一层的两个同类 NPC（第 2 层两个智者）也能各自被量到。
-    const es = (this.data.floors.get(this.state.floor)?.entities ?? []).filter(
+    const es = entitiesOn(this.state, this.data, this.state.floor).filter(
       (e) =>
         e.type === 'npc' &&
         e.id === npcId &&

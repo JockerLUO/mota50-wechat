@@ -309,6 +309,55 @@ export interface SayEventEffect extends Record<string, unknown> {
   lines: string[];
 }
 
+/**
+ * 在某一格**放一个实体**（怪物 / 道具 / NPC）—— 原版 `set` 算子的转写。
+ *
+ * ## 为什么必须有它
+ *
+ * 原版把「剧情里出现的东西」写进 cutscene：蝙蝠汇聚时 `set` 出 8 只大蝙蝠、
+ * 再 `set` 出吸血鬼（`mt20vampire`）；第 49 层假魔王召出 8 个白王
+ * （`mt49fakeking`）；第 25 层打完守卫 `set` 出 4 把红钥匙。这些实体**一开始
+ * 不在图上**，是剧情把它们放上去的。
+ *
+ * 在它出现之前，本项目只能把这些实体**拍平进静态地图**
+ * （`data/floors/floor-20.json` 里那 8 只蝙蝠就是这么来的）——
+ * 代价是**剧情没了**：蝙蝠就静静站在那儿，永远不会「汇聚」。
+ *
+ * ## 为什么不写回 `data/`
+ *
+ * 与 `setTerrain` 同理：`data/` 是全局共享的静态数据，写它等于把
+ * 「一条剧情的产物」变成「所有存档的产物」。
+ */
+export interface SpawnEventEffect extends Record<string, unknown> {
+  op: 'spawn';
+  floor: number;
+  x: number;
+  y: number;
+  /** 实体种类 —— 与 `FloorEntity.type` 同一套取值 */
+  kind: 'monster' | 'item' | 'npc';
+  /** `data/monsters.json` / `items.json` / `npcs.json` 里的 id */
+  id: string;
+}
+
+/**
+ * 删掉某一格上的实体 —— 原版 `hide` 算子的转写。
+ *
+ * 与 `spawn` 是**反着的一对**：`spawn` 是「剧情放上去的」，`hide` 是
+ * 「剧情拿走的」（蝙蝠汇聚时那 8 只被 `hide` 掉、第 35 层打完魔龙后
+ * 两块 `bigImage` 装饰被 `hide` 掉）。
+ *
+ * 按**坐标**删而不是按 id：原版 `hide` 给的就是一串坐标，而且同一格上
+ * 可能同时站着怪与道具 —— 按 id 删会删错那一个。
+ * 找不到实体时**不报错也不记 log**（`hide` 常常是幂等的收尾动作，
+ * 但**必须**在 dry-run 里能被数出来，见 `tools/dump-deluxe-events.mjs`）。
+ */
+export interface RemoveEntityEventEffect extends Record<string, unknown> {
+  op: 'remove';
+  floor: number;
+  x: number;
+  y: number;
+}
+
 export type AnyEventEffect =
   | EventEffect
   | ReplaceMonsterEffect
@@ -317,6 +366,8 @@ export type AnyEventEffect =
   | GrantItemEventEffect
   | SetTerrainEventEffect
   | TeleportEventEffect
+  | SpawnEventEffect
+  | RemoveEntityEventEffect
   | SayEventEffect;
 
 export interface GameEvent {
@@ -325,8 +376,16 @@ export interface GameEvent {
   /**
    * 触发条件。
    *   - `start`        开局即生效
-   *   - `defeated`     击败某怪
-   *   - `allDefeated`  列表内的怪全部被击败（可限定楼层）
+   *   - `defeated`     击败某怪（可限定楼层与坐标）
+   *   - `allDefeated`  一组怪全部被击败 —— 两种写法，可并用：
+   *       · `ids` + `floor`：**按种类**（「本层的中级卫兵全灭」），本项目早期只有这一种；
+   *       · `at`  + `floor`：**按格**（「这几格上的怪都死了」），原版 `floor.after`
+   *         的忠实转写 —— 它才是原版表达「打死门口这两名守卫 → 开这扇机关门」的方式。
+   *
+   *     ⚠️ 为什么需要第二种：第 11 层的机关门由 2 名高级法师把守，而**同一层还有第 3 名**
+   *     （在门外的别处）。按种类写会要求连门外那只也打掉 —— 而它可能就锁在这扇门后面，
+   *     于是判据永远不成立、门永远不开（**死锁**）。按格写只关心门口那两个，
+   *     与关卡设计逐字一致。
    *   - `talked`       与某 NPC 搭话（可限定楼层与坐标）
    *   - `enterTile`    **走到某一格**时自动发生（可限定楼层）
    *
@@ -334,15 +393,22 @@ export interface GameEvent {
    * 参考源码靠 `pos===43` 区分（(10,3) 给 +10%，(10,9) 去 35 楼开暗道）。
    * 只按 `id + floor` 匹配会让**两个都触发**同一个事件 —— 那是 +10% 变 +21%。
    *
+   * ⚠️ `defeated` 的 `x`/`y` 同理，而且是原版**主要**的写法：原版
+   * `floor.after` 的键就是**怪自己那一格**。第 17 层有 4 组「打死门口两名守卫
+   * → 开那扇机关门」，其中两组用的是同一批怪（`juniorGuard`）——
+   * 只按 `id + floor` 匹配会让「打死 A 组的守卫」顺手把 B 组的门也开了，
+   * 关卡设计因此被抹平（少一个谜题，而没有任何东西会红）。
+   * 四组的完整台账见 `docs/known-gaps.md` §11.3。
+   *
    * ⚠️ `enterTile` 的坐标必须验证「玩家真的会踩到」：它是**被动**触发，
    * 玩家不会为了触发剧情特意去走某一格。放在一条不被经过的支路上，
    * 剧情就变成「存在但永不发生」—— 数据齐备、判据全绿、玩家一辈子没见过。
    * 所以第 3 层那条伏击的判据里有一条专门量「从入口到上楼梯的路径**必然**经过它」。
    */
   trigger:
-    | { op: 'defeated'; id: string }
+    | { op: 'defeated'; id: string; floor?: number; x?: number; y?: number }
     | { op: 'start' }
-    | { op: 'allDefeated'; ids: string[]; floor?: number }
+    | { op: 'allDefeated'; ids?: string[]; floor?: number; at?: { x: number; y: number }[] }
     | { op: 'talked'; id: string; floor?: number; x?: number; y?: number }
     | { op: 'enterTile'; floor: number; x: number; y: number };
   once: boolean;
@@ -363,6 +429,14 @@ export interface GameConstants {
    */
   boss: {
     footprintTiles: number;
+    /**
+     * 按怪物 id 覆盖占位格数（**只有真的「占一大块」的才写在这里**）。
+     *
+     * 2026-09-27 起默认是 1 格：8 只 BOSS 里只有魔龙与大乌贼保留 3×3。
+     * 写成映射而不是「每只一个字段」，是为了让「谁特殊」一眼可数；
+     * 缺省即 `footprintTiles`。
+     */
+    footprintTilesByBoss?: Record<string, number>;
     note?: string;
     singleSourceNote?: string;
     deviatesFromSource?: string;

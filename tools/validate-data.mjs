@@ -656,7 +656,24 @@ head('I · 参考源完整性');
       neverPlaced.map((id) => `${monsters[id].name}(${id})`).join('、'));
     const bosses = neverPlaced.filter((id) => monsters[id].boss);
     if (bosses.length) {
-      info(`其中 BOSS：${bosses.map((id) => monsters[id].name).join('、')} —— 对应区域没有 BOSS 战，见 known-gaps §2/§4`);
+      // ⚠️ 「对应区域没有 BOSS 战」这句要说准。`neverPlaced` 说的是**参考数据的静态地图**，
+      //    而原版的 BOSS 常常是 cutscene 里 `set` 出来的（不在静态地图里，所以照样进这个名单）。
+      //    本项目把那些 `set` 转写成了 `data/events.json` 的 `spawn` 算子 ⇒ 要再查一次事件表，
+      //    否则报告会写「没有 BOSS 战」而实际上有 —— 失效的地图比没有地图更坏（铁律 #27）。
+      const evJson = readJSON('data/events.json');
+      const spawnedByEvent = new Set();
+      for (const ev of evJson?.events ?? []) {
+        for (const e of ev.effects ?? []) if (e.op === 'spawn') spawnedByEvent.add(e.id);
+      }
+      const covered = bosses.filter((id) => spawnedByEvent.has(id));
+      const bare = bosses.filter((id) => !spawnedByEvent.has(id));
+      if (covered.length) {
+        info(`其中 BOSS：${covered.map((id) => monsters[id].name).join('、')} —— ` +
+          `静态地图里没有，但已由 data/events.json 的 spawn 算子补上（BOSS 战存在）`);
+      }
+      if (bare.length) {
+        info(`其中 BOSS：${bare.map((id) => monsters[id].name).join('、')} —— 对应区域没有 BOSS 战，见 known-gaps §2/§4`);
+      }
     }
   } else {
     pass('所有怪物都在地图上有落点');
@@ -758,20 +775,28 @@ head('I · 参考源完整性');
   // 三条拦的都是「数据看着完全正常、功能永远不会发生」的静默失配（铁律 #23）：
   //   ① 同一事件写两条 `say`：`applyTrigger()` 只把**最后一条**交回界面，
   //      第一条被静静丢掉；
-  //   ② `say` 挂在非 `enterTile` 的事件上：另外三种触发点（开局 / 击败 / 搭话）
-  //      没有把台词交回界面的通路（`step.ts` 只在 `moveOnto()` 里接），
-  //      台词永远不会显示；
+  //   ② `say` 挂在**没有把台词交回界面之通路**的触发点上。2026-09-28 第十轮之前
+  //      这条名单只有 `enterTile`；本轮 `step.ts` 补了 `defeated` 的通路
+  //      （打赢 BOSS 时败者临死那句话 —— 原版 `mt20win` 第一句就是吸血鬼说的），
+  //      所以名单扩成 **`enterTile` | `defeated`**。
+  //      ⚠️ 名单必须与 `step.ts` 里的调用点**逐一对账**，别凭印象加：
+  //        · `enterTile` —— `moveOnto()` 的返回值挂到 `StepResult.npc` ✓
+  //        · `defeated`  —— 战斗分支 `return said && !res.npc ? … : res` ✓
+  //        · `talked` / `allDefeated` / `start` —— 返回值**被丢弃** ✗（别加进来）
+  //      加了没通路的触发点 = 台词写进数据却永远不显示，比没有更坏（铁律 #50）。
   //   ③ `enterTile` 落在楼梯格或某条楼梯的落点上：换层走的是
   //      `arriveOnFloor()`，**不经过** `moveOnto()`，踩上去那一次不触发。
+  /** 有「把 `say` 台词交回界面」通路的触发点 —— 逐一对账见上面 ②。 */
+  const SAY_HOSTS = ['enterTile', 'defeated'];
   if (events) {
     const sayEvents = eventList.filter((ev) => (ev.effects ?? []).some((e) => e.op === 'say'));
     const dupSay = sayEvents.filter((ev) => (ev.effects ?? []).filter((e) => e.op === 'say').length > 1);
     if (dupSay.length) fail(`同一事件写了多条 say（只有最后一条会显示）：${dupSay.map((ev) => ev.id).join('、')}`);
     else pass(`${sayEvents.length} 条剧情台词（say）事件，每条至多一条台词`);
 
-    const badHost = sayEvents.filter((ev) => ev.trigger?.op !== 'enterTile');
+    const badHost = sayEvents.filter((ev) => !SAY_HOSTS.includes(ev.trigger?.op));
     if (badHost.length) {
-      fail(`say 只允许挂在 enterTile 触发的事件上（其余触发点没有把台词交回界面的通路）：` +
+      fail(`say 只允许挂在 ${SAY_HOSTS.join(' / ')} 触发的事件上（其余触发点没有把台词交回界面的通路）：` +
         badHost.map((ev) => `${ev.id}(${ev.trigger?.op})`).join('、'));
     } else {
       pass('剧情台词（say）都挂在「能把台词交回界面」的触发点上');

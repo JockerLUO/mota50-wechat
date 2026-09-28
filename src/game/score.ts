@@ -34,7 +34,7 @@ import { shopCost, shopGain } from '../../core/shop.mjs';
 import { shopOptions } from './engine/shop';
 import { merchantOffers } from './engine/merchant';
 import { previewBattle } from './engine/vitals';
-import { DIRS, entityAt, entityKey, tileAt, type GameState } from './state';
+import { DIRS, entitiesOn, entityAt, entityKey, tileAt, type GameState } from './state';
 import { footprintAt, inFootprint } from './footprint';
 
 // ── 分数：带明细，便于诊断与调参 ────────────────────────────────────
@@ -99,9 +99,9 @@ export const RELEVANT_FLOORS = 6;
 function remainingMonsters(state: GameState, data: GameData): string[] {
   const out: string[] = [];
   const to = state.floor + RELEVANT_FLOORS;
-  for (const [floor, f] of data.floors) {
+  for (const [floor] of data.floors) {
     if (floor < state.floor || floor > to) continue;
-    for (const e of f.entities) {
+    for (const e of entitiesOn(state, data, floor)) {
       if (e.type !== 'monster') continue;
       if (state.removed.has(`${floor}:${e.x}:${e.y}:monster:${e.id}`)) continue;
       out.push(state.monsterSwap[`${floor}:${e.x},${e.y}`] ?? e.id);
@@ -326,9 +326,9 @@ function effectValueGuarded(
 function auraExposure(state: GameState, data: GameData): number {
   let n = 0;
   const to = state.floor + RELEVANT_FLOORS;
-  for (const [floor, f] of data.floors) {
+  for (const [floor] of data.floors) {
     if (floor < state.floor || floor > to) continue;
-    for (const e of f.entities) {
+    for (const e of entitiesOn(state, data, floor)) {
       if (e.type !== 'monster') continue;
       if (state.removed.has(`${floor}:${e.x}:${e.y}:monster:${e.id}`)) continue;
       if (hasTrait(data.monsters[e.id], 'aura')) n++;
@@ -341,9 +341,9 @@ function auraExposure(state: GameState, data: GameData): number {
 function traitGain(state: GameState, data: GameData, trait: string): number {
   let gain = 0;
   const to = state.floor + RELEVANT_FLOORS;
-  for (const [floor, f] of data.floors) {
+  for (const [floor] of data.floors) {
     if (floor < state.floor || floor > to) continue;
-    for (const e of f.entities) {
+    for (const e of entitiesOn(state, data, floor)) {
       if (e.type !== 'monster') continue;
       if (state.removed.has(`${floor}:${e.x}:${e.y}:monster:${e.id}`)) continue;
       if (!hasTrait(data.monsters[e.id], trait)) continue;
@@ -415,7 +415,7 @@ export type WorthGuard = Set<string>;
  */
 function unlockValue(state: GameState, data: GameData, guard: WorthGuard): number {
   let v = 0;
-  for (const e of data.floors.get(state.floor)?.entities ?? []) {
+  for (const e of entitiesOn(state, data, state.floor)) {
     if (e.type !== 'item') continue;
     if (state.removed.has(`${state.floor}:${e.x}:${e.y}:item:${e.id}`)) continue;
     v += itemWorth(state, data, e.id, guard);
@@ -451,9 +451,9 @@ export function rawItemWorth(state: GameState, data: GameData, itemId: string): 
 function remainingGold(state: GameState, data: GameData): number {
   let g = 0;
   const to = state.floor + RELEVANT_FLOORS;
-  for (const [floor, f] of data.floors) {
+  for (const [floor] of data.floors) {
     if (floor < state.floor || floor > to) continue;
-    for (const e of f.entities) {
+    for (const e of entitiesOn(state, data, floor)) {
       if (e.type !== 'monster') continue;
       if (state.removed.has(`${floor}:${e.x}:${e.y}:monster:${e.id}`)) continue;
       g += data.monsters[e.id]?.gold ?? 0;
@@ -515,8 +515,13 @@ export function guardedItemAt(
   ent: { type: string; id: string; x: number; y: number }
 ): string | null {
   // 用 `footprintAt` 而不是 `entityFootprint`：调用方可能只给 `{type,id,x,y}`
-  const fp = footprintAt(data, ent.x, ent.y, ent.type === 'monster' && !!data.monsters[ent.id]?.boss);
-  for (const e of data.floors.get(floor)?.entities ?? []) {
+  const fp = footprintAt(
+    data,
+    ent.x,
+    ent.y,
+    ent.type === 'monster' && data.monsters[ent.id]?.boss ? ent.id : null
+  );
+  for (const e of entitiesOn(state, data, floor)) {
     if (e.type !== 'item') continue;
     if (state.removed.has(`${floor}:${e.x}:${e.y}:item:${e.id}`)) continue;
     if (inFootprint(fp, e.x, e.y)) return e.id;
@@ -688,7 +693,7 @@ export function blockingMonsters(state: GameState, data: GameData, floor: number
   const open = reachNoFight(state, data, floor, new Set());
   if (ups.some((s) => open.has(`${s.x},${s.y}`))) return out; // 不打架就上得去 ⇒ 没有挡路的
 
-  for (const e of data.floors.get(floor)?.entities ?? []) {
+  for (const e of entitiesOn(state, data, floor)) {
     if (e.type !== 'monster') continue;
     const k = `${e.x},${e.y}`;
     if (state.removed.has(`${floor}:${e.x}:${e.y}:monster:${e.id}`)) continue;
@@ -725,8 +730,23 @@ export function gateMonsters(data: GameData): Set<string> {
   if (cached) return cached;
   const out = new Set<string>();
   for (const ev of data.events) {
-    if (ev.trigger.op === 'defeated') out.add(ev.trigger.id);
-    else if (ev.trigger.op === 'allDefeated') for (const id of ev.trigger.ids) out.add(id);
+    const t = ev.trigger;
+    if (t.op === 'defeated') out.add(t.id);
+    else if (t.op === 'allDefeated') {
+      // ① 按种类写：名单直接就是 id。
+      for (const id of t.ids ?? []) out.add(id);
+      // ② 按格写（原版 `floor.after` 的成对转写，见 `data/types.ts` 的 trigger 注释）：
+      //    触发条件只写了坐标，要**从静态表反查**那几格上站的是谁，否则这类守门怪
+      //    会被 `gateMonsters` 漏掉、当杂兵绕过去（与文件头⑦那段同一个病因）。
+      //    spawn 出来的实体静态表查不到 —— 但守门怪都是静态摆放的，查不到就跳过。
+      if (t.floor !== undefined) {
+        const f = data.floors.get(t.floor);
+        for (const p of t.at ?? []) {
+          const ent = f?.entities.find((x) => x.x === p.x && x.y === p.y && x.type === 'monster');
+          if (ent && ent.type === 'monster') out.add(ent.id);
+        }
+      }
+    }
   }
   for (const [id, m] of Object.entries(data.monsters)) if (m.boss) out.add(id);
   gateCache.set(data, out);
@@ -925,7 +945,7 @@ export function floorScores(
 ): FloorScore[] {
   const out: FloorScore[] = [];
   const blocking = blockingMonsters(state, data, floor);
-  for (const e of data.floors.get(floor)?.entities ?? []) {
+  for (const e of entitiesOn(state, data, floor)) {
     const key = entityKey(floor, e.x, e.y, e.type, e.id);
     if (state.removed.has(key)) continue;
     if (e.type === 'item') {

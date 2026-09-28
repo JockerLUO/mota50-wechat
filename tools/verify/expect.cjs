@@ -117,10 +117,27 @@ const BOSS_TILES = (() => {
 })();
 
 /**
+ * **某一只** BOSS 占几格 —— 与 `src/game/footprint.ts` 的 `footprintTilesFor` 同规。
+ *
+ * 2026-09-27 起 `footprintTiles` 只是**默认值（1）**，逐只的覆盖写在
+ * `boss.footprintTilesByBoss`（当前只有 `dragon` / `kraken` 是 3）。
+ * 判据若继续读那个标量，会把「魔龙仍是 3 格」这件事判错 —— 而且错法是
+ * **6 只被当成 3 格**，红得指向完全错误的方向。
+ */
+function bossTilesOf(id) {
+  const raw = id ? CONSTANTS.boss?.footprintTilesByBoss?.[id] : undefined;
+  const n = typeof raw === 'number' && Number.isFinite(raw) && raw >= 1 ? raw : BOSS_TILES;
+  const k = Math.floor(n);
+  return k % 2 === 1 ? k : Math.max(1, k - 1);
+}
+
+/**
  * 居中的 `n × n` 占位块（靠边放不下时**整体平移**进棋盘，不平缩）。
  * 与 `footprintAt` 同一套规则 —— 第 40 层的骑士长在 (5,0)，居中会让第一行落到 -1。
  */
+/** `n` 可以是格数，也可以是**怪物 id**（内部转成该只的格数） */
 function bossBlock(x, y, n = BOSS_TILES) {
+  if (typeof n === 'string') n = bossTilesOf(n);
   const BOARD = 11;
   if (n <= 1) return { x0: x, y0: y, x1: x, y1: y };
   const half = (n - 1) >>> 1;
@@ -162,6 +179,7 @@ module.exports = {
   CONSTANTS,
   BOSS_IDS,
   BOSS_TILES,
+  bossTilesOf,
   bossBlock,
   loadFloorEntities
 };

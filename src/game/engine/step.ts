@@ -78,10 +78,18 @@ export function step(state: GameState, data: GameData, dir: Dir): StepResult {
     checkDeath(state);
     if (state.dead) return { kind: 'battle', moved: false, message: '勇者阵亡' };
     // 区域边界通路：打完 BOSS 才开启通往下一区的路（10→11 / 40→41）；
-    // 封印解除：某组怪全灭后触发（如第 49 层守卫全灭 → 假魔王换真魔王）
-    applyTrigger(state, data, { op: 'defeated', id: ent.id });
+    // 封印解除：某组怪全灭后触发（如第 49 层守卫全灭 → 假魔王换真魔王）；
+    // 战败演出：BOSS 临死那句台词（原版 `mt20win` 第一句就是吸血鬼说的话）。
+    //
+    // ⚠️ 必须带上**它自己那一格**（`ent.x/ent.y`，不是查询坐标 `nx/ny`）：
+    //    BOSS 的 3×3 占位块让「撞上去的那一格」通常不是它站的那一格，
+    //    用 nx/ny 去匹配 `defeated` 的坐标条件会永远不命中（铁律 #36 同族）。
+    const said = applyTrigger(state, data, { op: 'defeated', id: ent.id, floor, x: ent.x, y: ent.y });
     applyTrigger(state, data, { op: 'allDefeated' });
-    return moveOnto(state, data, floor, nx, ny, 'battle');
+    const res = moveOnto(state, data, floor, nx, ny, 'battle');
+    // 剧情台词（`say`）交回界面：**踩到的那一格**若有台词就让它优先 ——
+    // 它发生得更晚（先败者说话、再走上那一格），玩家该先读到的是后者。
+    return said && !res.npc ? { ...res, npc: said } : res;
   }
 
   // ② 道具 / NPC

@@ -49,7 +49,7 @@ function dirFrom(fx, fy, tx, ty) {
 }
 
 async function run(ctx) {
-  const { page, check, bossBlock, BOSS_TILES, BOSS_IDS, loadFloors, loadFloorEntities } = ctx;
+  const { page, check, bossBlock, bossTilesOf, BOSS_IDS, loadFloors, loadFloorEntities } = ctx;
 
   const floors = loadFloors();
   const entityMap = loadFloorEntities();
@@ -101,7 +101,9 @@ async function run(ctx) {
   // 只有上下几格能站人 —— 如果判据不小心写成「占位块里的每一格都能从外面撞到」，
   // 它会在这里红，而不是在空旷的第 50 层「看起来没问题」。
   const F10 = 10, B10 = { x: 5, y: 3 };
-  const block10 = bossBlock(B10.x, B10.y);
+  // 骷髅队长已收成 1 格（只有 dragon/kraken 还在 3×3）—— 传 id 让判据按**该只**算
+  const T10 = bossTilesOf('skeletonCaptain');
+  const block10 = bossBlock(B10.x, B10.y, 'skeletonCaptain');
   const terr10 = floors.get(F10);
   const ents10 = new Set(
     (entityMap.get(F10) ?? [])
@@ -154,12 +156,12 @@ async function run(ctx) {
     }
   }
   // 探针：九格必须**全覆盖**。样本集为空或漏格时，上面那圈断言会静静地通过。
-  const coveredOk = covered.size === 9;
+  const coveredOk = covered.size === T10 * T10;
   const a21aOk = crashBad.length === 0 && coveredOk && placed > 0;
   check(
-    `A21a 撞上占位块即开战且一步不走：第 10 层骷髅队长 ${BOSS_TILES}×${BOSS_TILES} 块 ` +
+    `A21a 撞上占位块即开战且一步不走：第 10 层骷髅队长 ${T10}×${T10} 块 ` +
       `x${block10.x0}..${block10.x1} y${block10.y0}..${block10.y1}，` +
-      `${samples.length} 个样本覆盖 ${covered.size}/9 格（数据里 BOSS ${placed} 只）`,
+      `${samples.length} 个样本覆盖 ${covered.size}/${T10 * T10} 格（数据里 BOSS ${placed} 只）`,
     a21aOk,
     (crashBad.length ? `${crashBad.length} 个样本不对，前 3：${crashBad.slice(0, 3).join(' ｜ ')}` : '') +
       (placed === 0
@@ -168,7 +170,7 @@ async function run(ctx) {
           ? crashBad.length
             ? ''
             : `全部 ${samples.length} 个样本都开出战斗且原地不动`
-          : `${crashBad.length ? ' ｜ ' : ''}断言无效：只覆盖了 ${covered.size}/9 格占位块 ` +
+          : `${crashBad.length ? ' ｜ ' : ''}断言无效：只覆盖了 ${covered.size}/${T10 * T10} 格占位块 ` +
             `—— 漏格说明样本集没取全（贴着墙的块里，有些格在外侧一个可站的邻居都没有）`)
   );
 
@@ -180,8 +182,17 @@ async function run(ctx) {
   // 它反击一次 65-10 = 55，远小于 1000 生命，所以这局打得赢。
   // 「真杀一次」而不是直接往 `removed` 里塞 key，是因为要验的正是
   // **引擎自己怎么写这个 key**。
+  //
+  // ⚠️ 第三步的靶子从 (5,2) 换成 (4,3)（2026-09-28）。原因是第 10 层补上了
+  //    原版 `mt10ambush` 那场埋伏：勇者踏上 (5,4) 时 `f10-ambush` 把 **(5,2)**
+  //    落锁成机关门（与原版 `close (6,3)` 逐字对应）—— 而 (5,2) **正好在骷髅队长
+  //    的 3×3 占位块里**（块 = x4..6 y2..4）。于是「再往里走一格」这句断言会把
+  //    「埋伏落的锁」误算成「BOSS 的占位块没有恢复通行」，而那两件事没关系。
+  //     铁律 #13：改完要问「这条判据现在保护的是什么」。它保护的是**BOSS 造成的
+  //     阻挡**（记账键必须用 BOSS 自己那一格），所以靶子必须挑**地形本来就可通行**
+  //     的占位块格 —— (4,3) 满足，(5,2) 从此不满足。
   const after = await page.evaluate(
-    ({ f, anchor, below }) => {
+    ({ f, anchor, below, interior }) => {
       const g = window.mota.game;
       g.__grant('sacredSword');
       g.__grant('sacredSword');
@@ -189,14 +200,20 @@ async function run(ctx) {
       g.__goto(f, below[0], below[1]);
       const a = g.__probe();
       // 第 1 迈：从下方迈入**非锚点**格 (5,4) —— BOSS 挡在这里，打
+      //   （这一迈同时会点亮 `f10-ambush`，它把 (5,2)/(5,6) 落锁）
       const k1 = g.__step('up');
       const b = g.__probe();
       // 第 2 迈：继续迈入**锚点格** (5,3)。BOSS 已经死了，这一步必须走得动
       const k2 = g.__step('up');
       const c = g.__probe();
-      // 第 3 迈：再往里走一格（(5,2) 也在占位块里）
-      const k3 = g.__step('up');
+      // 第 3 迈：占位块**内**的另一个正常格 (4,3)（地形是可通行的空地）。
+      // ⚠️ 1×1 的 BOSS（2026-09-27 起除 dragon/kraken 外都是）**块内没有第二格**，
+      //    所以这一步改成「走开一格」；第 4 迈走回锚点，正是「整块恢复通行」的等价检验。
+      const k3 = interior ? g.__step('left') : g.__step('down');
       const d = g.__probe();
+      // 第 4 迈：回到锚点格，确认两侧都通
+      const k4 = interior ? g.__step('right') : g.__step('up');
+      const e = g.__probe();
       return {
         atk,
         anchor,
@@ -214,10 +231,11 @@ async function run(ctx) {
           pos: [c.pos.x, c.pos.y],
           log: c.lastLog
         },
-        deepStep: { kind: k3, steps: [c.steps, d.steps], hp: [c.hp, d.hp], pos: [d.pos.x, d.pos.y] }
+        deepStep: { kind: k3, steps: [c.steps, d.steps], hp: [c.hp, d.hp], pos: [d.pos.x, d.pos.y] },
+        backStep: { kind: k4, steps: [d.steps, e.steps], pos: [e.pos.x, e.pos.y] }
       };
     },
-    { f: F10, anchor: [B10.x, B10.y], below: [B10.x, block10.y1 + 1] }
+    { f: F10, anchor: [B10.x, B10.y], below: [B10.x, block10.y1 + 1], interior: T10 > 1 }
   );
 
   const passBad = [];
@@ -247,14 +265,20 @@ async function run(ctx) {
   }
   if (after.deepStep.kind !== 'move' || after.deepStep.steps[1] !== after.deepStep.steps[0] + 1) {
     passBad.push(
-      `再往里走一格（仍在占位块内）kind=${after.deepStep.kind}、步数 ` +
+      `占位块内再走一格 (4,3) kind=${after.deepStep.kind}、步数 ` +
         `${after.deepStep.steps[0]} → ${after.deepStep.steps[1]} —— 整块没有全部恢复通行`
+    );
+  }
+  if (after.backStep.kind !== 'move' || after.backStep.steps[1] !== after.backStep.steps[0] + 1) {
+    passBad.push(
+      `从 (4,3) 走回锚点格 kind=${after.backStep.kind}、步数 ` +
+        `${after.backStep.steps[0]} → ${after.backStep.steps[1]} —— 锚点两侧不通`
     );
   }
   check(
     `A21b 击败后整块恢复通行：攻击 ${after.atk} 击杀第 10 层骷髅队长后，` +
-      `从非锚点格一路走进块内（步数 ${after.kill.steps[0]} → ${after.deepStep.steps[1]}、` +
-      `停在 (${after.deepStep.pos})）`,
+      `从非锚点格一路走进块内（步数 ${after.kill.steps[0]} → ${after.backStep.steps[1]}、` +
+      `停在 (${after.backStep.pos})）`,
     passBad.length === 0,
     passBad.slice(0, 3).join(' | ') || `击杀日志：${after.kill.log}`
   );
@@ -268,6 +292,7 @@ async function run(ctx) {
   // 新判据（按占位块）必须扣 —— 所以这一格就是这条判据的靶心。
   // 对照格 (3,3)：到占位块距离 2，两边都不该扣血（否则判据被放得太宽）。
   const AURA_DMG = 7;
+  const blk50 = bossBlock(5, 5, 'demonKing');
   const aura = await page.evaluate(
     ({ f, near, far, dmg }) => {
       const g = window.mota.game;
@@ -290,14 +315,16 @@ async function run(ctx) {
       else mon.traits = backup;
       return { near: n, far: f2 };
     },
-    { f: 50, near: [4, 3], far: [3, 3], dmg: AURA_DMG }
+    // 贴块格与「距块两格」按**该只的占位块**算，不写死 3×3 时代的 (4,3)/(3,3)。
+    // 魔王现在只占 1 格 (5,5)：正上方 (5,4) 贴块、再上 (5,3) 距块 2。
+    { f: 50, near: [blk50.x0, blk50.y0 - 1], far: [blk50.x0, blk50.y0 - 2], dmg: AURA_DMG }
   );
 
   const auraBad = [];
   if (aura.near.loss !== AURA_DMG || aura.near.hpLost !== AURA_DMG) {
     auraBad.push(
-      `站在占位块正上方 (4,3) 掉了 ${aura.near.loss} HP（应当 ${AURA_DMG}；账上 ${aura.near.hpLost}）` +
-        `—— 领域伤害还在按 BOSS 的**坐标**算曼哈顿距离，而站在那里到坐标的距离是 3`
+      `站在贴块格 (${blk50.x0},${blk50.y0 - 1}) 掉了 ${aura.near.loss} HP（应当 ${AURA_DMG}；账上 ${aura.near.hpLost}）` +
+        `—— 领域伤害必须按**占位块**判定，站到块外一格就该扣血`
     );
   }
   if (!/巫师领域/.test(String(aura.near.log))) {
@@ -310,7 +337,7 @@ async function run(ctx) {
     );
   }
   check(
-    `A21c 领域伤害贴的是占位块：${BOSS_TILES}×${BOSS_TILES} 块正上方一格（距 BOSS 坐标 3 格）` +
+    `A21c 领域伤害贴的是占位块：${T10}×${T10} 块正上方一格（距 BOSS 坐标 ${T10} 格）` +
       `损失 ${aura.near.loss} HP，离块两格不掉血`,
     auraBad.length === 0,
     auraBad.slice(0, 3).join(' | ') || `贴块 -${AURA_DMG}（日志：${aura.near.log}）、离块两格 -0`

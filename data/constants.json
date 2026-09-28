@@ -30,12 +30,16 @@
     "note": "原版50层没有经验值与等级系统。三处独立来源一致：参考源码 player 对象无 exp/level 字段、fight.js 只累加 coin、h5mota 基准数值帖中全部怪物经验值为 0。勇者成长只有三条途径：商店购买、宝石、剑盾。"
   },
   "boss": {
-    "footprintTiles": 3,
+    "footprintTiles": 1,
     "artSource": "imported",
-    "note": "BOSS 在棋盘上占 3×3 格：整块占位区都不可走进（撞上去 = 与这只 BOSS 开战），击败后整块恢复通行。原版的 BOSS 与杂兵同为 1 格，本项目有意改大 —— 大块头是层级信号，而「画得大却能从身上走过去」在俯视格子上读起来是错的。",
-    "singleSourceNote": "这个数字是**单一来源**：素材侧 tools/assetlib/bosses/common.py 读它算出绘制网格（CELL × footprintTiles = 96），渲染层与引擎读它算落屏尺寸与阻挡；构建期有一条断言钉住「素材网格 == 格子 × 本值」，所以改这里会同时改掉三方，不存在只改一处的可能。",
-    "deviatesFromSource": "对 floor-50 王座间的影响见 data/floors/floor-50.json 的 notes.projDeviation —— 参考数据是 5×5 外框（内 3×3），3×3 占位会把内间占满、魔王永远够不着，所以本项目把外框扩到 7×7（内 5×5）。",
-    "artSourceNote": "BOSS 素材的画法来源，只允许 \"imported\" 或 \"drawn\"。imported = 把 assets/raw/boss/*.png 脚本化处理成 96 网格帧（tools/assetlib/bosses/imported.py），源图 SHA-256 记进 assets/MANIFEST.json 并由 A22 对拍；drawn = tools/assetlib/bosses/ 包里的手绘像素画。两套都活着、都要过各自的构建期断言，只有被选中的那套进图集 —— 未选中的那套因此不会烂掉，它正是这个开关的后备。写错取值会直接报错，不会静默回落。"
+    "note": "BOSS 在棋盘上占几格。**默认 1 格**（与杂兵同）—— 只有体型上确实「占一大块」的两只（魔龙 dragon、大乌贼 kraken）保留 3×3，列在 footprintTilesByBoss 里。占位块是**规则**不是画法：整块区域都不可走进（撞上去 = 与这只 BOSS 开战），击败后整块恢复通行。⚠️ 2026-09-27 改：原先 8 只一律 3×3，玩家要求「除巨龙和大章鱼外都收到 1 格」——大块头是层级信号没错，但 6 只杂兵级 BOSS 摆 3×3 会让棋盘显得拥挤、也把「大」这个信号用滥。",
+    "singleSourceNote": "这个映射是**单一来源**：素材侧 tools/assetlib/bosses/common.py 读它算出每只的绘制网格（CELL × 该只的占位格数：1 格 → 32 设计网格 / 64 帧；3 格 → 96 / 192），渲染层与引擎读它算落屏尺寸与阻挡；构建期断言逐只钉住「素材网格 == 格子 × 该只占位格数」。改这里会同时改掉三方，不存在只改一处的可能。",
+    "deviatesFromSource": "原版 BOSS 与杂兵同为 1 格，本项目自 2026-09-24 起改大。现在只有 dragon / kraken 保留 3×3，其余 6 只已回到与杂兵相同的 1 格。对 floor-50 王座间的影响见 data/floors/floor-50.json 的 notes.projDeviation ——当时为了塞下 3×3 把外框扩到 7×7；魔王现在只占 1 格，那个扩张不再必要（但地图保留，不回头改数据）。",
+    "artSourceNote": "BOSS 素材的画法来源，只允许 \"imported\" 或 \"drawn\"。imported = 把 assets/raw/boss/*.png 脚本化处理成 96 网格帧（tools/assetlib/bosses/imported.py），源图 SHA-256 记进 assets/MANIFEST.json 并由 A22 对拍；drawn = tools/assetlib/bosses/ 包里的手绘像素画。两套都活着、都要过各自的构建期断言，只有被选中的那套进图集 —— 未选中的那套因此不会烂掉，它正是这个开关的后备。写错取值会直接报错，不会静默回落。",
+    "footprintTilesByBoss": {
+      "dragon": 3,
+      "kraken": 3
+    }
   },
   "combat": {
     "heroStrikesFirst": true,

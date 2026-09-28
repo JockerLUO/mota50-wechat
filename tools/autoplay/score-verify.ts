@@ -207,10 +207,25 @@ export function scoreVerifications(): Zone1Check[] {
   // 名单手写的必然结局是「加了新事件忘了加名字」，而那不会报错（铁律 #23）。
   {
     const gates = gateMonsters(data);
+    // 期望集从**事件表**独立推一遍（不调 `gateMonsters`，否则这条判据只是照镜子）。
+    // 两种 `allDefeated` 写法都要展开，漏一种的后果是**这条判据红**，而红的方向
+    // 会误导成「手写补个名字进名单」—— 真正该改的是这里（铁律 #7：红了先怀疑期望值）。
+    //   · `ids`  —— 名单直接就是 id；
+    //   · `at`   —— 只写了坐标，要从**静态实体表**反查那几格上站着谁（2026-09-28 加，
+    //              第 10/11/17/30/32/34/38/44/45/49 层那批「一群守卫 → 开一扇门」全是这种写法）。
     const expect = new Set<string>();
     for (const ev of data.events) {
       if (ev.trigger.op === 'defeated') expect.add(ev.trigger.id);
-      else if (ev.trigger.op === 'allDefeated') for (const id of ev.trigger.ids) expect.add(id);
+      else if (ev.trigger.op === 'allDefeated') {
+        for (const id of ev.trigger.ids ?? []) expect.add(id);
+        if (ev.trigger.floor !== undefined) {
+          const f = data.floors.get(ev.trigger.floor);
+          for (const p of ev.trigger.at ?? []) {
+            const ent = f?.entities.find((x) => x.x === p.x && x.y === p.y && x.type === 'monster');
+            if (ent && ent.type === 'monster') expect.add(ent.id);
+          }
+        }
+      }
     }
     for (const [id, m] of Object.entries(data.monsters)) if (m.boss) expect.add(id);
     const same = gates.size === expect.size && [...expect].every((id) => gates.has(id));

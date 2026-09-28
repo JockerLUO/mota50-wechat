@@ -28,7 +28,7 @@ import type { GameData } from '../data';
 import { buyStat, step, tradeAccept, useItem } from './engine';
 import { merchantOffers } from './engine/merchant';
 import { previewBattle } from './engine/vitals';
-import { entityAt, stairsOn, tileAt, type GameState } from './state';
+import { entitiesOn, entityAt, stairsOn, tileAt, type GameState } from './state';
 //
 // ⚠️ 估价函数**只有一份**（在 `autoplay.ts`）。这里刻意 import 它而不是另写一份
 // 「最小的同源版」：两份价目表的必然结局是「改了一边、另一边静默用默认值」，
@@ -85,6 +85,11 @@ export function cloneState(s: GameState): GameState {
     ),
     monsterSwap: { ...s.monsterSwap },
     extraStairs: s.extraStairs.map((x) => ({ ...x }) as typeof x),
+    // 事件放的实体也要跟着克隆 —— 漏了它的症状是「搜索里杀死过一只事件放的 BOSS，
+    // 换个分支它又活了」（`spawned` 与 `removed` 是两份账，必须一起深拷）
+    spawned: Object.fromEntries(
+      Object.entries(s.spawned).map(([k, list]) => [k, list.map((e) => ({ ...e }))])
+    ),
     fired: new Set(s.fired),
     dead: s.dead,
     log: [],
@@ -189,7 +194,13 @@ export interface PhaseHint {
 const K = (x: number, y: number) => `${x},${y}`;
 
 /**
- * 当前楼层上还活着的实体 —— **逐格问 `entityAt`**，不自己遍历 `data.floors`。
+ * 当前楼层上**还活着**的实体 —— **逐格问 `entityAt`**，不自己遍历实体表。
+ *
+ * ⚠️ 名字里的 `alive` 是必需的：它与 `state.ts` 的 `entitiesOn`（「这一层有哪些实体」，
+ * 数据表 + 事件放上去的）**不是一回事**，别混用：
+ *   · `entitiesOn`   —— **实体表**。要自己判 `removed`、自己处理 BOSS 占位块。
+ *   · `aliveEntitiesOn` —— **已过滤的存活集**。`entityAt` 已经把三件事都办了
+ *     （`removed` / `monsterSwap` / 占位块），所以拿到的每一项都保证现在真的在场上。
  *
  * 为什么不能自己遍历：`entityAt` 是引擎侧「命中判定」的唯一收口（铁律 #36），
  * 它同时处理三件这里的搜索必须知道的事：
@@ -199,7 +210,7 @@ const K = (x: number, y: number) => `${x},${y}`;
  * 自己遍历会漏掉后两条，于是 planner 算出的可通行性与引擎实际能走的不一致 ——
  * 那正是「搜索说打得过、真走一步却被拒」的来源。
  */
-function entitiesOn(state: GameState, data: GameData, floor: number) {
+function aliveEntitiesOn(state: GameState, data: GameData, floor: number) {
   const out: { type: string; id: string; x: number; y: number }[] = [];
   const seen = new Set<string>();
   for (let y = 0; y < 11; y++) {
@@ -243,9 +254,7 @@ function stateDigest(s: GameState): string {
 }
 
 function isCleared(state: GameState, data: GameData): boolean {
-  const f = data.floors.get(50);
-  if (!f) return false;
-  for (const e of f.entities) {
+  for (const e of entitiesOn(state, data, 50)) {
     if (e.type !== 'monster') continue;
     const cur = state.monsterSwap[`50:${e.x},${e.y}`] ?? e.id;
     if (!state.removed.has(`50:${e.x}:${e.y}:monster:${cur}`)) return false;
@@ -421,7 +430,7 @@ function generateTargets(state: GameState, data: GameData, phase?: PhaseHint): T
   // 裁掉的分支无法在后续轮次里回来，而「哪些门该开」的局部判断很容易裁错。
   void phase;
 
-  for (const e of entitiesOn(state, data, fl)) {
+  for (const e of aliveEntitiesOn(state, data, fl)) {
     const k = K(e.x, e.y);
     const c = r.cost.get(k);
     if (c === undefined) continue;
@@ -521,7 +530,7 @@ function generateTargets(state: GameState, data: GameData, phase?: PhaseHint): T
   //
   // 商人 —— 全塔唯一的钥匙补给渠道（`autoplay.ts` 的 `merchantGain` 有完整理由）。
   // 旧版 planner 完全没有这一类目标，于是它和贪心一样会卡在「缺钥匙但商人就在旁边」。
-  const merchantNpc = (data.floors.get(fl)?.entities ?? []).find(
+  const merchantNpc = entitiesOn(state, data, fl).find(
     (e) => e.type === 'npc' && e.id === 'merchant'
   );
   if (merchantNpc) {
@@ -880,8 +889,8 @@ function executeTarget(state: GameState, data: GameData, t: Target): boolean {
 function pickStat(state: GameState, data: GameData): 'hp' | 'atk' | 'def' {
   if (state.hp < 200) return 'hp';
   // 有打不动的怪就补攻击
-  for (const [fl, f] of data.floors) {
-    for (const e of f.entities) {
+  for (const [fl] of data.floors) {
+    for (const e of entitiesOn(state, data, fl)) {
       if (e.type !== 'monster') continue;
       if (state.removed.has(`${fl}:${e.x}:${e.y}:monster:${e.id}`)) continue;
       if (state.atk <= (data.monsters[e.id]?.def ?? 0)) return 'atk';
@@ -892,8 +901,8 @@ function pickStat(state: GameState, data: GameData): 'hp' | 'atk' | 'def' {
 
 /** 全塔是否存在「当前打不动」的怪（atk ≤ 怪 def）——攻击是门槛，有门槛就该买攻击 */
 function hasUnpierceable(state: GameState, data: GameData): boolean {
-  for (const [fl, f] of data.floors) {
-    for (const e of f.entities) {
+  for (const [fl] of data.floors) {
+    for (const e of entitiesOn(state, data, fl)) {
       if (e.type !== 'monster') continue;
       if (state.removed.has(`${fl}:${e.x}:${e.y}:monster:${e.id}`)) continue;
       if (state.atk <= (data.monsters[e.id]?.def ?? 0)) return true;
