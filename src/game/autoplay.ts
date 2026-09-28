@@ -63,6 +63,9 @@ import {
   type Score
 } from './score';
 import { previewBattle } from './engine/vitals';
+// `npcLifecycle` 是「这个 NPC 撞过之后还在不在」的**唯一取值来源**（见 dialogue.ts）——
+// 这里再判一次 `data.npcs[id]?.lifecycle === 'once'` 就会变成第二份实现（铁律 #23）
+import { npcLifecycle } from './dialogue';
 import { auraStepDamage } from '../../core/combat.mjs';
 import { hasAuraImmunity, shopGain } from '../../core/shop.mjs';
 
@@ -253,17 +256,33 @@ function enterCost(state: GameState, data: GameData, x: number, y: number, fight
     return { cost: p.hpLoss, key: null, monster: ent.id, hpLoss: p.hpLoss };
   }
   //
-  // NPC 一律当成**墙**。
+  // NPC：**常驻的当墙，一次性的当「一次性障碍」**。
   //
-  // ⚠️ 这不是保守，是**必须与引擎同规**：撞 NPC 触发的是「搭话」（`step.ts` 的
-  // `bumpTalk`），勇者**不会走上去**，`moved` 是 false。把它算成可通行
-  // （第一版给它 8 点代价，本意只是「别反复从它身上碾过去」）的后果是：
-  // 最短路穿过 NPC → 勇者走到它面前原地搭话 → 同一个动作重复几百步，
-  // 而日志里既没有 blocked 也没有报错，看起来完全不像卡住。
-  // 实测卡在第 9 层 (10,3) 智者这里，805 步后才被死循环探针抓到。
+  // ① `persistent` 一律当墙 —— 必须与引擎同规：撞 NPC 触发的是「搭话」
+  //    （`step.ts` 的 `bumpTalk`），勇者**不会走上去**，`moved` 是 false。
+  //    第一版把它算成可通行（8 点代价，本意只是「别反复从它身上碾过去」）的
+  //    后果是：最短路穿过 NPC → 勇者走到它面前原地搭话 → 同一个动作重复
+  //    几百步，而日志里既没有 blocked 也没有报错，看起来完全不像卡住
+  //    （实测卡在第 9 层 (10,3) 智者这里，805 步后才被死循环探针抓到）——
+  //    ⚠️ 那时 `lifecycle` 还没实现，**所有** NPC 都是常驻的。
   //
+  // ② `once` **可以撞掉**：搭话一次后它就从地图上消失（`entityAt` 读
+  //    `state.removed`），所以它是「**一次性**障碍」而不是墙 —— 先花一步搭话，
+  //    下一步就走过去了。
+  //
+  //    仍然把它当墙的后果是一次**真实的死锁**（2026-09-28 实测，用户问
+  //    「假设起手就是神装，这塔能不能通」时撞出来的）：第 15 层 (8,0) 的智者
+  //    站在 row 0 那条**唯一**通往 (5,0) 上楼梯的走廊上，而 `decide` 的 ② 闸门
+  //    又**拒绝**对「纯对话 NPC」发起搭话（`sage` 分数 −1 < 门槛 0）
+  //    ⇒ 「够不着」与「不肯搭话」互相锁死，AI 在第 15 层来回传送，直到
+  //    30 次局势循环被判走投无路。而**玩家不会卡**：撞一下智者他就没了。
+  //
+  // 代价与假墙同档（2）而不是 0：它的**价值**是 0，但走进去仍要一步。
   // 真要找 NPC（商店、商人）走 `neighborSpot`：站到旁边再撞过去。
-  if (ent && ent.type === 'npc') return { cost: null, key: null, monster: null, hpLoss: 0 };
+  if (ent && ent.type === 'npc') {
+    if (npcLifecycle(data, ent.id) !== 'once') return { cost: null, key: null, monster: null, hpLoss: 0 };
+    return { cost: POLICY.FAKE_WALL_COST, key: null, monster: null, hpLoss: 0 };
+  }
 
   if (info.key) return { cost: POLICY.DOOR_COST[info.key], key: info.key, monster: null, hpLoss: 0 };
   if (ch === 'w') return { cost: POLICY.FAKE_WALL_COST, key: null, monster: null, hpLoss: 0 };

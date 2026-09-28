@@ -126,7 +126,7 @@ function lossWith(state: GameState, data: GameData, monId: string, patch: Partia
 export const PIERCE_VALUE = 800;
 
 export interface MarginalStat {
-  /** +1 攻击能省下多少血（对全塔剩余怪求和） */
+  /** +1 攻击能省下多少血（对 `remainingMonsters()` 那**一个 7 层的窗口**求和，不是全塔 —— 为什么见 `RELEVANT_FLOORS`） */
   atk: number;
   /** +1 防御能省下多少血 */
   def: number;
@@ -137,13 +137,26 @@ export interface MarginalStat {
 /**
  * 边际属性价值 —— 记忆化。
  *
- * 键把「影响它的东西」全列上：三围、被动、已清理实体数。
- * 少列一项的症状是「刚吃了宝石，AI 却还用旧价值看世界」。
+ * 键把「影响它的东西」全列上。少列一项的症状是「刚吃了宝石 / 刚上了楼，
+ * AI 却还用旧价值看世界」。
+ *
+ * ⚠️ **`floor` 必须进键**（2026-09-28 修的）：值来自 `remainingMonsters()`，
+ * 而它按 `[floor, floor + RELEVANT_FLOORS]` 窗口筛怪 ⇒ 同一个三围指纹在
+ * 不同楼层**本来就该给出不同的值**。实测（`npm run probe:score-cache` 的
+ * 正/反序对照）：F5 窗口 `atk = 10604`，F25 窗口 `atk = 220`，
+ * 而漏了 floor 的键让先被问到的那层决定了两层的答案。
+ * 它不会崩、不会报错 —— 只会让**上层调用者拿到别的楼层的数**。
+ * 判据是 S12c（`tools/autoplay/score-verify.ts`），探针是 `npm run probe:score-cache`。
+ *
+ * `monsterSwap` 同理会改窗口内的怪（第 50 层假魔王 / 小偷换怪），
+ * 按 `src/app/game.ts` 的 UI 签名惯例取「条目数」当指纹。
  */
 const marginalCache = new WeakMap<GameData, { key: string; value: MarginalStat }>();
 
 export function marginalStat(state: GameState, data: GameData): MarginalStat {
-  const key = `${state.atk}|${state.def}|${state.hp}|${state.passives.join(',')}|${state.removed.size}`;
+  const key =
+    `${state.floor}|${state.atk}|${state.def}|${state.hp}|` +
+    `${state.passives.join(',')}|${state.removed.size}|${Object.keys(state.monsterSwap).length}`;
   const hit = marginalCache.get(data);
   if (hit && hit.key === key) return hit.value;
 
@@ -238,6 +251,16 @@ export function goldWeight(state: GameState, data: GameData): number {
 
 /** 效果 → 血当量（**随属性变化**：走 `marginalStat`） */
 export function effectValue(state: GameState, data: GameData, effects: ItemEffect[]): number {
+  return effectValueGuarded(state, data, effects, new Set<string>());
+}
+
+/** 递归主体（带刹车，见 `WorthGuard`） */
+function effectValueGuarded(
+  state: GameState,
+  data: GameData,
+  effects: ItemEffect[],
+  guard: WorthGuard
+): number {
   const m = marginalStat(state, data);
   let v = 0;
   for (const eff of effects) {
@@ -286,10 +309,9 @@ export function effectValue(state: GameState, data: GameData, effects: ItemEffec
         break;
       case 'clearTerrain':
       case 'breakWall':
-        v += unlockValue(state, data) * 0.6;
-        break;
       case 'bomb':
-        v += unlockValue(state, data) * 0.4;
+        // 折扣来自 `UNLOCK_SHARE`（单一来源，见那张表的注释）
+        v += unlockValue(state, data, guard) * UNLOCK_SHARE[eff.op];
         break;
       default:
         // `toggleUi`（怪物书）这类纯界面道具不折算 —— 明确写出来，
@@ -335,27 +357,94 @@ function traitGain(state: GameState, data: GameData, trait: string): number {
   return gain;
 }
 
-/** 破障道具能开出多少东西 —— 只看**当前层**还够不着的道具（跨层不可判定） */
-function unlockValue(state: GameState, data: GameData): number {
+/**
+ * 会去估「这一层还压着什么」的三个效果算子 → 各自的折扣。
+ *
+ * ⚠️ **这一张表是「哪三个算子会把估价拉回 `unlockValue`」的单一来源**。
+ *    它同时是 S12 判据的取样依据（判据从 `Object.keys(UNLOCK_SHARE)` 反推
+ *    「哪些道具算破障道具」），所以**增删算子只改这里一处**。
+ *    沿用到别处再抄一份名单的话，新算子不会进判据的样本 —— 而那不会报错（铁律 #23）。
+ */
+export const UNLOCK_SHARE: Record<'clearTerrain' | 'breakWall' | 'bomb', number> = {
+  clearTerrain: 0.6,
+  breakWall: 0.6,
+  bomb: 0.4
+};
+
+/**
+ * 正在计算面值的道具 id 集合 —— **递归的刹车**。
+ *
+ * ## 为什么必须有
+ *
+ * `rawItemWorth` 与 `unlockValue` 是**互相递归**的：
+ *
+ * ```
+ * rawItemWorth(铁锹) → effectValue([breakWall]) → unlockValue()
+ *                    → 这一层每一件没拿的道具 → rawItemWorth(铁锹) → …
+ * ```
+ *
+ * `unlockValue` 遍历的是**当前层还没拿的道具**，而破障道具**自己就躺在那一层**
+ * ⇒ 环路回到自身，`state.removed` 全程不变、没有任何东西会终止它。
+ * 实测症状**不是分数算错**，是 `RangeError: Maximum call stack size exceeded`：
+ * 整局模拟 / 自动通关按钮 / 计分视图直接崩，而**只**在站上第 15、35、37、46 层
+ * （`shovel` / `snowflake` / `bomb` / `goldenKey` 所在层）时才崩。
+ * 第 15 层以下永远不会崩 ⇒ 这个 bug 藏了很久，因为 AI 一直没走出第 9 层。
+ *
+ * 修法与铁律 #42 同源：**不动点迭代必须记「已经算过什么」**。
+ * 问法：「这个迭代量第 N 轮会不会把第 1 轮的结果再算一遍？」
+ * 这里是「这一件道具的价值，是不是已经在**上游那一环**算着了？」
+ *
+ * ## 为什么是 `Set` 而不是深度上限
+ *
+ * 深度上限只能把崩溃压后；这里要的是**语义上正确**的答案：破障道具**不开自己**，
+ * 所以环路回到自身时这一项记 0，其余项照常累加。而且它自动覆盖
+ * 「同层有两件破障道具互相开」这种现在数据里没有、但以后会有的局面。
+ *
+ * 用 `finally` 弹出：守的是**环路**（同一轮里不许重复进入），不是「只算一次」
+ * —— 收尾后别的分支仍需独立估价。
+ */
+export type WorthGuard = Set<string>;
+
+/**
+ * 破障道具能开出多少东西 —— 只看**当前层**、而且**还没拿**的道具。
+ *
+ * ⚠️ 它**没有**判「够不够得着」：名字里的「开出」指的是「破障后这一层的东西都能去拿」，
+ *    而「够不着」需要可达性分析（在 `autoplay` / `planner` 手里）。`score.ts` 若去调
+ *    它们就成环了（`planner → score` 是既有方向），所以这里**刻意只按「在不在这一层」
+ *    粗算**，偏乐观。原先那行注释写的是「还够不着的」，与实现不符 —— 已改成实话（铁律 #73）。
+ */
+function unlockValue(state: GameState, data: GameData, guard: WorthGuard): number {
   let v = 0;
   for (const e of data.floors.get(state.floor)?.entities ?? []) {
     if (e.type !== 'item') continue;
     if (state.removed.has(`${state.floor}:${e.x}:${e.y}:item:${e.id}`)) continue;
-    v += rawItemWorth(state, data, e.id);
+    v += itemWorth(state, data, e.id, guard);
   }
   return v;
 }
 
-/** 一件道具的「面值」—— 只看效果，不看拿它的代价 */
-export function rawItemWorth(state: GameState, data: GameData, itemId: string): number {
+/** 递归主体（带刹车）。对外只暴露 `rawItemWorth`，它每次从**干净的刹车**开始 */
+function itemWorth(state: GameState, data: GameData, itemId: string, guard: WorthGuard): number {
   const def = data.items[itemId];
   if (!def) return 0;
   if (def.kind === 'passive' && state.passives.includes(itemId)) return 0;
-  let v = effectValue(state, data, def.effects ?? []);
-  if (def.effects?.some((e) => e.op === 'mulGoldGain')) {
-    v += remainingGold(state, data) * goldWeight(state, data);
+  // 环路回到自身：这一项的价值由**上游那一环**负责，这里记 0（不是「它不值钱」）
+  if (guard.has(itemId)) return 0;
+  guard.add(itemId);
+  try {
+    let v = effectValueGuarded(state, data, def.effects ?? [], guard);
+    if (def.effects?.some((e) => e.op === 'mulGoldGain')) {
+      v += remainingGold(state, data) * goldWeight(state, data);
+    }
+    return v;
+  } finally {
+    guard.delete(itemId);
   }
-  return v;
+}
+
+/** 一件道具的「面值」—— 只看效果，不看拿它的代价 */
+export function rawItemWorth(state: GameState, data: GameData, itemId: string): number {
+  return itemWorth(state, data, itemId, new Set<string>());
 }
 
 /** 窗口内还没拿到的怪物金币（大金币「金币翻倍」的价值来源，与 `remainingMonsters` 同口径） */

@@ -30,6 +30,28 @@ const maxSteps = getArg('max-steps', 40000);
 const verbose = argv.includes('--verbose');
 const asJson = argv.includes('--json');
 
+/**
+ * `--hp / --atk / --def / --keys / --gold`：覆盖**起手状态**再跑整局。
+ *
+ * 用途是「假如一开始就是神装，这塔能不能通」——把「打不过」拆成
+ * **路线问题**与**属性问题**两件事，因为两者的修法相反（改 AI vs 改数值/地图）。
+ * 不给这些开关时行为与以前完全一致（`newGame` 的默认起手）。
+ */
+const init = {};
+for (const [flag, key] of [
+  ['hp', 'hp'],
+  ['atk', 'atk'],
+  ['def', 'def'],
+  ['gold', 'gold']
+]) {
+  const v = getArg(flag, NaN);
+  if (Number.isFinite(v)) init[key] = v;
+}
+{
+  const ki = argv.indexOf('--keys');
+  if (ki >= 0 && argv[ki + 1]) init.keys = argv[ki + 1];
+}
+
 const { simulate, dumpFloor, probePos } = await loadSim();
 
 // `--floor N`：只打印那一层的地形与可达性（调策略用，不跑整局）
@@ -50,7 +72,7 @@ if (pi >= 0) {
   process.exit(0);
 }
 
-const r = simulate(maxSteps, verbose);
+const r = simulate(maxSteps, verbose, Object.keys(init).length ? init : undefined);
 
 if (asJson) {
   // 只打 JSON：判据拿它做断言，人的正文一律不混进去
@@ -61,6 +83,9 @@ if (asJson) {
 const line = (k, v) => console.log(`  ${k.padEnd(10, ' ')} ${v}`);
 console.log('\n自动通关模拟报告');
 console.log('─'.repeat(52));
+// 起手状态必须先打：下面那些数（步数 / 层数 / 损失）**只有连同起手才可比较**
+line('起手', `hp${r.initial.hp} atk${r.initial.atk} def${r.initial.def} ` +
+  `黄${r.initial.keys.yellowKey}/蓝${r.initial.keys.blueKey}/红${r.initial.keys.redKey}`);
 line('通关', r.cleared ? '✅ 是' : '❌ 否');
 line('阵亡', r.dead ? '是' : '否');
 line('结束原因', r.reason);

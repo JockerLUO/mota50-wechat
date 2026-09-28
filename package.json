@@ -19,7 +19,9 @@
     "verify:autoplay": "node tools/verify-autoplay.cjs",
     "probe:prison": "node tools/probe-prison-judgments.mjs",
     "probe:score-unify": "node tools/probe-score-unify.mjs",
+    "probe:score-cache": "node tools/probe-score-floor-cache.mjs",
     "probe:dialogue-fit": "node tools/probe-a25d-dialogue-fit.mjs",
+    "probe:score-guard": "node tools/probe-score-guard.mjs",
     "autoplay": "node tools/autoplay-sim.mjs",
     "autoplay:plan": "node tools/autoplay-plan.mjs",
     "verify:all": "npm run verify:sandbox && npm run verify:visual && npm run verify:minigame && npm run verify:dom && npm run verify:seal && npm run verify:url-shim",
@@ -32,7 +34,8 @@
     "balance": "node tools/build-balance-check.mjs",
     "ide:storage": "node tools/read-ide-storage.cjs",
     "ide:project": "node tools/read-ide-project.cjs",
-    "verify:seal": "node tools/seal-verify.mjs"
+    "verify:seal": "node tools/seal-verify.mjs",
+    "connectivity": "node tools/floor-connectivity.mjs"
   },
   "dependencies": {
     "pixi.js": "^8.6.6"

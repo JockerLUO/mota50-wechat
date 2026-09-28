@@ -17,6 +17,7 @@ import {
   CATEGORY_ORDER,
   NO_THREAT_SCORE,
   THRESHOLD,
+  UNLOCK_SHARE,
   UNREACHABLE_SCORE,
   blockingMonsters,
   gateMonsters,
@@ -294,6 +295,159 @@ export function scoreVerifications(): Zone1Check[] {
       'S11 planner 的目标排序按类别（同类内才比 gain）：多类 + 有 up 楼梯时 stairs 必须最后',
       ts.length > 0 && kinds.size >= 2 && hasUpStair && sorted && order.every((c) => rank(c) >= 0),
       `${ts.length} 个目标 / ${kinds.size} 类：${order.join('>') || '（空）'}｜up 楼梯 ${hasUpStair ? '在' : '不在'}`
+    );
+  }
+
+  // ── S12 全塔逐层估价**不许抛异常**（破障道具的互相递归） ──
+  //
+  // ⚠️ 守的是一次**真实的崩溃**（2026-09-28 实测，用户问「假设起手就是神装能不能通关」
+  //    时撞出来的）：`rawItemWorth` ↔ `unlockValue` 是互相递归的 ——
+  //    `rawItemWorth(铁锹) → effectValue([breakWall]) → unlockValue() → 当前层每件没拿的
+  //    道具 → rawItemWorth(铁锹)`，而破障道具**自己就躺在那一层** ⇒ 环路回到自身。
+  //    症状是 `RangeError: Maximum call stack size exceeded`：整局模拟 / 自动通关按钮 /
+  //    计分视图直接崩，而且**只**在第 15、35、37、46 层崩（`shovel`/`snowflake`/`bomb`/
+  //    `goldenKey` 所在层）。第 9 层以下永远不崩 ⇒ AI 一直没走出去，于是它藏了很久。
+  //
+  // ⇒ 这条判据的**样本必须覆盖「层上有破障道具」的那些层**，否则它是空转的（铁律 #12 / #49）。
+  //   「哪些道具算破障道具」**从 `UNLOCK_SHARE` 反推**，不在这里手写第二份名单（铁律 #23）：
+  //   以后加了新算子，样本自动跟着变。
+  {
+    const breakOps = new Set(Object.keys(UNLOCK_SHARE));
+    const breakItems = new Set(
+      Object.entries(data.items)
+        .filter(([, def]) => (def.effects ?? []).some((e) => breakOps.has(e.op)))
+        .map(([id]) => id)
+    );
+
+    /** 找一格「能站、且没有实体」的位置 —— 落点上若有道具会被拾走，样本就少一件 */
+    const standTile = (floor: number): { x: number; y: number } | null => {
+      const f = data.floors.get(floor);
+      if (!f) return null;
+      for (let y = 0; y <= 10; y++) {
+        for (let x = 0; x <= 10; x++) {
+          if (data.byChar[f.terrain[y][x]]?.passable !== true) continue;
+          if (f.entities.some((e) => e.x === x && e.y === y)) continue;
+          return { x, y };
+        }
+      }
+      return null;
+    };
+
+    const crashes: string[] = [];
+    let sampled = 0;
+    let sampledBreakFloors = 0;
+    let breakItemWorth = NaN;
+    // 「该取样的层」＝**所有有道具的层**（精确口径）。写一个魔数下限（比如 40）是错的：
+    // 实测有道具的层正好 39 层，判据就会因为「39 < 40」而红 —— 而那是期望值错，不是实现错
+    // （铁律 #7：红了先怀疑期望值）。
+    const itemFloors = [...data.floors.keys()].filter((f) =>
+      (data.floors.get(f)?.entities ?? []).some((e) => e.type === 'item')
+    );
+    for (const floor of [...data.floors.keys()].sort((a, b) => a - b)) {
+      const at = standTile(floor);
+      if (!at) continue;
+      const f = data.floors.get(floor)!;
+      const items = f.entities.filter((e) => e.type === 'item');
+      if (!items.length) continue;
+      const s = newGame(data);
+      arriveOnFloor(s, data, floor, at.x, at.y);
+      sampled++;
+      if (items.some((e) => breakItems.has(e.id))) sampledBreakFloors++;
+      for (const e of items) {
+        try {
+          const w = rawItemWorth(s, data, e.id);
+          if (!Number.isFinite(w)) crashes.push(`F${floor} 的 ${e.id} 面值 ${w}（非有限数）`);
+          // 顶层那一条路（`itemScore`）也要走一遍：崩溃点在上游，但入口在这
+          const sc = itemScore(s, data, { itemId: e.id, costHp: 0 });
+          if (!Number.isFinite(sc.total)) crashes.push(`F${floor} 的 ${e.id} 分数 ${sc.total}（非有限数）`);
+          if (floor === 15 && e.id === 'shovel') breakItemWorth = w;
+        } catch (err) {
+          crashes.push(`F${floor} 的 ${e.id} 抛了 ${(err as Error).name}：${(err as Error).message}`);
+        }
+      }
+    }
+    add(
+      'S12 全塔逐层估价不抛异常（破障道具的互相递归；样本须含「层上有破障道具」的层）',
+      crashes.length === 0 && sampledBreakFloors >= 1 && sampled === itemFloors.length,
+      `${sampled}/${itemFloors.length} 个有道具的层已取样 / 其中 ${sampledBreakFloors} 层有破障道具｜` +
+        (crashes.length ? `崩了 ${crashes.length} 处：${crashes.slice(0, 3).join('；')}` : '无异常')
+    );
+    //
+    // S12b 是 S12 的**探针**：刹车写错（「一旦递归就整项记 0」）时 S12 照样绿，
+    // 只有这一条会红 —— 它量的是「破障道具**还值不值钱**」，而 S12 只量「崩不崩」。
+    //
+    // 详情里那行对照值**算出来**，不写死（原先写的是「应 ≈ 5677」的字面量 —— 实测是 4286，
+    // 判据自己的措辞在说一件不成立的事，铁律 #23「同一个数别写两处」+ #73「声称的要兑现」）。
+    // ⚠️ 折扣率取自 `UNLOCK_SHARE`（与实现同一个来源），不在判据里重写 0.6。
+    const shovelOp = (data.items['shovel']?.effects ?? []).find((e) =>
+      breakOps.has(e.op)
+    )?.op as keyof typeof UNLOCK_SHARE | undefined;
+    const share = shovelOp ? UNLOCK_SHARE[shovelOp] : NaN;
+    const f15 = data.floors.get(15);
+    const at15 = f15 ? standTile(15) : null;
+    let othersSum = NaN;
+    let othersCount = 0;
+    if (f15 && at15) {
+      try {
+        const s15 = newGame(data);
+        arriveOnFloor(s15, data, 15, at15.x, at15.y);
+        let sum = 0;
+        for (const e of f15.entities.filter((en) => en.type === 'item' && en.id !== 'shovel')) {
+          sum += rawItemWorth(s15, data, e.id);
+          othersCount++;
+        }
+        othersSum = sum;
+      } catch {
+        // 探针场景下这里**也会崩** —— 只让对照值消失，不能让整组判据一起消失
+        // （报告里缺失的判据是看不见的，铁律 #38 旁边那条）。
+        othersSum = NaN;
+      }
+    }
+    add(
+      'S12b 破障道具仍然值钱：第 15 层铁锹的面值为正且有限（刹车没把它误伤成 0）',
+      breakItemWorth > 0 && Number.isFinite(breakItemWorth),
+      `第 15 层铁锹面值 ${Number.isFinite(breakItemWorth) ? Math.round(breakItemWorth) : breakItemWorth}` +
+        (Number.isFinite(othersSum)
+          ? `（同层其余 ${othersCount} 件各自独立估得 ${Math.round(othersSum)}，×${share} ≈ ${Math.round(share * othersSum)}）`
+          : `（同层其余道具估不出 —— 见 S12）`)
+    );
+    //
+    // ── S12c 记忆化不许**跨楼层串味** ──
+    //
+    // 守的是 2026-09-28 修掉的第二个真 bug：`marginalCache` 的键里**漏了 `state.floor`**，
+    // 而它的值来自 `remainingMonsters()`（按 `[floor, floor + RELEVANT_FLOORS]` 窗口筛怪）
+    // ⇒ 同一个三围指纹在不同楼层**本来就该给出不同的值**，而漏了 floor 的键让
+    // 「先被问到的那一层」决定之后所有层的答案。
+    //
+    // 它在 S12 里的样子极具欺骗性：S12 逐层走 F1..F46，每层都用 `newGame` 的
+    // **同一个三围指纹**（atk10/def10/hp1000）⇒ 键恒定 ⇒ **第 1 层算一次，第 15 层照抄**。
+    // 于是 S12b 打出「面值 4286（… ×0.6 ≈ 5677）」这种**自相矛盾的详情行** ——
+    // 而 S12「崩不崩」完全绿。⇒ 这正是「判据只量崩不崩，量不到数对不对」的典型。
+    //
+    // 口径：用**一份克隆的 `data`** 复算同一个数。`marginalCache` 是
+    // `WeakMap<GameData, …>`（按对象身份分命名空间）⇒ 克隆 = 一口**干净的缓存**。
+    // 两次测量必须相等；不相等就说明「这次算出来的数取决于我先前算过哪些楼层」。
+    let freshWorth = NaN;
+    try {
+      const data2 = structuredClone(data);
+      if (f15 && at15) {
+        const s2 = newGame(data2);
+        arriveOnFloor(s2, data2, 15, at15.x, at15.y);
+        freshWorth = rawItemWorth(s2, data2, 'shovel');
+      }
+    } catch {
+      // 复算不出来（克隆失败 / 抛异常）⇒ 判据必须**报红不是跳过**（铁律 #16）
+      freshWorth = NaN;
+    }
+    const drift = Math.abs(freshWorth - breakItemWorth);
+    add(
+      'S12c 估价与「先前算过哪些楼层」无关（记忆化的键必须含 floor；拿克隆 data 干净缓存复算对照）',
+      Number.isFinite(freshWorth) &&
+        Number.isFinite(breakItemWorth) &&
+        drift <= Math.max(1, Math.abs(breakItemWorth) * 0.01),
+      `走完全塔后铁锹面值 ${Number.isFinite(breakItemWorth) ? Math.round(breakItemWorth) : breakItemWorth}` +
+        `｜干净缓存里复算 ${Number.isFinite(freshWorth) ? Math.round(freshWorth) : freshWorth}` +
+        `｜差 ${Number.isFinite(drift) ? drift.toFixed(1) : '—'}`
     );
   }
 

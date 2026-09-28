@@ -24,12 +24,26 @@ export interface DiagStateOpts {
   at?: { x: number; y: number };
 }
 
+/**
+ * `y999b999r999` → 三把钥匙的持有量。
+ *
+ * ⚠️ 解析放在这里**只此一份**：整局模拟的「起手状态覆盖」（`sim.ts` 的 `SimInit`）
+ *    也要用同一套写法。判据与诊断各写一份的话，「同一串钥匙串被读成不同数量」
+ *    会表现成两个入口对同一局面给出相反结论，而两边各自都对得上自己的期望值。
+ *
+ * 不匹配时**原样返回 false**（调用方保留 `newGame` 给的初始钥匙），不抛出 ——
+ * 诊断入口的既有语义是「给了才覆盖」。
+ */
+export function applyKeySpec(state: GameState, keys: string): boolean {
+  const m = /^y(\d+)b(\d+)r(\d+)$/.exec(keys);
+  if (!m) return false;
+  state.keys = { yellowKey: Number(m[1]), blueKey: Number(m[2]), redKey: Number(m[3]) };
+  return true;
+}
+
 export function makeDiagState(data: GameData, opts: DiagStateOpts): GameState {
   const state: GameState = newGame(data);
-  if (opts.keys) {
-    const m = /^y(\d+)b(\d+)r(\d+)$/.exec(opts.keys);
-    if (m) state.keys = { yellowKey: Number(m[1]), blueKey: Number(m[2]), redKey: Number(m[3]) };
-  }
+  if (opts.keys) applyKeySpec(state, opts.keys);
   if (opts.stats) {
     if (opts.stats.hp !== undefined) state.hp = opts.stats.hp;
     if (opts.stats.atk !== undefined) state.atk = opts.stats.atk;

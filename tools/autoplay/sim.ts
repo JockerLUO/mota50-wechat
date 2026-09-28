@@ -16,6 +16,7 @@ import { previewBattle } from '../../src/game/engine/vitals';
 import { createAutoMemory, decideAutoAction, explainDecision, explainStop, isCleared, progressOf, type AutoAction, type AutoMemory, type Decision, type Rejection } from '../../src/game/autoplay';
 import { tileAt } from '../../src/game/state';
 import { loadWalkthrough } from './walkthrough';
+import { applyKeySpec } from './diag-state';
 import type { GameData, GameState } from '../../src/data';
 
 // 单层体检（`--floor N` 用）。与整局模拟共用同一次打包，省掉第二份入口。
@@ -111,6 +112,35 @@ export interface SimReport {
    * 它是「一区能不能出去」的同义词：击败它才触发 f10-zone1-clear 生成 10→11 的楼梯。
    */
   firstBossDefeated: boolean;
+  /**
+   * 这一局的**起手状态**（`SimInit` 覆盖之后的）—— 报告必须自带它。
+   *
+   * 没有这个字段的话，「跑了一局」与「跑的是哪一局」就分家了：一份 90000 血
+   * 神装的报告和一份 1000 血的报告排版完全相同，只能靠命令行历史去猜。
+   * 而 `reason` 里那些数（步数、层数）**只有连同起手状态才可比较**。
+   */
+  initial: { hp: number; atk: number; def: number; keys: { yellowKey: number; blueKey: number; redKey: number } };
+}
+
+/**
+ * 起手状态覆盖 —— 回答「**如果一开始就是这样，这塔能不能通**」。
+ *
+ * 存在的理由：默认那一局（`newGame`）起手永远是 1000 血 / 10 攻 / 10 防 / 0 钥匙，
+ * 于是「打不过」到底是**路线问题**还是**属性问题**分不开 —— 而这两者的修法
+ * 完全相反（前者改 AI，后者改数值/改地图）。
+ *
+ * 刻意**只覆盖这几样**，不做通用的「随便改状态」：覆盖项越多，量到的越不是
+ * 真实玩法。`keys` 用与诊断入口同一个 `y999b999r999` 写法（`applyKeySpec`）。
+ *
+ * ⚠️ 覆盖发生在 `newGame()` **之后**（`start` 事件已经跑过）—— 这一点要紧：
+ *    `f24-gate-to-50` 是 `start` 触发的，先建状态再覆盖不会漏掉它。
+ */
+export interface SimInit {
+  hp?: number;
+  atk?: number;
+  def?: number;
+  keys?: string;
+  gold?: number;
 }
 
 /**
@@ -231,9 +261,24 @@ function dumpLeftovers(state: GameState, data: GameData, maxFloor: number): stri
  */
 const CYCLE_LIMIT = 30;
 
-export function simulate(maxSteps = 40000, verbose = false): SimReport {  const data: GameData = loadData();
+export function simulate(maxSteps = 40000, verbose = false, init?: SimInit): SimReport {
+  const data: GameData = loadData();
   const wt = loadWalkthrough();
   const state: GameState = newGame(data);
+  if (init) {
+    if (init.hp !== undefined) state.hp = init.hp;
+    if (init.atk !== undefined) state.atk = init.atk;
+    if (init.def !== undefined) state.def = init.def;
+    if (init.gold !== undefined) state.gold = init.gold;
+    if (init.keys) applyKeySpec(state, init.keys);
+  }
+  /** 起手状态（覆盖之后）—— 报告与两处 return 都用它，不在两处各抄一遍 */
+  const initial: SimReport['initial'] = {
+    hp: state.hp,
+    atk: state.atk,
+    def: state.def,
+    keys: { ...state.keys }
+  };
 
   let steps = 0;
   let buys = 0;
@@ -314,7 +359,8 @@ export function simulate(maxSteps = 40000, verbose = false): SimReport {  const 
         firstReach,
         ...progress(),
         trades,
-        firstBossDefeated: defeated(state, 'skeletonCaptain')
+        firstBossDefeated: defeated(state, 'skeletonCaptain'),
+        initial
       };
     }
 
@@ -477,6 +523,7 @@ export function simulate(maxSteps = 40000, verbose = false): SimReport {  const 
     firstReach,
     ...progress(),
     trades,
-    firstBossDefeated: defeated(state, 'skeletonCaptain')
+    firstBossDefeated: defeated(state, 'skeletonCaptain'),
+    initial
   };
 }

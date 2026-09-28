@@ -51,10 +51,18 @@ const withPhases = argv.includes('--phases');
  *
  * ⚠️ 改策略让 AI 走得更远/拿得更多时，**必须把这里的数往上调**：
  * 它守的是「不许倒退」，不是「达标」。调低它等于删判据（铁律 #37）。
+ *
+ * ⚠️ 反过来说：**修一个 bug 让成绩掉了，也不许把这个数调低**。
+ * 2026-09-28 第九轮就撞上了这一条：修掉 `marginalCache` 漏 `floor` 的缺陷之后
+ * 最远层从 F16 掉回 **F15**（因果见 `npm run probe:score-cache`）。
+ * 处理方式是**保持 16 不动、把它记成第 2 条常态红**（第 1 条是「同一局势重复 ≤ 12」），
+ * 理由是：调低它会把「我们曾经走到过 F16」这件事从判据里删掉，
+ * 而那次 F16 本来就**不是真实能力**（它由缺陷撑起来，数都是错的）。
+ * 真正该做的修法是让 AI 在**正确**的估价下重新走到 F16+，不是把尺子缩短。
  */
 const BASELINE = {
-  maxFloor: 9,
-  milestones: 1,
+  maxFloor: 16,
+  milestones: 2,
   /**
    * 同一局势最多重复几次 —— **从「目标」提升上来的回归下限**。
    *
@@ -64,7 +72,12 @@ const BASELINE = {
    * ⚠️ 与 `a20-idle-bob` 的窗口一样，这个数**改了要重跑一遍健康局再定**，别凭感觉（铁律 #39）。
    */
   maxCycle: 12,
-  note: '2026-09-26 第七轮：统一闸门后「不在楼层之间空转」从目标转正（31 次 → 2 次）；F9 / 里程碑 1 未变'
+  note:
+    '2026-09-26 第七轮：统一闸门后「不在楼层之间空转」从目标转正（31 次 → 2 次）；' +
+    '2026-09-28 第八轮：一次性 NPC 从「墙」改成「一次性障碍」⇒ F9 → **F16**、里程碑 1 → 2' +
+    '（上限 F20 由地形决定，见 docs/known-gaps.md §2）；' +
+    '2026-09-28 第九轮：`marginalCache` 的键补上 `floor`（修真 bug）⇒ 诚实成绩是 **F15**；' +
+    '⚠️ 阈值**保持 16 不调低** —— 详见本文件 BASELINE 上方那段（第 2 条常态红）'
 };
 
 function add(name, ok, detail) {
@@ -339,6 +352,52 @@ function sectionPhases(results, planner) {
   results.push(add('★ 分阶段规划通关', r.cleared, r.cleared ? `最远 F${r.maxFloor}` : `停在 ${r.phases.find((p) => !p.ok)?.id ?? '未知'}`));
 }
 
+// ── C 段：地形连通性（**不看 AI**，只看塔本身通不通）──────────────────
+//
+// ⚠️ 口径与「自动通关」完全不同：它**把战斗和钥匙都拿掉**（假设勇者无敌、钥匙无限、
+// 所有能触发的事件都触发过），于是剩下的**只有地形**。目的是把两种病根分开：
+//   · **塔自己断了**（地形/事件缺东西）⇒ 改数据，而且**玩家也过不去**；
+//   · **AI 走错了路**（决策/估价/可达性建模有洞）⇒ 改 AI，玩家没事。
+//
+// 2026-09-28 加这一段之前，这两者在报告里长得一模一样 —— 实测第 20 层那个
+// 「自动门没人开」的堵点藏了很久，因为自动通关器的报告只说「够不着」，
+// 而「够不着」既可以读成「塔不通」也可以读成「AI 不会走」。
+//
+// 实现复用 `tools/floor-connectivity.mjs` 的 `scanConnectivity()`（**同一份** BFS，
+// 不是判据里再写一遍）—— 两份实现各自都能跑通，而「体检说通、判据说堵」那种分叉
+// 永远查不出来（铁律 #66 那一族）。
+async function sectionConnectivity(results) {
+  const mod = await import(pathToFileURL(path.join(__dirname, 'floor-connectivity.mjs')).href);
+  const { rows, firstBlock, blocked } = mod.scanConnectivity();
+
+  const detailOf = (f) => {
+    const r = rows.find((x) => x.floor === f);
+    if (!r) return `F${f}：没有数据`;
+    const byCh = new Map();
+    for (const [, v] of r.edge) byCh.set(v.ch, (byCh.get(v.ch) ?? 0) + 1);
+    const top = [...byCh].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([c, n]) => `${JSON.stringify(c)}×${n}`);
+    return `F${f}（可达 ${r.size} 格；边界障碍 ${top.join(' ')}）`;
+  };
+
+  console.log('\nC · 地形连通性（无视战斗与钥匙，只看塔本身）');
+  results.push(
+    add(
+      'C1 体检样本非空转：第 1–50 层都判过，且其中有些层真的有向上的出口',
+      rows.length === 50 && rows.filter((r) => r.ups.length > 0).length >= 48,
+      `判过 ${rows.length} 层；有向上出口的 ${rows.filter((r) => r.ups.length > 0).length} 层`
+    )
+  );
+  results.push(
+    add(
+      '★ 地形上每一层的上楼梯都够得着（红了 = **塔自己断了，玩家也过不去**）',
+      blocked.length === 0,
+      blocked.length
+        ? `${blocked.length} 层断掉：${blocked.map(detailOf).join('；')}`
+        : `50 层全通（第一个断点：${firstBlock ?? '无'}）`
+    )
+  );
+}
+
 // ── main ────────────────────────────────────────────────────────────
 
 async function main() {
@@ -358,6 +417,15 @@ async function main() {
     sectionSim(results, await bundle.loadSim());
     if (withPhases) sectionPhases(results, await bundle.loadPlanner());
   }
+
+  //
+  // ⚠️ C 段必须放在上面那道 **A 段闸门之后**。
+  //
+  // 闸门写的是 `results.every((r) => r.ok)` —— 它**不区分回归与目标**。把 C 段
+  // 放在它前面，那条「★ 地形全通」（现在红着）会把闸门直接掀掉 ⇒ 整局模拟被
+  // 静默跳过，报告变成「回归判据全绿（共 5 条判据）」，看上去一切正常。
+  // 实测就是这么发生的（第一次接 C 段时）。目标判据只能影响**结论行**，不能影响闸门。
+  await sectionConnectivity(results);
 
   const failed = results.filter((r) => !r.ok);
   const hardFailed = failed.filter((r) => !r.name.startsWith('★')).length;
