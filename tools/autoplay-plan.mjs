@@ -26,7 +26,7 @@ const useBeam = argv.includes('--beam');
 const usePhases = argv.includes('--phases');
 const asJson = argv.includes('--json');
 
-const { runPlan, runBeam, runPhases, runTargets, runReach, runScores, runWhy, prisonDemo } =
+const { runPlan, runBeam, runPhases, runTargets, runReach, runScores, runWhy, prisonDemo, runScope } =
   await loadPlanner();
 
 // `--prison`：把「第 3 层伏击 → 第 2 层牢房 → 撞开暗道的越狱」走一遍，原样打出引擎 log 与楼层图。
@@ -155,6 +155,7 @@ if (usePhases) {
   }
   console.log('\n分阶段规划报告（攻略骨架驱动）');
   console.log('─'.repeat(52));
+  const scope = runScope();
   for (const ph of r.phases) {
     const goal =
       ph.goal.type === 'item'
@@ -179,7 +180,18 @@ if (usePhases) {
       if (ph.actions.length) console.log(`       └ 最高分那条路：${ph.actions.slice(0, 6).join(' → ')}${ph.actions.length > 6 ? ' …' : ''}`);
     }
   }
-  console.log(`\n  通关       ${r.cleared ? '✅ 是' : '❌ 否'}`);
+  //
+  // ⚠️ 措辞必须分清「本幕」与「通关」。
+  //
+  // `runPhases` 在**一幕**跑完时返回的 `cleared: true` 是「**本幕目标**达成」
+  // （`planner.ts` 里那句注释写得很清楚）。这里印成「通关」的话，报告会说假话：
+  // 实测第一幕跑完时是 `最远层 14`，而屏幕上写着「通关 ✅ 是」——
+  // 一眼就矛盾，却很容易被当成「真的通了」。默认 `--phases` 只跑第一幕
+  // （`data/walkthrough.json` 的 `acts[0] = act1-first-boss`）。
+  console.log(
+    `\n  本幕目标   ${r.cleared ? '✅ 达成' : '❌ 未达成'}` +
+      `${scope ? `（${scope.act}：${scope.title}，到 ${scope.until} 为止）` : ''}`
+  );
   console.log(`  最远层     ${r.maxFloor}`);
   console.log(`  动作总数   ${r.actions.length}`);
   console.log('');

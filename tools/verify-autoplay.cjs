@@ -363,7 +363,58 @@ function sectionPhases(results, planner) {
   results.push(
     add(`★ 阶段全部达成（${r.phases.length} 个）`, reached === r.phases.length, `已达成 ${reached}/${r.phases.length}`)
   );
-  results.push(add('★ 分阶段规划通关', r.cleared, r.cleared ? `最远 F${r.maxFloor}` : `停在 ${r.phases.find((p) => !p.ok)?.id ?? '未知'}`));
+  results.push(
+    add(
+      '★ 本幕目标达成',
+      r.cleared,
+      r.cleared ? `最远 F${r.maxFloor}` : `停在 ${r.phases.find((p) => !p.ok)?.id ?? '未知'}`
+    )
+  );
+
+  //
+  // ★★ 神装局第一幕 —— `gateOpensOnFloor`（2026-09-28 选项 C）唯一守得住的判据。
+  //
+  // 为什么必须**换一局**来判：上面那一局是**默认起手**（1000/10/10/0 钥匙），
+  // 它在 `z1-power` 就过不去 —— 那是**资源调度**还没做好，与本条要守的东西无关。
+  // 两件事混在一局里，`z1-redkey` 的回归会被 `z1-power` 的红**永久掩盖**
+  // （同 D 段的思路：把「塔/AI 认不认得终点」与「资源调度够不够好」分开判）。
+  //
+  // 守的是什么：`z1-redkey`（第 8 层 (9,1) 的红钥匙）曾**从来没有**达成过。
+  // 它锁在 (9,3) 自动门后，开门要先杀 (8,4)(10,4) 两只初级卫兵，而**通往那两只
+  // 的路要花 3 把黄钥匙** ⇒ 被「钥匙硬约束」当成乱花钱**剪掉**：
+  // 束宽 256、40 万节点，一次都没生成过「去打初级卫兵」这个目标。
+  // 修法是让 `goalServing` 认「**死会改变目标楼层**的守门怪」（见 `gateOpensOnFloor`）。
+  //
+  // ⚠️ 这一局要 ~60s，所以只在 `--phases`（本来就慢、可选）里跑。
+  const god = planner.runPhases({
+    maxBeam: 64,
+    maxIter: 1000,
+    maxNodesPerPhase: 400000,
+    init: { hp: 90000, atk: 1000, def: 1000, keys: 'y999b999r999' }
+  });
+  const rk = god.phases.find((p) => p.id === 'z1-redkey');
+  const godReached = god.phases.filter((p) => p.ok).length;
+  console.log(
+    `     神装局第一幕：达成 ${godReached}/${god.phases.length} 个阶段　最远 F${god.maxFloor}　动作 ${god.actions.length}`
+  );
+  results.push(
+    add(
+      '神装局第一幕：z1-redkey（第 8 层红钥匙）必须达成（不倒退）',
+      !!rk?.ok,
+      rk
+        ? rk.ok
+          ? `用 ${rk.actions.length} 个动作拿到（修前：束宽 256 / 40 万节点都生成不到「去打初级卫兵」）`
+          : `未达成（最远 F${rk.reachedFloor}）`
+        : '阶段清单里没有 z1-redkey（攻略数据变了？）'
+    )
+  );
+  results.push(
+    add(
+      '神装局第一幕全部达成（不倒退）',
+      god.phases.length > 0 && godReached === god.phases.length && god.cleared,
+      `达成 ${godReached}/${god.phases.length}${god.cleared ? '' : '　本幕目标未达成'}`
+    )
+  );
 }
 
 // ── D 段：结构可通关性（神装局）─────────────────────────────────────
@@ -434,6 +485,49 @@ function sectionStructural(results, sim) {
     )
   );
   results.push(add('D3 神装局不许阵亡', !r.dead, r.dead ? '阵亡' : `剩余 HP ${r.hp}`));
+
+  //
+  // ★ D4 钥匙串**部分写法**必须真的生效。
+  //
+  // 这一条是补一个真踩到的洞（2026-09-28）：`applyKeySpec` 原来的正则是
+  // `^y(\d+)b(\d+)r(\d+)$`（三项**都必须写**）+ `return false`，而两个调用方
+  // 都**没看返回值** ⇒ `--keys r999`（只想给红钥匙）被**静默忽略**，起手还是 0/0/0。
+  //
+  // 症状是铁律 #49 的指纹：三次不同参数的运行**逐位相同**。当时正在做「哪种钥匙是瓶颈」
+  // 的二分，差一点就得出「红钥匙不是瓶颈」这个**错误结论** —— 而红钥匙根本没给。
+  //
+  // 用 `simulate(1, …)`：起手状态在进主循环之前就写进报告了，所以
+  // **跑 1 步**就能读到 `initial`，不必再等一整局（3 × 20s → 3 × 0.3s）。
+  // 判据读的是**产物**（报告里的起手行），不是源码里的正则 —— 见铁律 #60。
+  const partials = [
+    ['y999', 'yellowKey'],
+    ['b999', 'blueKey'],
+    ['r999', 'redKey']
+  ];
+  const bad = [];
+  for (const [spec, key] of partials) {
+    const one = sim.simulate(1, false, { keys: spec });
+    const keys = one.initial.keys;
+    if (keys[key] !== 999) bad.push(`--keys ${spec} 没生效（${key} = ${keys[key]}）`);
+    for (const other of ['yellowKey', 'blueKey', 'redKey']) {
+      if (other !== key && keys[other] !== 0) bad.push(`--keys ${spec} 顺手改了 ${other} = ${keys[other]}`);
+    }
+  }
+  // 解析不出来的串必须**抛**，不许静默变成「没给」
+  let threw = false;
+  try {
+    sim.simulate(1, false, { keys: 'nope' });
+  } catch {
+    threw = true;
+  }
+  if (!threw) bad.push('垃圾钥匙串 "nope" 没有抛异常（静默忽略 ⇒ 又一次假绿）');
+  results.push(
+    add(
+      'D4 钥匙串的部分写法必须生效（`--keys r999` 曾静默无效）',
+      bad.length === 0,
+      bad.length === 0 ? 'y/b/r 单独给都能生效，且拒绝解析不了的串' : bad.join('；')
+    )
+  );
   return r;
 }
 

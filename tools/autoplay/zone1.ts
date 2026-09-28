@@ -177,6 +177,39 @@ export function zone1Verifications(): Zone1Check[] {
     );
   }
 
+  // ── Z5b 第 8 层：自动门开了之后，红钥匙**真的拿得到**（端到端）──
+  //
+  // ⚠️ 为什么 Z5 不够：Z5 只验「(9,3) 由 `a` 变 `.`」这一格地形。
+  // 而规划器的 `z1-redkey` 阶段（取第 8 层红钥匙）失败的正是**这之后**的事
+  // ——「门开了」与「钥匙拿得到」是两件事，前者绿着不代表后者成立。
+  // 实测两者**长期共存**：Z5 绿、`z1-redkey` 红，而没人把这两条联系起来。
+  //
+  // 判据口径：从**门外** (9,4) 起步，真的往上走 —— 开门前必须撞不动，
+  // 开门后必须一路走进口袋并把 (9,1) 的红钥匙捡进包。
+  // 「开门前先失败」那一半是**反向断言**：少了它，这条在门根本没锁的情况下也会绿
+  // （铁律 #16：反向断言必须带探针，探针为 0 要报红）。
+  {
+    const s = newGame(data);
+    arriveOnFloor(s, data, 8, 9, 4); // 门外（自动门 (9,3) 的下方）
+    const yBefore = s.pos.y;
+    step(s, data, 'up');
+    const blockedBefore = s.pos.y === yBefore && !s.removed.has(entityKey(8, 9, 1, 'item', 'redKey'));
+
+    killAt(s, data, 8, 8, 4);
+    killAt(s, data, 8, 10, 4);
+    // 开门后一路往上：进 (9,3) → (9,2) → 撞上 (9,1) 的红钥匙
+    const trail: string[] = [];
+    for (let i = 0; i < 3; i++) trail.push(step(s, data, 'up').kind);
+    const got = s.removed.has(entityKey(8, 9, 1, 'item', 'redKey'));
+
+    add(
+      'Z5b 第 8 层：自动门开之后 (9,1) 的红钥匙**真的走得进去、捡得到**',
+      blockedBefore && got,
+      `开门前撞门：${blockedBefore ? '走不进（对）' : '**居然进去了（这条就白绿了）**'} · ` +
+        `开门后三步 ${trail.join('→')} · 红钥匙 ${got ? '已入包' : '**没拿到**'}`
+    );
+  }
+
   // ── Z6–Z12 第 3 层伏击 → 第 2 层牢房 → 越狱（**本项目原创剧情**）──
   //
   // 这一组同时承担两个职责：

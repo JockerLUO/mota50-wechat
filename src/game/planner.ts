@@ -611,7 +611,7 @@ function generateTargets(state: GameState, data: GameData, phase?: PhaseHint): T
         // 只保留「目标服务」这一档。**储备刻意不做成剪枝** —— 见 `PhaseHint.reserveKeys`
         // 的注释：硬剪会把「所有通往目标的路线都要花一把钥匙」的处境直接判死，
         // 实测把 z1-shield 从 F9 退回到 F8。储备改在 `beamScore` 里扣分。
-        if (spends && !goalServing(t, state.floor, phase)) return false;
+        if (spends && !goalServing(data, t, state.floor, phase)) return false;
       }
       return true;
     })
@@ -708,6 +708,53 @@ function netKeyCost(
 }
 
 /**
+ * 这只守门怪的死，会不会**改变第 `floor` 层上的东西**（开门 / 开区域 / 放道具 / 加楼梯）。
+ *
+ * 用来把「守门怪」那一档收窄到**与目标有关**的那些 —— 实测（见 `goalServing` 的注释）
+ * 放成「任何守门怪都算」会把无关阶段的束宽挤掉：`z1-power` 过了，紧接着
+ * `z1-shield` 反而挂了（`z1-power` 结束时少 21 把黄钥匙）。
+ *
+ * 判据两步，都从 `data/events` 现算，不写死楼层 / 怪名：
+ *   ① 触发条件命中的是不是这只怪（`defeated.id`，或 `allDefeated` 的 `ids` /
+ *      `at` 坐标反查 —— 与 `score.gateMonsters` 同一套口径）；
+ *   ② 它的事件里有没有一条效果落在**目标楼层**上。
+ *
+ * 拿第 8 层那条实测的例子：
+ *   `f8-autodoor-open` = `allDefeated{ids:["juniorGuard"], floor:8}`
+ *                     → `clearTerrain{floor:8}`
+ * 阶段 `z1-redkey` 的目标楼层是 8 ⇒ 命中 ⇒ 「去打初级卫兵」不再是乱花钱。
+ */
+function gateOpensOnFloor(data: GameData, monId: string, floor: number): boolean {
+  for (const ev of data.events) {
+    const t = ev.trigger as {
+      op?: string;
+      id?: string;
+      ids?: string[];
+      floor?: number;
+      at?: { x: number; y: number }[];
+    };
+    let hits = false;
+    if (t.op === 'defeated' && t.id === monId) hits = true;
+    else if (t.op === 'allDefeated') {
+      if ((t.ids ?? []).includes(monId)) hits = true;
+      else if (t.at?.length) {
+        const f = t.floor !== undefined ? data.floors.get(t.floor) : undefined;
+        hits = t.at.some((p) => {
+          const ent = f?.entities.find((x) => x.x === p.x && x.y === p.y && x.type === 'monster');
+          return ent?.type === 'monster' && ent.id === monId;
+        });
+      }
+    }
+    if (!hits) continue;
+    const touched = (ev.effects as { floor?: number }[]).some(
+      (e) => (e.floor ?? t.floor) === floor
+    );
+    if (touched) return true;
+  }
+  return false;
+}
+
+/**
  * 这个目标是不是**在为目标服务** —— 钥匙硬约束的判据。
  *
  * 「服务」只认三种，都是可判定的：
@@ -718,10 +765,31 @@ function netKeyCost(
  * 阶段没有明确目标楼层时（`phase.floor === null`）不设限 —— 没有目标就没有
  * 「值不值得花」的参照物，硬砍只会砍掉正确的探索。
  */
-function goalServing(t: Target, floor: number, phase?: PhaseHint): boolean {
+function goalServing(data: GameData, t: Target, floor: number, phase?: PhaseHint): boolean {
   if (!phase || phase.floor === null) return true;
   if (phase.itemId && t.kind === 'item' && t.id === phase.itemId) return true;
   if (phase.defeatId && t.kind === 'monster' && t.id === phase.defeatId) return true;
+  //
+  // ★ **守门怪**也是「为目标服务」（2026-09-28，选项 C 的根因）。
+  //
+  // 名单来自 `data/events` 反推（`gateMonsters`，S9 判据守着它）：
+  // 「杀掉它，某条事件会触发」—— 开门 / 开区域 / 放道具。
+  //
+  // ⚠️ 少了这一档，`z1-redkey` 阶段**永远走不完**，而症状极具迷惑性：
+  // 目标是第 8 层 (9,1) 的红钥匙，它锁在 (9,3) 的**自动门**后面，
+  // 开门必须先击败 (8,4)(10,4) 两只初级卫兵（`f8-autodoor-open`）。
+  // 而**通往那两只卫兵的路要花 3 把黄钥匙**（`--targets 8` 实测 `钥匙 yellowKey×3`），
+  // 于是下面那条「钥匙硬约束」正好把唯一能推进阶段的两个动作**剪掉**：
+  // 它们「净消耗钥匙」且不是目标道具 / 目标怪 / 朝目标的楼梯 ⇒ 被判成乱花钱。
+  //
+  // 实测代价：束宽 256、**40 万节点**，`z1-redkey` 一次都没生成过
+  // 「去打初级卫兵」这个目标，报告只说「未能在 40 万节点内达成」——
+  // 而塔和事件都是好的（`verify:autoplay` 的 **Z5b** 从门外走进去把红钥匙捡进包）。
+  //
+  // ⚠️ 放开的范围是**天然有界**的：目标只在**当前层**的实体里生成
+  // （`aliveEntitiesOn(state, data, fl)`），所以这一档只会让「脚下这层的守门怪」
+  // 可以花钥匙去打 —— 不会顺手把全塔的守门怪都放出来乱花。
+  if (t.kind === 'monster' && t.id && gateOpensOnFloor(data, t.id, phase.floor)) return true;
   if (t.kind === 'up' || t.kind === 'down') {
     const to = Number(String(t.id).split(':')[1]);
     if (Number.isFinite(to)) {

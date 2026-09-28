@@ -8,6 +8,7 @@ import { debugReach, debugTargets, plan, planBeam, planPhases } from '../../src/
 import { CATEGORY_ORDER, THRESHOLD, scoreDump } from '../../src/game/score';
 import { explainDecision, reachCosts } from '../../src/game/autoplay';
 import { loadWalkthrough } from './walkthrough';
+import { applyKeySpec } from './diag-state';
 
 // 一区事件的 headless 断言（`verify:autoplay` 的 Z 段用）
 export { zone1Verifications } from './zone1';
@@ -99,8 +100,9 @@ function applyInit(state: GameState): void {
   if (INIT.hp !== undefined) state.hp = INIT.hp;
   if (INIT.atk !== undefined) state.atk = INIT.atk;
   if (INIT.def !== undefined) state.def = INIT.def;
-  const m = INIT.keys ? /^y(\d+)b(\d+)r(\d+)$/.exec(INIT.keys) : null;
-  if (m) state.keys = { yellowKey: Number(m[1]), blueKey: Number(m[2]), redKey: Number(m[3]) };
+  // 钥匙串只在这一处解析（`applyKeySpec`）—— 这里原先内联了一份同样的正则，
+  // 于是「改一处漏一处」：`plan-entry` 那条路照样静默忽略 `--keys r999`。见铁律 #66。
+  if (INIT.keys) applyKeySpec(state, INIT.keys);
 }
 
 /** 当前默认范围（第一幕）的名字与终点 —— 报告里要写清楚「判的是哪一幕」 */

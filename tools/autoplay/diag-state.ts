@@ -34,11 +34,30 @@ export interface DiagStateOpts {
  * 不匹配时**原样返回 false**（调用方保留 `newGame` 给的初始钥匙），不抛出 ——
  * 诊断入口的既有语义是「给了才覆盖」。
  */
-export function applyKeySpec(state: GameState, keys: string): boolean {
-  const m = /^y(\d+)b(\d+)r(\d+)$/.exec(keys);
-  if (!m) return false;
-  state.keys = { yellowKey: Number(m[1]), blueKey: Number(m[2]), redKey: Number(m[3]) };
-  return true;
+export function applyKeySpec(state: GameState, keys: string): void {
+  //
+  // ⚠️ 这里是钥匙串**唯一**的解析点（原先 `plan-entry.ts` 里还有一份内联副本，
+  // 两份都要改才生效 —— 铁律 #66「只有一份」）。
+  //
+  // ⚠️⚠️ 解析不出来必须**抛**，不许静默返回。原版写的是
+  // `^y(\d+)b(\d+)r(\d+)$` + `return false`，而两个调用方都**没看返回值**：
+  // 于是 `--keys r999`（只想给红钥匙）被**静默忽略**，起手还是 黄0/蓝0/红0。
+  // 症状是三次不同参数的运行**逐位相同** —— 那正是铁律 #49
+  // 「参数怎么调都逐位相同 ⇒ 那条路径没参与决策」，只是这次是**测试工具自己**的洞：
+  // 它会让人得出「红钥匙不是瓶颈」的错误结论，而实际上红钥匙根本没给。
+  //
+  // 现在的口径：`y<黄>b<蓝>r<红>`，**每一项都可以省略**（省略＝保持起手原值），
+  // 但至少要写一项；顺序固定，写成 `b2y1` 那样会抛（不猜、不宽容）。
+  const spec = keys.trim();
+  const m = /^(?:y(\d+))?(?:b(\d+))?(?:r(\d+))?$/.exec(spec);
+  if (!m || (m[1] === undefined && m[2] === undefined && m[3] === undefined)) {
+    throw new Error(
+      `钥匙串 "${keys}" 解析不出来：写法是 y<黄>b<蓝>r<红>（如 y999b999r999，也可以只写其中几项，如 r999）`
+    );
+  }
+  if (m[1] !== undefined) state.keys.yellowKey = Number(m[1]);
+  if (m[2] !== undefined) state.keys.blueKey = Number(m[2]);
+  if (m[3] !== undefined) state.keys.redKey = Number(m[3]);
 }
 
 export function makeDiagState(data: GameData, opts: DiagStateOpts): GameState {
