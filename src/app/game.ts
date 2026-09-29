@@ -64,10 +64,12 @@ import { DialoguePanel } from '../render/dialogue-panel';
 import { MerchantPanel, ShopPanel } from '../render/trade';
 import { npcRole, realm, realmOf, setRealm } from '../render/theme';
 import {
+  CYCLE_LIMIT,
   createAutoMemory,
   decideAutoAction,
   explainStop,
   isCleared,
+  situationOf,
   type AutoAction,
   type AutoMemory
 } from '../game/autoplay';
@@ -83,6 +85,7 @@ import {
 import type { FloorScore } from '../game/score';
 import type { ScoreBadgeView } from '../render/board/types';
 import { layoutSnapshot, panelsSnapshot, probeSnapshot, type LayoutSnapshot, type ProbeView } from './probe';
+import { AUTO_GOD_LOADOUT, GOD_LOADOUT, applyGodLoadout, godLoadoutText } from './test-loadout';
 
 /**
  * 自动通关的**出手间隔**（毫秒）。
@@ -145,6 +148,20 @@ export class Game {
    * 「走投无路」自己停下时，玩家正要读这个数 —— 那一刻把它清掉等于擦掉证据。
    */
   private autoRan = false;
+  /**
+   * 这一局有没有套用过**神装测试起手**（`src/app/test-loadout.ts`）。
+   *
+   * 与属性本身分开记：属性会被战斗与购买改掉，而「这一局是从神装起手的」这件事
+   * 是**历史事实**，不该被后来的掉血抹掉 —— 探针报的就是它
+   * （见 `ProbeView.autoLoadout`）。
+   */
+  private autoLoadoutApplied = false;
+  /**
+   * 局势循环探针：同一个「局势」出现过几次（签名见 `situationOf`）。
+   *
+   * 只属于**这一次自动通关**：`startAuto` 里清空（`restart` 会先停自动）。
+   */
+  private cycleSeen = new Map<string, number>();
   /** 计分视图的分数清单（徽标与点击明细共用这一份，见 `syncScores`） */
   private scoreEntries: FloorScore[] = [];
   private scoreBadges: ScoreBadgeView[] = [];
@@ -325,6 +342,11 @@ export class Game {
       toolbarButtons: this.toolbar.buttonRects(),
       autoRunning: this.auto !== null,
       autoSteps: this.autoTicks,
+      // 只在**这一局真的套过**测试起手时非 null —— 这个标记是「这一局开了挂」的
+      // 唯一凭据，判据与玩家都读它（见 `ProbeView.autoLoadout` 的注释）
+      autoLoadout: this.autoLoadoutApplied
+        ? { hp: GOD_LOADOUT.hp, atk: GOD_LOADOUT.atk, def: GOD_LOADOUT.def, keys: { ...GOD_LOADOUT.keys } }
+        : null,
       scoreView: this.board.scoreView,
       scoreBadges: this.scoreBadges,
       runStrip: this.runStrip.visible
@@ -737,7 +759,28 @@ export class Game {
       this.sync();
       return;
     }
+    //
+    // ★ 神装测试起手（`src/app/test-loadout.ts`）。
+    //
+    // 点「自动通关」的这一刻把三围与钥匙拉满，于是**界面上的自动通关能一路打到
+    // 第 50 层**（headless 那条路早就证明了它行：`verify:autoplay` 的 D 段，
+    // 7906 步击败真魔王）。此前界面上只能跑到 F16 左右就「走投无路」停下 ——
+    // 那不是执行器坏了，是**决策器的正常水平**；两者混在一起看，会让人以为
+    // 界面接错了。所以把「塔通不通」这一层单独放到按钮上，看得见。
+    //
+    // ⚠️ 只在这里套用（**起手那一刻**），不是每步都套 ——
+    // 否则打怪掉的血、买来的属性会立刻被抹平，那就不是「起手」而是「无敌」了，
+    // 而两者要回答的问题完全不同。
+    //
+    // ⚠️ 必须留日志。悄悄把属性拉满，玩家（与下一个读代码的人）就分不清
+    // 「它真的打过了」和「它开了挂」—— 这条日志就是那个分界。
+    if (AUTO_GOD_LOADOUT) {
+      applyGodLoadout(this.state);
+      this.autoLoadoutApplied = true;
+      pushLog(this.state, `⚠️ 测试起手（神装）：${godLoadoutText()} —— 点「重开」回到真实起手。`, 'warn');
+    }
     this.auto = createAutoMemory();
+    this.cycleSeen.clear();
     this.autoAccum = 0;
     // 底部读数从 0 起算（「已自动运行多少步」是**这一次**的），
     // 但 `autoRan` 一旦为真就再也不回到 false —— 停下的那一刻读数要留着
@@ -778,6 +821,29 @@ export class Game {
     this.autoAccum += deltaMS;
     if (this.autoAccum < AUTO_STEP_MS) return;
     this.autoAccum = 0;
+    //
+    // ★ 局势循环护栏 —— 与 headless 那份**同一个签名、同一个上限**（`situationOf`）。
+    //
+    // 少了它，界面上「走投无路」永远不会发生：那种死法里每一步都**合法**
+    // （上楼 ↔ 下楼、或传送器在两层间来回跳），`decideAutoAction` 每次都给出
+    // 一个动作、从不返回 `stop` ⇒ 按钮会**一直转下去**，而屏幕上看起来
+    // 像是「AI 有点慢」。实测默认起手那局同一局势重复 **31 次**
+    // （`verify:autoplay` 那条常态红就是它），在 headless 里会被拦下并报出
+    // 现场签名，而界面此前没有这道护栏。
+    //
+    // 停下时把 `explainStop` 的诊断一起写进日志 —— 与 `case 'stop'` 同规：
+    // 「走投无路」有四五种成因，只报一句结论没法定位。
+    const sit = situationOf(this.state);
+    const times = (this.cycleSeen.get(sit) ?? 0) + 1;
+    this.cycleSeen.set(sit, times);
+    if (times > CYCLE_LIMIT) {
+      pushLog(this.state, `走投无路：局势循环（${sit}，重复 ${times} 次）`, 'warn');
+      for (const line of explainStop(this.state, this.data).slice(0, 4)) {
+        pushLog(this.state, `  ${line}`, 'warn');
+      }
+      this.stopAuto(`走投无路：局势循环（重复 ${times} 次）`);
+      return;
+    }
     this.performAutoAction();
   }
 
@@ -1166,6 +1232,9 @@ export class Game {
     this.scoreSig = null;
     this.autoTicks = 0;
     this.autoRan = false;
+    // 同一族的「属于这一局」的状态：重开后这一局没套过测试起手
+    this.autoLoadoutApplied = false;
+    this.cycleSeen.clear();
     this.toolbar.setBrowsing(false, this.state.floor);
     this.toolbar.setAuto(false);
     pushLog(this.state, '回到第 1 层，重新开始。', 'floor');

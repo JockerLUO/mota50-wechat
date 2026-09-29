@@ -64,6 +64,18 @@ export interface ProbeView {
    */
   autoSteps: number;
   /**
+   * 自动通关这次起手套用的**测试起手**（`src/app/test-loadout.ts` 的神装），
+   * 没套用时为 `null`。
+   *
+   * 为什么要把「常量」也报出来，而不是让判据直接断言 `hp === 90000`：
+   *   · 判据要断言的是**「界面真的把它套上了」**（读产物），
+   *     而「值是多少」只有一处定义（铁律 #66）—— 判据从探针读值、再拿它与
+   *     勇者**此刻的三围**对比，两边都来自同一个运行中的实例；
+   *   · 顺带让「开关被关掉」这件事**可见**：那时这里是 `null`，
+   *     A23 那条会报红，而不是静默变成「回到真实起手」而没人发现（#81）。
+   */
+  autoLoadout: { hp: number; atk: number; def: number; keys: Record<string, number> } | null;
+  /**
    * 计分视图是否开着，以及**此刻喂给棋盘的**徽标清单。
    *
    * 这里报的是「算出来的那一批」，**不是**「画出来的那一批」——
@@ -143,6 +155,7 @@ export function probeSnapshot(v: ProbeView): Record<string, unknown> {
     autoRunning: v.autoRunning,
     /** 自动出手步数 —— 底部读数条上的那个数的**真值** */
     autoSteps: v.autoSteps,
+    autoLoadout: v.autoLoadout ? { ...v.autoLoadout, keys: { ...v.autoLoadout.keys } } : null,
     /** 计分那颗按钮的文案 —— 与 `toolbarAutoLabel` 同一条纪律：读按钮上真正的字 */
     toolbarScoreLabel: v.toolbarScoreLabel,
     /**

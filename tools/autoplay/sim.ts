@@ -13,7 +13,7 @@
 import { loadData } from '../../src/data';
 import { buyStat, newGame, step, tradeAccept, travelTo, useItem } from '../../src/game/engine';
 import { previewBattle } from '../../src/game/engine/vitals';
-import { createAutoMemory, decideAutoAction, explainDecision, explainStop, isCleared, progressOf, type AutoAction, type AutoMemory, type Decision, type Rejection } from '../../src/game/autoplay';
+import { CYCLE_LIMIT, createAutoMemory, decideAutoAction, explainDecision, explainStop, isCleared, progressOf, situationOf, type AutoAction, type AutoMemory, type Decision, type Rejection } from '../../src/game/autoplay';
 import { entityAt, tileAt } from '../../src/game/state';
 import { loadWalkthrough } from './walkthrough';
 import { applyKeySpec } from './diag-state';
@@ -253,17 +253,9 @@ function dumpLeftovers(state: GameState, data: GameData, maxFloor: number): stri
   return out;
 }
 
-/**
- * 同一个「局势」最多允许重复几次 —— 超过就判「走投无路」并停下。
- *
- * ⚠️ 判据必须是**局势**（层 + 坐标 + 血 + 钥匙 + 金币 + 进展），不是动作：
- * 交替的循环（上楼 → 下楼 → 上楼）没有连续重复的动作，只看动作的探针
- * 一条也抓不到（见 `SimReport.maxCycle`）。
- *
- * 取 30 是因为健康的一局里「同一局势反复出现」最多也就十几次
- * （来回取钥匙、上下楼补货、从商店走回楼梯），量级差得开。
- */
-const CYCLE_LIMIT = 30;
+// ⚠️ 「同一局势重复几次算走投无路」的定义（`CYCLE_LIMIT` / `situationOf`）已搬到
+// `src/game/autoplay.ts` —— 界面与 headless 必须读**同一份**（铁律 #66）。
+// 内联一份的后果实测过：headless 停了，界面那颗按钮还在转。
 
 export function simulate(maxSteps = 40000, verbose = false, init?: SimInit): SimReport {
   const data: GameData = loadData();
@@ -375,10 +367,9 @@ export function simulate(maxSteps = 40000, verbose = false, init?: SimInit): Sim
     //   而 `sig` 那条只认「连续同一动作 ×12」，抓不到**交替两步**的循环。
     //   实测 20000 步里 19605 步是「上楼↔下楼」横跳：动作没有连续重复、
     //   每一步都合法（refusals 0），报告只说「步数上限」——像「AI 只是慢」。
-    const situation =
-      `${state.floor}:${state.pos.x},${state.pos.y}:hp${state.hp}:` +
-      `k${state.keys.yellowKey},${state.keys.blueKey},${state.keys.redKey}:` +
-      `g${state.gold}:p${progressOf(state)}`;
+    // 指纹与上限都从 `src/game/autoplay.ts` 读 —— 界面那边用的是**同一份**。
+    // 内联一份的后果实测过：界面上没有这道护栏，headless 停了它还在转（铁律 #66）。
+    const situation = situationOf(state);
     const seenTimes = (cycleSeen.get(situation) ?? 0) + 1;
     cycleSeen.set(situation, seenTimes);
     if (seenTimes > maxCycle) maxCycle = seenTimes;

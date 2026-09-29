@@ -30,6 +30,7 @@
     "audit:events:all": "node tools/audit-event-gaps.mjs --all --verbose",
     "audit": "npm run validate && npm run audit:doors && npm run audit:events",
     "assets": "${PYTHON:-python3} tools/build-assets.py",
+    "e2e:god": "node tools/god-e2e.cjs",
     "shot": "node tools/shot-web.cjs",
     "preview": "vite preview --port 4173 --strictPort",
     "typecheck": "tsc --noEmit",

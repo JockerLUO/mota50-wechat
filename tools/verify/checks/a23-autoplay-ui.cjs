@@ -53,9 +53,17 @@ async function run(ctx) {
         floor: p.floor,
         pos: p.pos,
         hp: p.hp,
+        atk: p.atk,
+        def: p.def,
+        keys: { ...p.keys },
         running: p.autoRunning,
         autoLabel: p.toolbarAutoLabel,
-        buttons: p.toolbarButtons
+        buttons: p.toolbarButtons,
+        // 底部读数条**真正画出来的那行字** —— 它带着勇者此刻的三围，
+        // 是「属性真的变了」在界面上最直接的证据
+        runStrip: p.runStrip.text,
+        // 这一次起手有没有套神装 —— 读的是**运行中实例**的标记，不是源码里的常数
+        autoLoadout: p.autoLoadout
       };
     });
 
@@ -100,6 +108,55 @@ async function run(ctx) {
   if (running.steps <= before.steps) {
     bad.push(`自动通关跑了 1.5s，步数 ${before.steps} → ${running.steps}（亮灯但没动）`);
   }
+  //
+  // ── ②b 点「自动通关」= 套用**神装测试起手**，然后才开始跑 ──
+  //
+  // 守的是「界面上的自动通关能不能一路打到第 50 层」这一层能力：
+  // headless 早就证明了塔能通（`verify:autoplay` D 段，7906 步击败真魔王），
+  // 而界面上真实起手只能跑到 F16 左右 —— 两者混看会让人以为**界面接错了**。
+  // 所以按钮点下去时把三围与钥匙拉满（`src/app/test-loadout.ts`），
+  // 这一段就是那条接线的**唯一判据**：它只在界面上存在，headless 抓不到。
+  //
+  // ⚠️ 反向断言（铁律 #16）：点**之前**必须**不是**神装。少了这一半，
+  // 这条在「开局本来就是神装」或「判据拿错了快照」时也会绿 ——
+  // 那时它验的就不是「按钮套用了起手」，而是「数恰好对上了」。
+  const lo = running.autoLoadout;
+  if (!lo) {
+    bad.push('点了自动通关，但 __probe().autoLoadout 为 null（测试起手没套上，或开关被关了）');
+  } else {
+    //
+    // ⚠️ 拿什么比：**不要**拿「此刻的钥匙数」去比。
+    //
+    // 第一版就是那么写的 —— `yellowKey 998 ≠ 999`，红的理由是自动通关在那
+    // 1.5 秒里**真的花掉了一把黄钥匙开门**（它本来就该花）。那是**正常的消费**，
+    // 不是「属性没套上」。一条判据如果会被被测系统**正常的动作**打红，
+    // 它就只是在制造噪声（同族的坑：拿「会变的中间量」当断言对象，铁律 #12）。
+    //
+    // 所以分两类量来读：
+    //   · **不会被消耗的**：`atk` / `def`（0 金币时买不了，1.5s 内不可能变），
+    //     以及底部读数条上**画出来的**那行字 —— 两者都必须等于起手值；
+    //   · **会被消耗的**：钥匙与 hp 只**记录**不比较（写进详情行，供人读）。
+    const mismatch = [];
+    if (running.atk !== lo.atk) mismatch.push(`atk ${running.atk} ≠ ${lo.atk}`);
+    if (running.def !== lo.def) mismatch.push(`def ${running.def} ≠ ${lo.def}`);
+    // 底部读数条是**渲染层的产物**（`hud/run-strip.ts` 画出来的字），
+    // 与探针读的是两条独立的路 —— 两边同时说「HP 90000」才算真的上了屏。
+    for (const [needle, what] of [
+      [`HP ${lo.hp}`, 'hp'],
+      [`攻 ${lo.atk}`, 'atk'],
+      [`防 ${lo.def}`, 'def']
+    ]) {
+      if (!running.runStrip.includes(needle)) {
+        mismatch.push(`底部读数条里没有「${needle}」（${what} 没上屏：「${running.runStrip}」）`);
+      }
+    }
+    if (mismatch.length) bad.push(`属性没变成神装：${mismatch.join('；')}`);
+    // 反向断言：点之前必须不是这一套（否则这条判据在「本来就是神装」时也会绿）
+    if (before.atk === lo.atk && before.def === lo.def) {
+      bad.push('点之前就已经是这一套三围了 —— 这条判据白绿（反向断言失败）');
+    }
+  }
+
   // 取证截图拍**运行中**的这一态：按钮高亮成「停止自动」才是这个功能的样子。
   // 放在这一步（而不是停下之后）是有意的 —— 停下来的画面和普通状态没有区别。
   await page.screenshot({ path: 'assets/preview/autoplay-ui.png' });
@@ -119,14 +176,23 @@ async function run(ctx) {
   }
 
 
+  //
+  // 收干净：这一条点过「自动通关」之后，局内属性是**神装**。
+  // 留着它，后面任何一条没先按 `r` 的判据都会看到一份不属于它的勇者
+  // （A24 是先按 `r` 的，所以此前没暴露；但那是**顺序**在替我们兜底，
+  // 而顺序会变 —— 与 A23 文件头「开头为什么要 press('r')」同一条道理）。
+  await page.keyboard.press('r');
+  await page.waitForTimeout(250);
+
   check(
-    'A23 自动通关：按钮可达、真的会走、说停就停' +
+    'A23 自动通关：按钮可达、真的会走、说停就停、且起手套神装' +
       `（点击后 1.5s 走了 ${running.steps - before.steps} 步，停止后再等 1s 步数不动）`,
     bad.length === 0,
     (bad.length ? bad.slice(0, 3).join(' | ') + ' ⟵ ' : '') +
       `buttons=${before.buttons.map((b) => `${b.id}@${b.x}+${b.w}`).join(' ')} ` +
       `run=${running.running}/${running.autoLabel} stop=${stopped.running}/${stopped.autoLabel} ` +
-      `steps ${before.steps}→${running.steps}→${afterWait.steps}`
+      `steps ${before.steps}→${running.steps}→${afterWait.steps} ` +
+      `神装 ${lo ? `atk${running.atk}/def${running.def}（点前 atk${before.atk}/def${before.def}）· 实时 hp${running.hp}/黄${running.keys.yellowKey}（会被消费，只记录）` : '未套用'}`
   );
 }
 
